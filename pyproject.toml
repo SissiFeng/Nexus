@@ -1,0 +1,22 @@
+[project]
+name = "optimization-copilot"
+version = "0.1.0"
+description = "A general-purpose AI agent powered by Claude Opus 4.6"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.42.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8.0",
+]
+
+[project.scripts]
+copilot = "optimization_copilot.cli:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
