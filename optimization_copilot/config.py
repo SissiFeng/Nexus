@@ -6,4 +6,4 @@ load_dotenv()
 
 MODEL = "claude-opus-4-6"
 MAX_TOKENS = 8192
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+MODEL_API_KEY = os.getenv("MODEL_API_KEY") or os.getenv("ANTHROPIC_API_KEY")

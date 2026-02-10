@@ -36,7 +36,7 @@ See `plan.md` for the full specification. Key modules to implement:
 
 ## Model
 - Default: claude-opus-4-6
-- API key in environment variable ANTHROPIC_API_KEY
+- API key in environment variable MODEL_API_KEY (fallback: ANTHROPIC_API_KEY)
 
 ## Auto-Development Mode
 - All PRs from Claude are auto-approved for merge
