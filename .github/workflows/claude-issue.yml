@@ -1,0 +1,34 @@
+name: Claude Issue Handler
+
+on:
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  handle-issue:
+    if: |
+      (github.event.action == 'labeled' && github.event.label.name == 'claude') ||
+      (github.event.action == 'opened' && contains(github.event.issue.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude Implements Issue
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Analyze this issue and implement the requested changes.
+            Create a PR with the implementation if code changes are needed.
+            Be thorough and include tests where appropriate.
+          claude_args: |
+            --model "claude-opus-4-6"
