@@ -144,6 +144,99 @@ def delete(ctx: click.Context, campaign_id: str, yes: bool) -> None:
         sys.exit(1)
 
 
+@campaign.command("export")
+@click.argument("campaign_id")
+@click.option("--output", "-o", required=True, type=click.Path(), help="Output JSON file path")
+@click.pass_context
+def export_campaign(ctx: click.Context, campaign_id: str, output: str) -> None:
+    """Export campaign data to a JSON archive."""
+    try:
+        manager = _get_manager(ctx)
+        ws = Workspace(ctx.obj["workspace_dir"])
+        ws.init()
+
+        record = manager.get(campaign_id)
+        spec = ws.load_spec(campaign_id)
+        result = ws.load_result(campaign_id)
+        audit = ws.load_audit(campaign_id)
+
+        archive = {
+            "record": record.to_dict(),
+            "spec": spec,
+            "result": result,
+            "audit": audit,
+        }
+
+        with open(output, "w", encoding="utf-8") as f:
+            json.dump(archive, f, indent=2, ensure_ascii=False)
+
+        click.echo(f"Exported campaign {campaign_id} to {output}")
+    except CampaignNotFoundError:
+        click.echo(f"Campaign not found: {campaign_id}", err=True)
+        sys.exit(1)
+
+
+@campaign.command("validate")
+@click.option("--spec", "-s", required=True, type=click.Path(exists=True))
+@click.pass_context
+def validate_spec(ctx: click.Context, spec: str) -> None:
+    """Validate a campaign spec file."""
+    with open(spec) as f:
+        try:
+            spec_dict = json.load(f)
+        except json.JSONDecodeError as e:
+            click.echo(f"Invalid JSON: {e}", err=True)
+            sys.exit(1)
+
+    errors: list[str] = []
+
+    # Check required top-level keys
+    if "parameters" not in spec_dict:
+        errors.append("Missing required key: 'parameters'")
+    if "objectives" not in spec_dict:
+        errors.append("Missing required key: 'objectives'")
+
+    # Validate parameters
+    parameters = spec_dict.get("parameters", [])
+    if not isinstance(parameters, list):
+        errors.append("'parameters' must be a list")
+    else:
+        for i, param in enumerate(parameters):
+            if not isinstance(param, dict):
+                errors.append(f"Parameter {i}: must be a dict")
+                continue
+            if "name" not in param:
+                errors.append(f"Parameter {i}: missing 'name'")
+            if "type" not in param:
+                errors.append(f"Parameter {i}: missing 'type'")
+            if param.get("type") == "continuous" and "bounds" not in param:
+                errors.append(f"Parameter {i} ({param.get('name', '?')}): continuous type requires 'bounds'")
+
+    # Validate objectives
+    objectives = spec_dict.get("objectives", [])
+    if not isinstance(objectives, list):
+        errors.append("'objectives' must be a list")
+    else:
+        for i, obj in enumerate(objectives):
+            if not isinstance(obj, dict):
+                errors.append(f"Objective {i}: must be a dict")
+                continue
+            if "name" not in obj:
+                errors.append(f"Objective {i}: missing 'name'")
+            if "direction" not in obj:
+                errors.append(f"Objective {i}: missing 'direction'")
+
+    if errors:
+        click.echo("Validation FAILED:")
+        for err in errors:
+            click.echo(f"  - {err}")
+        sys.exit(1)
+    else:
+        click.echo("Validation OK")
+        click.echo(f"  Parameters: {len(parameters)}")
+        click.echo(f"  Objectives: {len(objectives)}")
+
+
 @campaign.command("compare")
 @click.argument("campaign_ids", nargs=-1, required=True)
 @click.pass_context

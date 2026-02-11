@@ -202,7 +202,7 @@ def get_checkpoint(campaign_id: str) -> dict:
     return checkpoint
 
 
-# ── Search ────────────────────────────────────────────────────
+# ── Search (separate router, registered at /api/search) ──────
 
 search_router = APIRouter(prefix="/search", tags=["search"])
 
@@ -226,7 +226,3 @@ def search_campaigns(
         ],
         total=len(results),
     )
-
-
-# Add search router to campaigns router parent
-router.include_router(search_router)

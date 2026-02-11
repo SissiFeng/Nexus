@@ -160,3 +160,15 @@ class StatusResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# ── WebSocket Schemas ────────────────────────────────────────
+
+
+class WebSocketMessage(BaseModel):
+    """WebSocket event message."""
+
+    campaign_id: str
+    event: str
+    data: dict[str, Any] = {}
+    timestamp: float

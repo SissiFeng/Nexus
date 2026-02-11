@@ -429,22 +429,22 @@ class TestAdviceEndpoints:
 
 
 class TestSearchEndpoints:
-    """Campaign search endpoints.
+    """Campaign search endpoints at /api/search."""
 
-    Note: The search router is mounted inside the campaigns router at
-    /api/campaigns/search. However, the /{campaign_id} route is defined
-    first and shadows the /search path (FastAPI matches "search" as a
-    campaign_id). These tests verify the current routing behavior.
-    """
-
-    def test_search_route_shadowed_by_campaign_id(self, client, auth_headers):
-        """The search route at /api/campaigns/search is intercepted by
-        the /{campaign_id} route, which treats 'search' as a campaign ID."""
+    def test_search_returns_empty_for_no_data(self, client, auth_headers):
+        """Search with empty RAG index returns empty results."""
         resp = client.get(
-            "/api/campaigns/search", params={"q": "test"}, headers=auth_headers
+            "/api/search", params={"q": "test"}, headers=auth_headers
         )
-        # Returns 404 because it tries to find campaign_id="search"
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["results"] == []
+        assert data["total"] == 0
+
+    def test_search_requires_query_param(self, client, auth_headers):
+        """Search without q parameter returns 422."""
+        resp = client.get("/api/search", headers=auth_headers)
+        assert resp.status_code == 422
 
     def test_search_via_rag_index_directly(self, app):
         """The RAG index is available via app state for direct search."""

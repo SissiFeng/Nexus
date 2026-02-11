@@ -5,6 +5,7 @@ from __future__ import annotations
 import click
 
 from optimization_copilot.cli_app.campaign_cmds import campaign
+from optimization_copilot.cli_app.meta_cmds import meta
 from optimization_copilot.cli_app.store_cmds import store
 from optimization_copilot.cli_app.server_cmds import server
 from optimization_copilot.platform.workspace import Workspace
@@ -25,6 +26,7 @@ def cli(ctx: click.Context, workspace: str) -> None:
 
 
 cli.add_command(campaign)
+cli.add_command(meta)
 cli.add_command(store)
 cli.add_command(server)
 

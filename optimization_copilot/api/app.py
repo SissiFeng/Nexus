@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -25,21 +26,6 @@ def create_app(
     version: str = "0.3.0",
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
-    app = FastAPI(
-        title=title,
-        version=version,
-        description="One-stop intelligent experiment decision platform",
-    )
-
-    # CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
     # Initialize platform services
     workspace = Workspace(workspace_dir)
     workspace.init()
@@ -70,21 +56,44 @@ def create_app(
     )
     set_app_state(state)
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup
+        event_bus.loop = asyncio.get_running_loop()
+        try:
+            yield
+        finally:
+            # Shutdown — ensure both cleanup steps run even if one fails
+            try:
+                workspace.save_rag_index(rag.to_dict())
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Failed to save RAG index during shutdown"
+                )
+            event_bus.clear()
+
+    app = FastAPI(
+        title=title,
+        version=version,
+        description="One-stop intelligent experiment decision platform",
+        lifespan=lifespan,
+    )
+
+    # CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     # Store state on app for testing access
     app.state.platform = state
 
     # Include API routes
     app.include_router(create_api_router())
-
-    @app.on_event("startup")
-    async def startup() -> None:
-        event_bus.loop = asyncio.get_running_loop()
-
-    @app.on_event("shutdown")
-    async def shutdown() -> None:
-        # Save RAG index
-        workspace.save_rag_index(rag.to_dict())
-        event_bus.clear()
 
     # Health check
     @app.get("/health")
