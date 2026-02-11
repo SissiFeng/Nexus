@@ -18,6 +18,27 @@ from optimization_copilot.core.models import CampaignSnapshot, Observation, Phas
 
 
 @dataclass
+class RegimeChangePoint:
+    """A detected regime change in the KPI series."""
+
+    index: int  # observation index where the change occurred
+    before_mean: float
+    after_mean: float
+    shift_magnitude: float  # |after_mean - before_mean| / std
+    confidence: float  # 0-1
+
+
+@dataclass
+class DimensionAttribution:
+    """Drift attribution for a single parameter dimension."""
+
+    parameter: str
+    correlation_shift: float  # change in param-KPI correlation
+    mean_shift: float  # change in parameter mean between windows
+    attribution_score: float  # 0-1, how much this dimension contributed
+
+
+@dataclass
 class DriftReport:
     """Result of a drift detection analysis."""
 
@@ -532,3 +553,133 @@ class DriftDetector:
             idx += step
 
         return scores
+
+    # ── Regime change detection ────────────────────────────
+
+    def detect_regime_changes(
+        self,
+        snapshot: CampaignSnapshot,
+        *,
+        min_segment: int = 5,
+    ) -> list[RegimeChangePoint]:
+        """Detect abrupt regime changes in the KPI series using a CUSUM-like approach.
+
+        Scans the KPI series for points where splitting into two segments
+        maximises the mean-shift signal.
+
+        Parameters
+        ----------
+        snapshot : CampaignSnapshot
+        min_segment : int
+            Minimum number of observations on each side of a split.
+
+        Returns
+        -------
+        list[RegimeChangePoint]
+            Change points sorted by shift_magnitude (strongest first).
+        """
+        obs = snapshot.successful_observations
+        kpi_name = snapshot.objective_names[0] if snapshot.objective_names else ""
+        kpi_values = [
+            o.kpi_values.get(kpi_name, 0.0)
+            for o in obs
+            if kpi_name in o.kpi_values
+        ]
+        n = len(kpi_values)
+        if n < 2 * min_segment:
+            return []
+
+        overall_std = _std(kpi_values)
+        if overall_std == 0.0:
+            return []
+
+        change_points: list[RegimeChangePoint] = []
+        best_stat = 0.0
+        best_idx = -1
+
+        for i in range(min_segment, n - min_segment):
+            before = kpi_values[:i]
+            after = kpi_values[i:]
+            before_mean = _mean(before)
+            after_mean = _mean(after)
+            shift = abs(after_mean - before_mean) / overall_std
+
+            if shift > best_stat:
+                best_stat = shift
+                best_idx = i
+
+        if best_idx >= 0 and best_stat >= 1.0:
+            before = kpi_values[:best_idx]
+            after = kpi_values[best_idx:]
+            confidence = min(best_stat / 4.0, 1.0)
+            change_points.append(RegimeChangePoint(
+                index=best_idx,
+                before_mean=_mean(before),
+                after_mean=_mean(after),
+                shift_magnitude=best_stat,
+                confidence=confidence,
+            ))
+
+        return change_points
+
+    # ── Per-dimension drift attribution ───────────────────
+
+    def attribute_drift(
+        self,
+        snapshot: CampaignSnapshot,
+    ) -> list[DimensionAttribution]:
+        """Attribute drift to individual parameter dimensions.
+
+        For each parameter, computes:
+        - Correlation shift between reference and test windows
+        - Mean shift of the parameter itself
+        - An overall attribution score
+
+        Returns
+        -------
+        list[DimensionAttribution]
+            Sorted by attribution_score descending.
+        """
+        obs = snapshot.successful_observations
+        total = len(obs)
+        needed = self.reference_window + self.test_window
+        if total < needed:
+            return []
+
+        ref_obs = obs[total - needed: total - self.test_window]
+        test_obs = obs[total - self.test_window:]
+        kpi_name = snapshot.objective_names[0] if snapshot.objective_names else ""
+        ref_kpi = self._extract_kpi(ref_obs, kpi_name)
+        test_kpi = self._extract_kpi(test_obs, kpi_name)
+
+        attributions: list[DimensionAttribution] = []
+        for pname in snapshot.parameter_names:
+            ref_p = self._extract_param(ref_obs, pname)
+            test_p = self._extract_param(test_obs, pname)
+
+            ref_len = min(len(ref_p), len(ref_kpi))
+            test_len = min(len(test_p), len(test_kpi))
+
+            # Correlation shift
+            r_ref = _pearson_r(ref_p[:ref_len], ref_kpi[:ref_len]) if ref_len >= 3 else 0.0
+            r_test = _pearson_r(test_p[:test_len], test_kpi[:test_len]) if test_len >= 3 else 0.0
+            corr_shift = abs(r_test - r_ref)
+
+            # Parameter mean shift
+            ref_mean = _mean(ref_p) if ref_p else 0.0
+            test_mean = _mean(test_p) if test_p else 0.0
+            ref_std_p = _std(ref_p) if len(ref_p) > 1 else 1.0
+            mean_shift = abs(test_mean - ref_mean) / max(ref_std_p, 1e-12)
+
+            # Combined attribution score
+            score = 0.6 * min(corr_shift / 1.0, 1.0) + 0.4 * min(mean_shift / 3.0, 1.0)
+
+            attributions.append(DimensionAttribution(
+                parameter=pname,
+                correlation_shift=corr_shift,
+                mean_shift=mean_shift,
+                attribution_score=round(score, 4),
+            ))
+
+        attributions.sort(key=lambda a: a.attribution_score, reverse=True)
+        return attributions

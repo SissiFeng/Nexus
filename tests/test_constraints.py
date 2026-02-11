@@ -8,7 +8,9 @@ from optimization_copilot.core.models import (
 )
 from optimization_copilot.constraints.discovery import (
     ConstraintDiscoverer,
+    ConstraintMigrator,
     ConstraintReport,
+    ConstraintTracker,
     DiscoveredConstraint,
 )
 
@@ -465,3 +467,203 @@ class TestReportStructure:
         assert c.parameters == ["x1"]
         assert c.threshold_value == 0.8
         assert c.confidence == 0.9
+
+
+# ── constraint migration ──────────────────────────────
+
+
+class TestConstraintMigrator:
+
+    def _make_source_report(self) -> ConstraintReport:
+        return ConstraintReport(
+            constraints=[
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x1"],
+                    condition="x1 > 0.8 -> 80% failure rate",
+                    threshold_value=0.8,
+                    failure_rate_above=0.8,
+                    failure_rate_below=0.1,
+                    confidence=0.9,
+                    n_supporting=10,
+                ),
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x2"],
+                    condition="x2 > 0.7 -> 70% failure rate",
+                    threshold_value=0.7,
+                    failure_rate_above=0.7,
+                    failure_rate_below=0.1,
+                    confidence=0.4,  # below default min_confidence
+                    n_supporting=5,
+                ),
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x3"],
+                    condition="x3 > 0.5 -> 60% failure rate",
+                    threshold_value=0.5,
+                    failure_rate_above=0.6,
+                    failure_rate_below=0.1,
+                    confidence=0.8,
+                    n_supporting=8,
+                ),
+            ],
+            n_observations_analyzed=50,
+            coverage=0.9,
+        )
+
+    def test_compatible_parameters_migrated(self):
+        """Constraints whose parameters exist in target are kept."""
+        source = self._make_source_report()
+        # target has x1 and x2 but not x3
+        target = _make_snapshot([
+            _obs(x1=0.5, x2=0.5, iteration=0),
+        ])
+        migrator = ConstraintMigrator()
+        result = migrator.migrate(source, target)
+        # x1 constraint (confidence=0.9 >= 0.5) is kept
+        # x2 constraint (confidence=0.4 < 0.5) is filtered
+        # x3 does not exist in target
+        param_names = [c.parameters[0] for c in result.constraints]
+        assert "x1" in param_names
+        assert "x2" not in param_names
+        assert "x3" not in param_names
+
+    def test_threshold_outside_range_filtered(self):
+        """Constraint with threshold outside target range is excluded."""
+        source = ConstraintReport(
+            constraints=[
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x1"],
+                    condition="x1 > 2.0 -> failure",
+                    threshold_value=2.0,  # outside [0, 1]
+                    failure_rate_above=0.9,
+                    failure_rate_below=0.1,
+                    confidence=0.9,
+                    n_supporting=10,
+                ),
+            ],
+            n_observations_analyzed=20,
+            coverage=0.8,
+        )
+        target = _make_snapshot([_obs(x1=0.5, x2=0.5)])
+        result = ConstraintMigrator().migrate(source, target)
+        assert len(result.constraints) == 0
+
+    def test_empty_source_returns_empty(self):
+        source = ConstraintReport(constraints=[], n_observations_analyzed=0, coverage=1.0)
+        target = _make_snapshot([_obs(x1=0.5, x2=0.5)])
+        result = ConstraintMigrator().migrate(source, target)
+        assert len(result.constraints) == 0
+
+
+# ── constraint tightening tracking ────────────────────
+
+
+class TestConstraintTracker:
+
+    def test_tightened_constraint_detected(self):
+        """Higher failure rate in new report = tightened."""
+        old = ConstraintReport(
+            constraints=[
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x1"],
+                    condition="x1 > 0.8",
+                    threshold_value=0.8,
+                    failure_rate_above=0.5,
+                    failure_rate_below=0.1,
+                    confidence=0.8,
+                    n_supporting=10,
+                ),
+            ],
+            n_observations_analyzed=30,
+            coverage=0.8,
+        )
+        new = ConstraintReport(
+            constraints=[
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x1"],
+                    condition="x1 > 0.8",
+                    threshold_value=0.75,
+                    failure_rate_above=0.8,  # increased from 0.5
+                    failure_rate_below=0.1,
+                    confidence=0.9,
+                    n_supporting=15,
+                ),
+            ],
+            n_observations_analyzed=50,
+            coverage=0.9,
+        )
+        tracker = ConstraintTracker()
+        evolution = tracker.compare(old, new)
+        assert evolution.n_tightened == 1
+        assert evolution.n_relaxed == 0
+        assert evolution.deltas[0].direction == "tightened"
+
+    def test_new_constraint_detected(self):
+        """Constraint appearing only in new report is 'new'."""
+        old = ConstraintReport(constraints=[], n_observations_analyzed=20, coverage=1.0)
+        new = ConstraintReport(
+            constraints=[
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x1"],
+                    condition="x1 > 0.7",
+                    threshold_value=0.7,
+                    failure_rate_above=0.6,
+                    failure_rate_below=0.1,
+                    confidence=0.7,
+                    n_supporting=5,
+                ),
+            ],
+            n_observations_analyzed=30,
+            coverage=0.8,
+        )
+        evolution = ConstraintTracker().compare(old, new)
+        assert evolution.n_new == 1
+        assert evolution.deltas[0].direction == "new"
+
+    def test_removed_constraint_detected(self):
+        """Constraint only in old report is 'removed'."""
+        old = ConstraintReport(
+            constraints=[
+                DiscoveredConstraint(
+                    constraint_type="threshold",
+                    parameters=["x2"],
+                    condition="x2 > 0.8",
+                    threshold_value=0.8,
+                    failure_rate_above=0.7,
+                    failure_rate_below=0.1,
+                    confidence=0.8,
+                    n_supporting=8,
+                ),
+            ],
+            n_observations_analyzed=30,
+            coverage=0.7,
+        )
+        new = ConstraintReport(constraints=[], n_observations_analyzed=40, coverage=1.0)
+        evolution = ConstraintTracker().compare(old, new)
+        assert evolution.n_removed == 1
+        assert evolution.deltas[0].direction == "removed"
+
+    def test_unchanged_constraint(self):
+        """Same failure rate in both reports = unchanged."""
+        c = DiscoveredConstraint(
+            constraint_type="threshold",
+            parameters=["x1"],
+            condition="x1 > 0.8",
+            threshold_value=0.8,
+            failure_rate_above=0.7,
+            failure_rate_below=0.1,
+            confidence=0.8,
+            n_supporting=10,
+        )
+        old = ConstraintReport(constraints=[c], n_observations_analyzed=30, coverage=0.8)
+        new = ConstraintReport(constraints=[c], n_observations_analyzed=40, coverage=0.8)
+        evolution = ConstraintTracker().compare(old, new)
+        assert evolution.n_tightened == 0
+        assert evolution.n_relaxed == 0
+        assert evolution.deltas[0].direction == "unchanged"

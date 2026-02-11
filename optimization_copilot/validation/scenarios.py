@@ -394,3 +394,238 @@ class ValidationRunner:
             result = self.run_scenario(scenario)
             hashes.add(result.decision_hash)
         return len(hashes) == 1
+
+
+# ===========================================================================
+# Cross-lab campaign comparison (Pain Point 7)
+# ===========================================================================
+
+@dataclass
+class CampaignComparison:
+    """Result of comparing two campaign snapshots from different labs/runs."""
+    parameter_overlap: float
+    objective_alignment: float
+    kpi_correlation: float
+    phase_agreement: bool
+    summary: str
+
+
+class CrossLabComparator:
+    """Compare campaigns from different labs or runs.
+
+    Measures alignment in parameter coverage, objective distributions,
+    and decision outcomes to quantify cross-lab reproducibility.
+    """
+
+    def compare(
+        self,
+        snapshot_a: CampaignSnapshot,
+        snapshot_b: CampaignSnapshot,
+    ) -> CampaignComparison:
+        """Compare two campaign snapshots.
+
+        Parameters
+        ----------
+        snapshot_a, snapshot_b :
+            Campaign snapshots (potentially from different labs).
+
+        Returns
+        -------
+        CampaignComparison with alignment metrics.
+        """
+        # Parameter spec overlap (Jaccard index on parameter names)
+        names_a = {s.name for s in snapshot_a.parameter_specs}
+        names_b = {s.name for s in snapshot_b.parameter_specs}
+        if names_a | names_b:
+            param_overlap = len(names_a & names_b) / len(names_a | names_b)
+        else:
+            param_overlap = 1.0
+
+        # Objective alignment (do they optimize the same objectives?)
+        obj_a = set(snapshot_a.objective_names)
+        obj_b = set(snapshot_b.objective_names)
+        if obj_a | obj_b:
+            obj_alignment = len(obj_a & obj_b) / len(obj_a | obj_b)
+        else:
+            obj_alignment = 1.0
+
+        # KPI correlation on shared objectives
+        kpi_corr = self._kpi_correlation(snapshot_a, snapshot_b)
+
+        # Phase agreement (run pipeline on both, compare phase)
+        engine = DiagnosticEngine()
+        profiler = ProblemProfiler()
+        controller = MetaController()
+
+        diag_a = engine.compute(snapshot_a).to_dict()
+        diag_b = engine.compute(snapshot_b).to_dict()
+        fp_a = profiler.profile(snapshot_a)
+        fp_b = profiler.profile(snapshot_b)
+        dec_a = controller.decide(snapshot_a, diag_a, fp_a)
+        dec_b = controller.decide(snapshot_b, diag_b, fp_b)
+        phase_agreement = dec_a.phase == dec_b.phase
+
+        summary_parts = [
+            f"Parameter overlap: {param_overlap:.0%}",
+            f"Objective alignment: {obj_alignment:.0%}",
+            f"KPI correlation: {kpi_corr:.2f}",
+            f"Phase agreement: {phase_agreement}",
+        ]
+
+        return CampaignComparison(
+            parameter_overlap=param_overlap,
+            objective_alignment=obj_alignment,
+            kpi_correlation=kpi_corr,
+            phase_agreement=phase_agreement,
+            summary="; ".join(summary_parts),
+        )
+
+    @staticmethod
+    def _kpi_correlation(
+        snap_a: CampaignSnapshot,
+        snap_b: CampaignSnapshot,
+    ) -> float:
+        """Pearson correlation of best KPI values on shared objectives."""
+        shared_objs = set(snap_a.objective_names) & set(snap_b.objective_names)
+        if not shared_objs:
+            return 0.0
+
+        # Collect best KPIs per shared objective
+        vals_a: list[float] = []
+        vals_b: list[float] = []
+        for obj in sorted(shared_objs):
+            a_vals = [
+                o.kpi_values.get(obj, 0.0) for o in snap_a.successful_observations
+            ]
+            b_vals = [
+                o.kpi_values.get(obj, 0.0) for o in snap_b.successful_observations
+            ]
+            if a_vals:
+                vals_a.append(max(a_vals))
+            else:
+                vals_a.append(0.0)
+            if b_vals:
+                vals_b.append(max(b_vals))
+            else:
+                vals_b.append(0.0)
+
+        if len(vals_a) < 2:
+            # Can't compute correlation with < 2 points; use simple ratio
+            if vals_a and vals_b and vals_a[0] != 0:
+                ratio = min(vals_b[0], vals_a[0]) / max(vals_b[0], vals_a[0])
+                return ratio
+            return 1.0 if vals_a == vals_b else 0.0
+
+        # Pearson correlation
+        n = len(vals_a)
+        ma = sum(vals_a) / n
+        mb = sum(vals_b) / n
+        sa = (sum((v - ma) ** 2 for v in vals_a) / n) ** 0.5
+        sb = (sum((v - mb) ** 2 for v in vals_b) / n) ** 0.5
+        if sa < 1e-12 or sb < 1e-12:
+            return 1.0 if sa == sb else 0.0
+        cov = sum((vals_a[i] - ma) * (vals_b[i] - mb) for i in range(n)) / n
+        return cov / (sa * sb)
+
+
+# ===========================================================================
+# Reproducibility score (Pain Point 7)
+# ===========================================================================
+
+@dataclass
+class ReproducibilityReport:
+    """Quantified reproducibility across seeds, backends, windows."""
+    seed_stability: float
+    backend_consistency: float
+    overall_score: float
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+class ReproducibilityScorer:
+    """Measure decision reproducibility across perturbations.
+
+    Runs the pipeline with multiple seeds/backends and measures
+    how stable the decisions are.
+    """
+
+    def score(
+        self,
+        snapshot: CampaignSnapshot,
+        seeds: list[int] | None = None,
+        backends: list[list[str]] | None = None,
+    ) -> ReproducibilityReport:
+        """Compute reproducibility score.
+
+        Parameters
+        ----------
+        snapshot :
+            Campaign to evaluate.
+        seeds :
+            List of seeds to test. Default: [42, 43, 44, 45, 46].
+        backends :
+            List of backend configurations to test.
+            Default uses the standard set.
+
+        Returns
+        -------
+        ReproducibilityReport
+        """
+        if seeds is None:
+            seeds = [42, 43, 44, 45, 46]
+        if backends is None:
+            backends = [
+                ["random", "latin_hypercube", "tpe"],
+            ]
+
+        engine = DiagnosticEngine()
+        profiler = ProblemProfiler()
+
+        diag = engine.compute(snapshot).to_dict()
+        fp = profiler.profile(snapshot)
+
+        # Seed stability: fraction of seeds that agree on phase + backend
+        seed_decisions: list[StrategyDecision] = []
+        for seed in seeds:
+            controller = MetaController()
+            dec = controller.decide(snapshot, diag, fp, seed=seed)
+            seed_decisions.append(dec)
+
+        seed_phases = [d.phase for d in seed_decisions]
+        seed_backends = [d.backend_name for d in seed_decisions]
+
+        most_common_phase = max(set(seed_phases), key=seed_phases.count)
+        phase_agreement = seed_phases.count(most_common_phase) / len(seed_phases)
+
+        most_common_backend = max(set(seed_backends), key=seed_backends.count)
+        backend_agreement = seed_backends.count(most_common_backend) / len(seed_backends)
+
+        seed_stability = (phase_agreement + backend_agreement) / 2.0
+
+        # Backend consistency: across different available backend sets
+        backend_decisions: list[StrategyDecision] = []
+        for backend_set in backends:
+            controller = MetaController(available_backends=backend_set)
+            dec = controller.decide(snapshot, diag, fp, seed=seeds[0])
+            backend_decisions.append(dec)
+
+        if len(backend_decisions) > 1:
+            phases = [d.phase for d in backend_decisions]
+            common = max(set(phases), key=phases.count)
+            backend_consistency = phases.count(common) / len(phases)
+        else:
+            backend_consistency = 1.0
+
+        overall = seed_stability * 0.7 + backend_consistency * 0.3
+
+        return ReproducibilityReport(
+            seed_stability=seed_stability,
+            backend_consistency=backend_consistency,
+            overall_score=overall,
+            details={
+                "n_seeds": len(seeds),
+                "phase_agreement": phase_agreement,
+                "backend_agreement": backend_agreement,
+                "most_common_phase": most_common_phase.value,
+                "most_common_backend": most_common_backend,
+            },
+        )

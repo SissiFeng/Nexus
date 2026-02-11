@@ -621,3 +621,50 @@ class TestIntegration:
         assert boundary.n_successful == 0
         assert boundary.parameter_bounds["x1"] == (0.0, 10.0)
         assert boundary.parameter_bounds["x2"] == (0.0, 10.0)
+
+
+# ---------------------------------------------------------------------------
+# TestParetoProximityBoost
+# ---------------------------------------------------------------------------
+
+
+class TestParetoProximityBoost:
+    """Tests for Pareto-proximity lambda boost in FeasibilityFirstScorer."""
+
+    def test_no_boost_by_default(self):
+        """Default pareto_proximity_boost=0 should not change alpha."""
+        snap = _make_clean_snapshot()
+        scorer = FeasibilityFirstScorer(alpha_max=0.9, alpha_min=0.1)
+        alpha_no_prox = scorer.compute_alpha(snap)
+        alpha_with_prox = scorer.compute_alpha(snap, pareto_proximity=1.0)
+        assert abs(alpha_no_prox - alpha_with_prox) < 1e-9
+
+    def test_boost_increases_alpha_near_front(self):
+        """With boost enabled, proximity=1.0 should increase alpha."""
+        snap = _make_clean_snapshot()
+        scorer = FeasibilityFirstScorer(
+            alpha_max=0.9, alpha_min=0.1, pareto_proximity_boost=0.3
+        )
+        alpha_base = scorer.compute_alpha(snap, pareto_proximity=0.0)
+        alpha_boosted = scorer.compute_alpha(snap, pareto_proximity=1.0)
+        assert alpha_boosted > alpha_base
+
+    def test_boost_does_not_exceed_alpha_max(self):
+        """Boosted alpha must not exceed alpha_max."""
+        snap = _make_all_failure_snapshot()  # alpha already near max
+        scorer = FeasibilityFirstScorer(
+            alpha_max=0.9, alpha_min=0.1, pareto_proximity_boost=0.5
+        )
+        alpha = scorer.compute_alpha(snap, pareto_proximity=1.0)
+        assert alpha <= 0.9 + 1e-9
+
+    def test_boost_proportional_to_proximity(self):
+        """Higher proximity should give higher alpha (monotonic)."""
+        snap = _make_clean_snapshot()
+        scorer = FeasibilityFirstScorer(
+            alpha_max=0.9, alpha_min=0.1, pareto_proximity_boost=0.3
+        )
+        alpha_low = scorer.compute_alpha(snap, pareto_proximity=0.2)
+        alpha_mid = scorer.compute_alpha(snap, pareto_proximity=0.5)
+        alpha_high = scorer.compute_alpha(snap, pareto_proximity=0.8)
+        assert alpha_low <= alpha_mid <= alpha_high

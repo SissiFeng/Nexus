@@ -60,18 +60,28 @@ class FeasibilityFirstScorer:
         alpha_max: float = 0.9,
         alpha_min: float = 0.1,
         feasibility_threshold: float = 0.5,
+        pareto_proximity_boost: float = 0.0,
     ) -> None:
         self._alpha_max = alpha_max
         self._alpha_min = alpha_min
         self._feasibility_threshold = feasibility_threshold
+        self._pareto_proximity_boost = pareto_proximity_boost
 
-    def compute_alpha(self, snapshot: CampaignSnapshot) -> float:
+    def compute_alpha(
+        self,
+        snapshot: CampaignSnapshot,
+        pareto_proximity: float | None = None,
+    ) -> float:
         """Compute the adaptive blending weight.
 
         Parameters
         ----------
         snapshot :
             Current campaign state.
+        pareto_proximity : float | None
+            Proximity to the Pareto front boundary (0 = far, 1 = on front).
+            When provided and ``pareto_proximity_boost > 0``, the alpha
+            is increased near the boundary to favour feasibility.
 
         Returns
         -------
@@ -80,6 +90,12 @@ class FeasibilityFirstScorer:
         """
         feas_rate = 1.0 - snapshot.failure_rate
         alpha = self._alpha_max * (1.0 - feas_rate) + self._alpha_min * feas_rate
+
+        # Boost alpha near the Pareto front boundary
+        if pareto_proximity is not None and self._pareto_proximity_boost > 0:
+            boost = self._pareto_proximity_boost * pareto_proximity
+            alpha = min(self._alpha_max, alpha + boost)
+
         return alpha
 
     def score_candidates(

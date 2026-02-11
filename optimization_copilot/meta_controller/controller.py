@@ -90,7 +90,7 @@ class MetaController:
         Parameters
         ----------
         snapshot : CampaignSnapshot
-        diagnostics : dict with the 14 diagnostic signal values
+        diagnostics : dict with the 17 diagnostic signal values
         fingerprint : ProblemFingerprint
         seed : int for deterministic tie-breaking
         previous_phase : Phase or None
@@ -295,6 +295,13 @@ class MetaController:
         # Tiny data → more exploration
         if fingerprint.data_scale == DataScale.TINY:
             base = min(1.0, base + 0.1)
+
+        # UQ calibration: increase exploration when uncertainty is miscalibrated
+        miscal = diagnostics.get("miscalibration_score", 0)
+        overconf = diagnostics.get("overconfidence_rate", 0)
+        if miscal > 0.3 or overconf > 0.3:
+            uq_boost = max(miscal, overconf) * 0.2
+            base = min(1.0, base + uq_boost)
 
         return round(base, 2)
 

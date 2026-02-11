@@ -92,6 +92,27 @@ class RuleSignature:
 
 
 @dataclass
+class RuleDiff:
+    """Structured diff between two rule sets.
+
+    Attributes
+    ----------
+    added_rules : list[str]
+        Rule IDs present in the "after" set but not in the "before" set.
+    removed_rules : list[str]
+        Rule IDs present in the "before" set but not in the "after" set.
+    modified_rules : dict[str, dict[str, tuple]]
+        ``{rule_id: {field: (old, new)}}`` for rules that changed.
+    n_unchanged : int
+        Count of rules present in both sets with no changes.
+    """
+    added_rules: list[str] = field(default_factory=list)
+    removed_rules: list[str] = field(default_factory=list)
+    modified_rules: dict[str, dict[str, tuple]] = field(default_factory=dict)
+    n_unchanged: int = 0
+
+
+@dataclass
 class RuleTrace:
     """Complete audit trail of every rule that fired for one decision cycle.
 
@@ -275,7 +296,7 @@ class DecisionRuleEngine:
         Parameters
         ----------
         diagnostics : dict
-            Diagnostic signal vector (14 signals from the diagnostic engine).
+            Diagnostic signal vector (17 signals from the diagnostic engine).
         snapshot_size : int
             Number of observations in the campaign snapshot.
         phase : str | None
@@ -357,6 +378,62 @@ class DecisionRuleEngine:
             "changed_actions": changed_actions,
             "path_changed": trace_a.decision_path != trace_b.decision_path,
         }
+
+    # ── Rule set diff ────────────────────────────────────────────────────
+
+    @staticmethod
+    def diff_rule_sets(
+        rules_a: list[DecisionRule],
+        rules_b: list[DecisionRule],
+    ) -> RuleDiff:
+        """Compare two lists of DecisionRule and produce a structured diff.
+
+        Parameters
+        ----------
+        rules_a :
+            "Before" rule set.
+        rules_b :
+            "After" rule set.
+
+        Returns
+        -------
+        RuleDiff describing added, removed, and modified rules.
+        """
+        map_a = {r.rule_id: r for r in rules_a}
+        map_b = {r.rule_id: r for r in rules_b}
+
+        ids_a = set(map_a.keys())
+        ids_b = set(map_b.keys())
+
+        added = sorted(ids_b - ids_a)
+        removed = sorted(ids_a - ids_b)
+
+        modified: dict[str, dict[str, tuple[Any, Any]]] = {}
+        for rid in sorted(ids_a & ids_b):
+            ra, rb = map_a[rid], map_b[rid]
+            changes: dict[str, tuple[Any, Any]] = {}
+            if ra.version != rb.version:
+                changes["version"] = (ra.version, rb.version)
+            if ra.trigger_conditions != rb.trigger_conditions:
+                changes["trigger_conditions"] = (
+                    list(ra.trigger_conditions),
+                    list(rb.trigger_conditions),
+                )
+            if ra.action != rb.action:
+                changes["action"] = (ra.action, rb.action)
+            if ra.priority != rb.priority:
+                changes["priority"] = (ra.priority, rb.priority)
+            if ra.description != rb.description:
+                changes["description"] = (ra.description, rb.description)
+            if changes:
+                modified[rid] = changes
+
+        return RuleDiff(
+            added_rules=added,
+            removed_rules=removed,
+            modified_rules=modified,
+            n_unchanged=len(ids_a & ids_b) - len(modified),
+        )
 
     # ── Serialisation ─────────────────────────────────────────────────────
 

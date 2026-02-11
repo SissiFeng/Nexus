@@ -6,11 +6,19 @@ import pytest
 
 from optimization_copilot.feature_extraction.extractors import (
     BasicCurveExtractor,
+    ConsistencyReport,
     CurveData,
+    CurveEmbedder,
+    CurveEmbedding,
+    EISNyquistExtractor,
     ExtractedFeatures,
     FeatureExtractor,
     FeatureExtractorRegistry,
     ThresholdExtractor,
+    UVVisExtractor,
+    VersionLockedRegistry,
+    XRDPatternExtractor,
+    check_extractor_consistency,
     curve_stability_signal,
 )
 
@@ -390,3 +398,321 @@ class TestCurveStabilitySignal:
         std = math.sqrt(((10 - 20) ** 2 + (20 - 20) ** 2 + (30 - 20) ** 2) / 3)
         expected_cv = std / abs(mean)
         assert abs(signals["peak_value"] - expected_cv) < 1e-9
+
+
+# ── EIS Nyquist Extractor Tests ──────────────────────────
+
+
+def _eis_semicircle() -> CurveData:
+    """Synthetic EIS semicircle: Z' from 10→60, -Z'' rises then falls."""
+    xs = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    ys = [0.0, 15.0, 25.0, 20.0, 10.0, 0.0]  # -Z'' (imaginary part)
+    return CurveData(x_values=xs, y_values=ys, metadata={"type": "eis"})
+
+
+class TestEISNyquistExtractor:
+    def setup_method(self):
+        self.extractor = EISNyquistExtractor()
+
+    def test_name_and_version(self):
+        assert self.extractor.name() == "eis_nyquist"
+        assert self.extractor.version() == "1.0.0"
+
+    def test_feature_names(self):
+        names = self.extractor.feature_names()
+        assert len(names) == 6
+        assert "r_solution" in names
+        assert "r_polarization" in names
+        assert "semicircle_diameter" in names
+
+    def test_semicircle_extraction(self):
+        result = self.extractor.extract(_eis_semicircle())
+        f = result.features
+        assert f["r_solution"] == 10.0
+        assert f["r_polarization"] == 60.0
+        assert f["semicircle_diameter"] == 50.0
+        assert f["max_imaginary"] == 25.0
+        assert f["peak_frequency_position"] == 30.0
+
+    def test_empty_curve(self):
+        result = self.extractor.extract(_empty_curve())
+        for name in self.extractor.feature_names():
+            assert result.features[name] == 0.0
+
+    def test_hash_populated(self):
+        result = self.extractor.extract(_eis_semicircle())
+        assert len(result.feature_hash) == 16
+
+
+# ── UV-Vis Extractor Tests ──────────────────────────────
+
+
+def _uv_vis_peak() -> CurveData:
+    """Synthetic UV-Vis spectrum with a peak at 450nm."""
+    xs = [300.0, 350.0, 400.0, 450.0, 500.0, 550.0, 600.0]
+    ys = [0.1, 0.2, 0.5, 1.2, 0.6, 0.15, 0.1]
+    return CurveData(x_values=xs, y_values=ys, metadata={"type": "uv_vis"})
+
+
+class TestUVVisExtractor:
+    def setup_method(self):
+        self.extractor = UVVisExtractor()
+
+    def test_name_and_version(self):
+        assert self.extractor.name() == "uv_vis"
+        assert self.extractor.version() == "1.0.0"
+
+    def test_feature_names(self):
+        names = self.extractor.feature_names()
+        assert len(names) == 6
+        assert "peak_wavelength" in names
+        assert "fwhm" in names
+
+    def test_peak_detection(self):
+        result = self.extractor.extract(_uv_vis_peak())
+        f = result.features
+        assert f["peak_wavelength"] == 450.0
+        assert f["peak_absorbance"] == 1.2
+        assert f["peak_prominence"] > 0.0
+
+    def test_fwhm_positive(self):
+        result = self.extractor.extract(_uv_vis_peak())
+        assert result.features["fwhm"] > 0.0
+
+    def test_total_absorbance_positive(self):
+        result = self.extractor.extract(_uv_vis_peak())
+        assert result.features["total_absorbance"] > 0.0
+
+    def test_empty_curve(self):
+        result = self.extractor.extract(_empty_curve())
+        for name in self.extractor.feature_names():
+            assert result.features[name] == 0.0
+
+
+# ── XRD Pattern Extractor Tests ──────────────────────────
+
+
+def _xrd_pattern() -> CurveData:
+    """Synthetic XRD with peaks at 25° and 45°."""
+    xs = list(range(10, 61))  # 2-theta: 10° to 60°
+    ys = [50.0] * 51
+    # Add peaks
+    ys[15] = 500.0  # peak at 25°
+    ys[14] = 200.0
+    ys[16] = 200.0
+    ys[35] = 300.0  # peak at 45°
+    ys[34] = 150.0
+    ys[36] = 150.0
+    return CurveData(x_values=[float(x) for x in xs], y_values=ys, metadata={"type": "xrd"})
+
+
+class TestXRDPatternExtractor:
+    def setup_method(self):
+        self.extractor = XRDPatternExtractor()
+
+    def test_name_and_version(self):
+        assert self.extractor.name() == "xrd_pattern"
+        assert self.extractor.version() == "1.0.0"
+
+    def test_feature_names(self):
+        names = self.extractor.feature_names()
+        assert len(names) == 6
+        assert "primary_peak_angle" in names
+        assert "n_peaks" in names
+
+    def test_peak_detection(self):
+        result = self.extractor.extract(_xrd_pattern())
+        f = result.features
+        assert f["primary_peak_angle"] == 25.0
+        assert f["primary_peak_intensity"] == 500.0
+        assert f["n_peaks"] >= 2.0
+
+    def test_background_level(self):
+        result = self.extractor.extract(_xrd_pattern())
+        assert result.features["background_level"] == pytest.approx(50.0)
+
+    def test_crystallinity_index_range(self):
+        result = self.extractor.extract(_xrd_pattern())
+        ci = result.features["crystallinity_index"]
+        assert 0.0 <= ci <= 1.0
+
+    def test_empty_curve(self):
+        result = self.extractor.extract(_empty_curve())
+        for name in self.extractor.feature_names():
+            assert result.features[name] == 0.0
+
+
+# ── Version-Locked Registry Tests ────────────────────────
+
+
+class TestVersionLockedRegistry:
+    def test_register_and_get(self):
+        reg = VersionLockedRegistry()
+        reg.register(BasicCurveExtractor)
+        assert isinstance(reg.get("basic_curve"), BasicCurveExtractor)
+
+    def test_allowlist_blocks_unallowed(self):
+        reg = VersionLockedRegistry(allowlist=["basic_curve"])
+        reg.register(BasicCurveExtractor)
+        with pytest.raises(ValueError, match="not in the allowlist"):
+            reg.register(ThresholdExtractor)
+
+    def test_allowlist_allows_listed(self):
+        reg = VersionLockedRegistry(allowlist=["basic_curve", "threshold"])
+        reg.register(BasicCurveExtractor)
+        reg.register(ThresholdExtractor)
+        assert len(reg.list_extractors()) == 2
+
+    def test_denylist_blocks_denied(self):
+        reg = VersionLockedRegistry(denylist=["threshold"])
+        reg.register(BasicCurveExtractor)
+        with pytest.raises(ValueError, match="denylist"):
+            reg.register(ThresholdExtractor)
+
+    def test_version_locking(self):
+        reg = VersionLockedRegistry()
+        reg.register(BasicCurveExtractor)
+        reg.lock_version("basic_curve", "1.0.0")
+        locked = reg.get_locked_versions()
+        assert locked == {"basic_curve": "1.0.0"}
+
+    def test_version_lock_mismatch_raises(self):
+        reg = VersionLockedRegistry()
+        reg.register(BasicCurveExtractor)
+        with pytest.raises(ValueError, match="cannot lock"):
+            reg.lock_version("basic_curve", "9.9.9")
+
+    def test_lock_nonexistent_raises(self):
+        reg = VersionLockedRegistry()
+        with pytest.raises(KeyError):
+            reg.lock_version("nonexistent", "1.0.0")
+
+    def test_version_compliance_passes(self):
+        reg = VersionLockedRegistry()
+        reg.register(BasicCurveExtractor)
+        reg.lock_version("basic_curve", "1.0.0")
+        assert reg.check_version_compliance() == []
+
+    def test_version_compliance_detects_missing(self):
+        reg = VersionLockedRegistry()
+        reg.register(BasicCurveExtractor)
+        reg.lock_version("basic_curve", "1.0.0")
+        # Remove the extractor behind the scenes
+        reg._extractors.pop("basic_curve")
+        violations = reg.check_version_compliance()
+        assert len(violations) == 1
+        assert "not registered" in violations[0]
+
+
+# ── Consistency Checking Tests ────────────────────────────
+
+
+class TestConsistencyCheck:
+    def test_basic_extractor_consistent(self):
+        curve = _simple_curve()
+        report = check_extractor_consistency(curve, BasicCurveExtractor())
+        assert report.is_consistent is True
+        assert report.n_runs == 3
+        for delta in report.feature_deltas.values():
+            assert delta == 0.0
+
+    def test_threshold_extractor_consistent(self):
+        curve = _simple_curve()
+        report = check_extractor_consistency(curve, ThresholdExtractor(threshold=5.0))
+        assert report.is_consistent is True
+
+    def test_eis_extractor_consistent(self):
+        curve = _eis_semicircle()
+        report = check_extractor_consistency(curve, EISNyquistExtractor())
+        assert report.is_consistent is True
+
+    def test_custom_n_runs(self):
+        curve = _simple_curve()
+        report = check_extractor_consistency(curve, BasicCurveExtractor(), n_runs=10)
+        assert report.n_runs == 10
+        assert report.is_consistent is True
+
+    def test_report_type(self):
+        curve = _simple_curve()
+        report = check_extractor_consistency(curve, BasicCurveExtractor())
+        assert isinstance(report, ConsistencyReport)
+
+
+# ── Curve Embedding Tests ────────────────────────────────
+
+
+class TestCurveEmbedder:
+    def _make_curves(self, n: int = 10) -> list[CurveData]:
+        """Generate n curves with varying slope."""
+        curves = []
+        for i in range(n):
+            xs = [float(j) for j in range(20)]
+            ys = [j * (1.0 + i * 0.5) + (i % 3) * 0.1 for j in range(20)]
+            curves.append(CurveData(x_values=xs, y_values=ys))
+        return curves
+
+    def test_fit_sets_is_fitted(self):
+        embedder = CurveEmbedder(n_components=2)
+        assert not embedder.is_fitted
+        embedder.fit(self._make_curves())
+        assert embedder.is_fitted
+
+    def test_transform_before_fit_raises(self):
+        embedder = CurveEmbedder()
+        with pytest.raises(RuntimeError, match="not been fitted"):
+            embedder.transform(_simple_curve())
+
+    def test_fit_on_empty_raises(self):
+        embedder = CurveEmbedder()
+        with pytest.raises(ValueError, match="empty"):
+            embedder.fit([])
+
+    def test_transform_returns_embedding(self):
+        embedder = CurveEmbedder(n_components=3)
+        curves = self._make_curves()
+        embedder.fit(curves)
+        result = embedder.transform(curves[0])
+        assert isinstance(result, CurveEmbedding)
+        assert len(result.components) == 3
+        assert len(result.explained_variance) == 3
+        assert result.reconstruction_error >= 0.0
+
+    def test_fit_transform_returns_all(self):
+        embedder = CurveEmbedder(n_components=2)
+        curves = self._make_curves(5)
+        results = embedder.fit_transform(curves)
+        assert len(results) == 5
+        for r in results:
+            assert len(r.components) == 2
+
+    def test_reconstruction_error_decreases_with_more_components(self):
+        curves = self._make_curves(10)
+        errs = []
+        for k in [1, 2, 3]:
+            embedder = CurveEmbedder(n_components=k, n_points=20)
+            embedder.fit(curves)
+            result = embedder.transform(curves[0])
+            errs.append(result.reconstruction_error)
+        # More components → lower or equal reconstruction error
+        for i in range(len(errs) - 1):
+            assert errs[i] >= errs[i + 1] - 1e-6
+
+    def test_embedding_deterministic(self):
+        curves = self._make_curves(5)
+        e1 = CurveEmbedder(n_components=2, n_points=50)
+        e2 = CurveEmbedder(n_components=2, n_points=50)
+        e1.fit(curves)
+        e2.fit(curves)
+        r1 = e1.transform(curves[0])
+        r2 = e2.transform(curves[0])
+        for a, b in zip(r1.components, r2.components):
+            assert abs(abs(a) - abs(b)) < 1e-6  # sign may flip
+
+    def test_single_curve_fit(self):
+        curves = [_simple_curve()]
+        embedder = CurveEmbedder(n_components=1, n_points=5)
+        embedder.fit(curves)
+        result = embedder.transform(curves[0])
+        assert len(result.components) == 1
+        # Single curve → reconstruction should be near-perfect
+        assert result.reconstruction_error < 1e-6

@@ -3,6 +3,7 @@
 from optimization_copilot.schema.rules import (
     DecisionRule,
     DecisionRuleEngine,
+    RuleDiff,
     RuleSignature,
     RuleTrace,
     _compute_signature,
@@ -327,3 +328,104 @@ class TestSignatureHashing:
         assert len(trace1.signatures) == len(trace2.signatures)
         for s1, s2 in zip(trace1.signatures, trace2.signatures):
             assert s1.signature_hash == s2.signature_hash
+
+
+# ── Test: diff_rule_sets ────────────────────────────────────────────────────
+
+class TestDiffRuleSets:
+    """Tests for DecisionRuleEngine.diff_rule_sets (RuleDiff output)."""
+
+    def _rule(self, rule_id: str, **overrides) -> DecisionRule:
+        defaults = dict(
+            rule_id=rule_id,
+            version="1.0.0",
+            description="test",
+            trigger_conditions=("default",),
+            action="do_something",
+            priority=50,
+        )
+        defaults.update(overrides)
+        return DecisionRule(**defaults)
+
+    def test_identical_sets_no_changes(self):
+        rules = [self._rule("r1"), self._rule("r2")]
+        diff = DecisionRuleEngine.diff_rule_sets(rules, rules)
+        assert diff.added_rules == []
+        assert diff.removed_rules == []
+        assert diff.modified_rules == {}
+        assert diff.n_unchanged == 2
+
+    def test_added_rule_detected(self):
+        before = [self._rule("r1")]
+        after = [self._rule("r1"), self._rule("r2")]
+        diff = DecisionRuleEngine.diff_rule_sets(before, after)
+        assert diff.added_rules == ["r2"]
+        assert diff.removed_rules == []
+        assert diff.n_unchanged == 1
+
+    def test_removed_rule_detected(self):
+        before = [self._rule("r1"), self._rule("r2")]
+        after = [self._rule("r1")]
+        diff = DecisionRuleEngine.diff_rule_sets(before, after)
+        assert diff.removed_rules == ["r2"]
+        assert diff.added_rules == []
+        assert diff.n_unchanged == 1
+
+    def test_modified_version_detected(self):
+        before = [self._rule("r1", version="1.0.0")]
+        after = [self._rule("r1", version="2.0.0")]
+        diff = DecisionRuleEngine.diff_rule_sets(before, after)
+        assert "r1" in diff.modified_rules
+        assert "version" in diff.modified_rules["r1"]
+        assert diff.modified_rules["r1"]["version"] == ("1.0.0", "2.0.0")
+        assert diff.n_unchanged == 0
+
+    def test_modified_action_detected(self):
+        before = [self._rule("r1", action="old_action")]
+        after = [self._rule("r1", action="new_action")]
+        diff = DecisionRuleEngine.diff_rule_sets(before, after)
+        assert "action" in diff.modified_rules["r1"]
+        assert diff.modified_rules["r1"]["action"] == ("old_action", "new_action")
+
+    def test_modified_trigger_conditions_detected(self):
+        before = [self._rule("r1", trigger_conditions=("cond_a",))]
+        after = [self._rule("r1", trigger_conditions=("cond_a", "cond_b"))]
+        diff = DecisionRuleEngine.diff_rule_sets(before, after)
+        assert "trigger_conditions" in diff.modified_rules["r1"]
+
+    def test_modified_priority_detected(self):
+        before = [self._rule("r1", priority=10)]
+        after = [self._rule("r1", priority=99)]
+        diff = DecisionRuleEngine.diff_rule_sets(before, after)
+        assert diff.modified_rules["r1"]["priority"] == (10, 99)
+
+    def test_complex_diff_add_remove_modify(self):
+        before = [
+            self._rule("r1"),
+            self._rule("r2", version="1.0.0"),
+            self._rule("r3"),
+        ]
+        after = [
+            self._rule("r2", version="2.0.0"),
+            self._rule("r4"),
+        ]
+        diff = DecisionRuleEngine.diff_rule_sets(before, after)
+        assert diff.added_rules == ["r4"]
+        assert sorted(diff.removed_rules) == ["r1", "r3"]
+        assert "r2" in diff.modified_rules
+        assert diff.n_unchanged == 0
+
+    def test_empty_sets(self):
+        diff = DecisionRuleEngine.diff_rule_sets([], [])
+        assert diff.added_rules == []
+        assert diff.removed_rules == []
+        assert diff.modified_rules == {}
+        assert diff.n_unchanged == 0
+
+    def test_diff_with_default_rule_set(self):
+        """Diff the default engine rules against themselves."""
+        engine = DecisionRuleEngine()
+        rules = engine.rules
+        diff = DecisionRuleEngine.diff_rule_sets(rules, rules)
+        assert diff.n_unchanged == 10
+        assert diff.added_rules == []

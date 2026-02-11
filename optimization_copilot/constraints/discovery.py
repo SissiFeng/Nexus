@@ -375,6 +375,163 @@ def _median(values: list[float]) -> float:
     return (s[mid - 1] + s[mid]) / 2.0
 
 
+# ── Cross-campaign constraint transfer ────────────────
+
+
+class ConstraintMigrator:
+    """Transfer discovered constraints from a source campaign to a new one.
+
+    Validates parameter compatibility: only constraints whose parameter names
+    exist in the target campaign (and have overlapping ranges) are kept.
+    """
+
+    def migrate(
+        self,
+        source_report: ConstraintReport,
+        target_snapshot: CampaignSnapshot,
+        *,
+        min_confidence: float = 0.5,
+    ) -> ConstraintReport:
+        """Migrate compatible constraints from *source_report* to *target_snapshot*.
+
+        Parameters
+        ----------
+        source_report : ConstraintReport
+            Constraints discovered in a previous campaign.
+        target_snapshot : CampaignSnapshot
+            The new campaign to receive constraints.
+        min_confidence : float
+            Only migrate constraints above this confidence.
+
+        Returns
+        -------
+        ConstraintReport with applicable subset of source constraints.
+        """
+        target_params = {s.name: s for s in target_snapshot.parameter_specs}
+        migrated: list[DiscoveredConstraint] = []
+
+        for c in source_report.constraints:
+            if c.confidence < min_confidence:
+                continue
+            if not all(p in target_params for p in c.parameters):
+                continue
+            # For threshold constraints, verify range overlap
+            if c.constraint_type == "threshold" and c.threshold_value is not None:
+                spec = target_params[c.parameters[0]]
+                if spec.lower is not None and c.threshold_value < spec.lower:
+                    continue
+                if spec.upper is not None and c.threshold_value > spec.upper:
+                    continue
+            migrated.append(c)
+
+        return ConstraintReport(
+            constraints=migrated,
+            n_observations_analyzed=source_report.n_observations_analyzed,
+            coverage=source_report.coverage,
+        )
+
+
+# ── Constraint tightening/relaxation tracking ────────
+
+
+@dataclass
+class ConstraintDelta:
+    """Change in a single constraint across two snapshots."""
+
+    parameter: str
+    old_threshold: float | None
+    new_threshold: float | None
+    old_failure_rate: float
+    new_failure_rate: float
+    direction: str  # "tightened", "relaxed", "unchanged", "new", "removed"
+
+
+@dataclass
+class ConstraintEvolution:
+    """Summary of how constraints evolved between two time points."""
+
+    deltas: list[ConstraintDelta]
+    n_tightened: int
+    n_relaxed: int
+    n_new: int
+    n_removed: int
+
+
+class ConstraintTracker:
+    """Track how constraints evolve across successive snapshots."""
+
+    def compare(
+        self,
+        old_report: ConstraintReport,
+        new_report: ConstraintReport,
+    ) -> ConstraintEvolution:
+        """Compare two constraint reports and produce evolution summary."""
+        old_by_params = {tuple(c.parameters): c for c in old_report.constraints}
+        new_by_params = {tuple(c.parameters): c for c in new_report.constraints}
+
+        deltas: list[ConstraintDelta] = []
+        n_tightened = 0
+        n_relaxed = 0
+        n_new = 0
+        n_removed = 0
+
+        all_keys = set(old_by_params) | set(new_by_params)
+        for key in sorted(all_keys):
+            old_c = old_by_params.get(key)
+            new_c = new_by_params.get(key)
+
+            if old_c is None and new_c is not None:
+                deltas.append(ConstraintDelta(
+                    parameter=",".join(key),
+                    old_threshold=None,
+                    new_threshold=new_c.threshold_value,
+                    old_failure_rate=0.0,
+                    new_failure_rate=new_c.failure_rate_above,
+                    direction="new",
+                ))
+                n_new += 1
+            elif old_c is not None and new_c is None:
+                deltas.append(ConstraintDelta(
+                    parameter=",".join(key),
+                    old_threshold=old_c.threshold_value,
+                    new_threshold=None,
+                    old_failure_rate=old_c.failure_rate_above,
+                    new_failure_rate=0.0,
+                    direction="removed",
+                ))
+                n_removed += 1
+            elif old_c is not None and new_c is not None:
+                direction = "unchanged"
+                if (
+                    old_c.threshold_value is not None
+                    and new_c.threshold_value is not None
+                ):
+                    # Tightened = threshold moved toward the safe region
+                    # (higher failure_rate_above with same or lower threshold)
+                    if new_c.failure_rate_above > old_c.failure_rate_above + 0.05:
+                        direction = "tightened"
+                        n_tightened += 1
+                    elif new_c.failure_rate_above < old_c.failure_rate_above - 0.05:
+                        direction = "relaxed"
+                        n_relaxed += 1
+                deltas.append(ConstraintDelta(
+                    parameter=",".join(key),
+                    old_threshold=old_c.threshold_value,
+                    new_threshold=new_c.threshold_value,
+                    old_failure_rate=old_c.failure_rate_above,
+                    new_failure_rate=new_c.failure_rate_above,
+                    direction=direction,
+                ))
+
+        return ConstraintEvolution(
+            deltas=deltas,
+            n_tightened=n_tightened,
+            n_relaxed=n_relaxed,
+            n_new=n_new,
+            n_removed=n_removed,
+        )
+
+
 def _obs_matches_interaction(
     obs: Observation,
     constraint: DiscoveredConstraint,

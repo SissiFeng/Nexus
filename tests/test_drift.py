@@ -7,7 +7,12 @@ from optimization_copilot.core.models import (
     Phase,
     VariableType,
 )
-from optimization_copilot.drift.detector import DriftDetector, DriftReport
+from optimization_copilot.drift.detector import (
+    DriftDetector,
+    DriftReport,
+    RegimeChangePoint,
+    DimensionAttribution,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────
@@ -415,3 +420,109 @@ class TestClassifyDriftType:
         scores = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
         result = det.classify_drift_type(scores)
         assert result == "gradual"
+
+
+# ── Regime change detection ──────────────────────────────
+
+
+class TestRegimeChangeDetection:
+
+    def test_clear_regime_change(self):
+        """Sharp KPI jump at midpoint should be detected."""
+        kpi = [5.0] * 15 + [15.0] * 15
+        snap = _make_snapshot(kpi)
+        det = DriftDetector(reference_window=10, test_window=10)
+        changes = det.detect_regime_changes(snap, min_segment=5)
+        assert len(changes) >= 1
+        cp = changes[0]
+        # Change should be near the midpoint (index ~15)
+        assert 10 <= cp.index <= 20
+        assert cp.shift_magnitude > 1.0
+        assert cp.after_mean > cp.before_mean
+
+    def test_no_regime_change_stable(self):
+        """Stable data should have no regime changes."""
+        kpi = [5.0 + 0.1 * (i % 3) for i in range(30)]
+        snap = _make_snapshot(kpi)
+        det = DriftDetector(reference_window=10, test_window=10)
+        changes = det.detect_regime_changes(snap, min_segment=5)
+        assert len(changes) == 0
+
+    def test_too_few_observations(self):
+        """Not enough data should return empty."""
+        kpi = [5.0] * 5
+        snap = _make_snapshot(kpi)
+        det = DriftDetector()
+        changes = det.detect_regime_changes(snap, min_segment=5)
+        assert len(changes) == 0
+
+    def test_change_point_dataclass(self):
+        """RegimeChangePoint should have expected fields."""
+        cp = RegimeChangePoint(
+            index=10, before_mean=5.0, after_mean=15.0,
+            shift_magnitude=3.0, confidence=0.75
+        )
+        assert cp.index == 10
+        assert cp.confidence == 0.75
+
+
+# ── Per-dimension drift attribution ──────────────────────
+
+
+class TestDriftAttribution:
+
+    def test_attribution_with_drifting_param(self):
+        """When x1 changes correlation while x2 stays constant, x1 gets higher attribution."""
+        n = 30
+        # Reference: x1 positively correlated with y
+        # Test: x1 negatively correlated with y
+        kpi = []
+        x1_vals = []
+        x2_vals = []
+        for i in range(n):
+            x1 = float(i) / n * 10
+            x2 = 5.0
+            if i < 15:
+                y = x1 * 2  # positive correlation
+            else:
+                y = 20 - x1 * 2  # negative correlation
+            kpi.append(y)
+            x1_vals.append(x1)
+            x2_vals.append(x2)
+
+        snap = _make_snapshot(kpi, x1_values=x1_vals, x2_values=x2_vals)
+        det = DriftDetector(reference_window=10, test_window=10)
+        attributions = det.attribute_drift(snap)
+        assert len(attributions) == 2
+        # x1 should have higher attribution than x2
+        x1_attr = next(a for a in attributions if a.parameter == "x1")
+        x2_attr = next(a for a in attributions if a.parameter == "x2")
+        assert x1_attr.attribution_score >= x2_attr.attribution_score
+
+    def test_attribution_too_few_observations(self):
+        """Not enough data should return empty list."""
+        kpi = [5.0] * 5
+        snap = _make_snapshot(kpi)
+        det = DriftDetector(reference_window=10, test_window=10)
+        attributions = det.attribute_drift(snap)
+        assert len(attributions) == 0
+
+    def test_attribution_scores_bounded(self):
+        """Attribution scores should be in [0, 1]."""
+        kpi = [float(i) for i in range(30)]
+        snap = _make_snapshot(kpi)
+        det = DriftDetector(reference_window=10, test_window=10)
+        attributions = det.attribute_drift(snap)
+        for a in attributions:
+            assert 0.0 <= a.attribution_score <= 1.0
+
+    def test_dimension_attribution_dataclass(self):
+        """DimensionAttribution should have expected fields."""
+        da = DimensionAttribution(
+            parameter="x1",
+            correlation_shift=0.5,
+            mean_shift=1.2,
+            attribution_score=0.65,
+        )
+        assert da.parameter == "x1"
+        assert da.attribution_score == 0.65

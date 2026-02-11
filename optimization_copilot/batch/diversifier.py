@@ -1,7 +1,8 @@
-"""Batch diversification policy.
+"""Batch diversification, failure replanning, and adaptive sizing.
 
 Ensures that batches of suggested parameter configurations are
 diverse rather than clustered, improving exploration coverage.
+Also handles batch failure replanning and stage-aware adaptive batch sizing.
 """
 
 from __future__ import annotations
@@ -9,10 +10,12 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
+from typing import Any
 
 from optimization_copilot.core.models import (
     Observation,
     ParameterSpec,
+    Phase,
     VariableType,
 )
 
@@ -420,3 +423,266 @@ class BatchDiversifier:
                     bins.append(b)
 
         return tuple(bins)
+
+
+# ---------------------------------------------------------------------------
+# Batch failure replanning (Pain Point 6)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ReplanResult:
+    """Result of batch failure replanning."""
+    replacement_points: list[dict[str, float]]
+    n_failed: int
+    n_replaced: int
+    strategy: str
+
+
+class BatchFailureReplanner:
+    """Auto-supplement a batch when some points fail.
+
+    When a batch of experiments is run and some fail, this replanner
+    generates replacement points to maintain the intended batch size.
+
+    Parameters
+    ----------
+    diversifier :
+        Optional BatchDiversifier instance for diverse replacements.
+        If ``None``, a default hybrid diversifier is used.
+    """
+
+    def __init__(self, diversifier: BatchDiversifier | None = None) -> None:
+        self._diversifier = diversifier or BatchDiversifier(strategy="hybrid")
+
+    def replan(
+        self,
+        original_batch: list[dict[str, float]],
+        results: list[bool],
+        specs: list[ParameterSpec],
+        existing_obs: list[Observation] | None = None,
+        seed: int = 42,
+    ) -> ReplanResult:
+        """Generate replacements for failed batch points.
+
+        Parameters
+        ----------
+        original_batch :
+            The original batch of parameter configurations.
+        results :
+            Boolean per point: ``True`` = succeeded, ``False`` = failed.
+        specs :
+            Parameter specifications (for generating replacements).
+        existing_obs :
+            Already-completed observations for diversity.
+        seed :
+            Random seed.
+
+        Returns
+        -------
+        ReplanResult with replacement points.
+        """
+        if len(original_batch) != len(results):
+            raise ValueError(
+                f"Batch size ({len(original_batch)}) and results size "
+                f"({len(results)}) must match"
+            )
+
+        failed_indices = [i for i, ok in enumerate(results) if not ok]
+        n_failed = len(failed_indices)
+
+        if n_failed == 0:
+            return ReplanResult(
+                replacement_points=[],
+                n_failed=0,
+                n_replaced=0,
+                strategy="none",
+            )
+
+        # Generate candidates by perturbing the successful points
+        rng = random.Random(seed)
+        successful = [
+            original_batch[i] for i, ok in enumerate(results) if ok
+        ]
+
+        candidates = self._generate_candidates(
+            successful, specs, n_candidates=n_failed * 5, rng=rng,
+        )
+
+        if not candidates:
+            # No successful points to perturb; generate random candidates
+            candidates = self._random_candidates(specs, n_failed * 5, rng)
+
+        # Use diversifier to pick the most diverse replacements
+        policy = self._diversifier.diversify(
+            candidates, specs, n_select=n_failed,
+            existing_obs=existing_obs, seed=seed,
+        )
+
+        return ReplanResult(
+            replacement_points=policy.points,
+            n_failed=n_failed,
+            n_replaced=len(policy.points),
+            strategy="perturb_successful" if successful else "random",
+        )
+
+    @staticmethod
+    def _generate_candidates(
+        successful: list[dict[str, float]],
+        specs: list[ParameterSpec],
+        n_candidates: int,
+        rng: random.Random,
+    ) -> list[dict[str, float]]:
+        """Generate candidate points by perturbing successful ones."""
+        if not successful:
+            return []
+
+        candidates: list[dict[str, float]] = []
+        for _ in range(n_candidates):
+            base = rng.choice(successful)
+            point: dict[str, float] = {}
+            for spec in specs:
+                val = base.get(spec.name, 0.0)
+                lo = spec.lower if spec.lower is not None else 0.0
+                hi = spec.upper if spec.upper is not None else 1.0
+                rng_size = hi - lo
+                if rng_size > 0 and isinstance(val, (int, float)):
+                    perturbation = rng.gauss(0, rng_size * 0.1)
+                    new_val = max(lo, min(hi, float(val) + perturbation))
+                    point[spec.name] = new_val
+                else:
+                    point[spec.name] = float(val)
+            candidates.append(point)
+
+        return candidates
+
+    @staticmethod
+    def _random_candidates(
+        specs: list[ParameterSpec],
+        n_candidates: int,
+        rng: random.Random,
+    ) -> list[dict[str, float]]:
+        """Generate random candidates within parameter bounds."""
+        candidates: list[dict[str, float]] = []
+        for _ in range(n_candidates):
+            point: dict[str, float] = {}
+            for spec in specs:
+                lo = spec.lower if spec.lower is not None else 0.0
+                hi = spec.upper if spec.upper is not None else 1.0
+                point[spec.name] = rng.uniform(lo, hi)
+            candidates.append(point)
+        return candidates
+
+
+# ---------------------------------------------------------------------------
+# Adaptive batch sizing (Pain Point 6)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BatchSizeRecommendation:
+    """Recommended batch size with reasoning."""
+    batch_size: int
+    reason: str
+    phase_contribution: int
+    noise_adjustment: int
+    failure_adjustment: int
+
+
+class AdaptiveBatchSizer:
+    """Stage-aware and noise-aware batch size computation.
+
+    Computes optimal batch size based on campaign phase, noise level,
+    failure rate, and parameter dimensionality.
+
+    Parameters
+    ----------
+    cold_start_multiplier :
+        Multiply n_params by this for cold-start batch size.
+    min_batch :
+        Minimum batch size in any phase.
+    max_batch :
+        Maximum batch size cap.
+    """
+
+    def __init__(
+        self,
+        cold_start_multiplier: float = 2.0,
+        min_batch: int = 1,
+        max_batch: int = 20,
+    ) -> None:
+        self._cold_start_mult = cold_start_multiplier
+        self._min_batch = min_batch
+        self._max_batch = max_batch
+
+    def compute_size(
+        self,
+        phase: Phase,
+        n_params: int,
+        noise_estimate: float = 0.0,
+        failure_rate: float = 0.0,
+        n_observations: int = 0,
+    ) -> BatchSizeRecommendation:
+        """Compute adaptive batch size.
+
+        Parameters
+        ----------
+        phase :
+            Current campaign phase.
+        n_params :
+            Number of parameters.
+        noise_estimate :
+            Coefficient of variation from diagnostics.
+        failure_rate :
+            Current failure rate.
+        n_observations :
+            Number of observations so far.
+
+        Returns
+        -------
+        BatchSizeRecommendation
+        """
+        reasons: list[str] = []
+
+        # Base size from phase
+        if phase == Phase.COLD_START:
+            base = max(2, int(n_params * self._cold_start_mult))
+            reasons.append(f"cold_start: {n_params}*{self._cold_start_mult}")
+        elif phase == Phase.EXPLOITATION:
+            base = 1
+            reasons.append("exploitation: focused search")
+        elif phase == Phase.STAGNATION:
+            base = max(3, n_params)
+            reasons.append(f"stagnation: restart with {base}")
+        elif phase == Phase.LEARNING:
+            base = max(2, min(5, n_params))
+            reasons.append(f"learning: balanced at {base}")
+        else:
+            base = max(1, n_params)
+            reasons.append(f"default: {base}")
+
+        phase_contribution = base
+
+        # Noise adjustment: high noise → more replicates
+        noise_adj = 0
+        if noise_estimate > 0.5:
+            noise_adj = 2
+            reasons.append(f"high noise (+{noise_adj})")
+        elif noise_estimate > 0.3:
+            noise_adj = 1
+            reasons.append(f"moderate noise (+{noise_adj})")
+
+        # Failure adjustment: high failure rate → extra points
+        fail_adj = 0
+        if failure_rate > 0.3:
+            fail_adj = max(1, int(base * failure_rate))
+            reasons.append(f"high failures (+{fail_adj})")
+
+        total = base + noise_adj + fail_adj
+        total = max(self._min_batch, min(self._max_batch, total))
+
+        return BatchSizeRecommendation(
+            batch_size=total,
+            reason="; ".join(reasons),
+            phase_contribution=phase_contribution,
+            noise_adjustment=noise_adj,
+            failure_adjustment=fail_adj,
+        )

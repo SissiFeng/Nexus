@@ -9,7 +9,13 @@ from optimization_copilot.core.models import (
     VariableType,
 )
 from optimization_copilot.cost.cost_analyzer import CostAnalyzer, CostSignals
-from optimization_copilot.batch.diversifier import BatchDiversifier, BatchPolicy
+from optimization_copilot.batch.diversifier import (
+    AdaptiveBatchSizer,
+    BatchDiversifier,
+    BatchFailureReplanner,
+    BatchPolicy,
+)
+from optimization_copilot.core.models import Phase
 
 
 # ── helpers ───────────────────────────────────────────────
@@ -574,3 +580,113 @@ class TestEdgeCases:
         # KPI goes from 10 to 1, improvement = 10 - 1 = 9
         assert signals.cost_per_improvement > 0.0
         assert signals.cost_per_improvement != math.inf
+
+
+# ── Batch Failure Replanning tests ─────────────────────
+
+
+class TestBatchFailureReplanner:
+
+    def test_no_failures_no_replacements(self):
+        specs = _make_specs()
+        batch = [{"x1": 0.1, "x2": 0.2}, {"x1": 0.5, "x2": 0.6}]
+        results = [True, True]
+        replanner = BatchFailureReplanner()
+        result = replanner.replan(batch, results, specs)
+        assert result.n_failed == 0
+        assert result.n_replaced == 0
+        assert result.replacement_points == []
+
+    def test_all_failures_generates_replacements(self):
+        specs = _make_specs()
+        batch = [{"x1": 0.1, "x2": 0.2}, {"x1": 0.5, "x2": 0.6}]
+        results = [False, False]
+        replanner = BatchFailureReplanner()
+        result = replanner.replan(batch, results, specs, seed=42)
+        assert result.n_failed == 2
+        assert result.n_replaced == 2
+        assert len(result.replacement_points) == 2
+        assert result.strategy == "random"
+
+    def test_partial_failures(self):
+        specs = _make_specs()
+        batch = [
+            {"x1": 0.1, "x2": 0.2},
+            {"x1": 0.5, "x2": 0.6},
+            {"x1": 0.9, "x2": 0.1},
+        ]
+        results = [True, False, True]
+        replanner = BatchFailureReplanner()
+        result = replanner.replan(batch, results, specs, seed=42)
+        assert result.n_failed == 1
+        assert result.n_replaced == 1
+        assert result.strategy == "perturb_successful"
+
+    def test_replacements_within_bounds(self):
+        specs = _make_specs()
+        batch = [{"x1": 0.5, "x2": 0.5}] * 3
+        results = [True, False, False]
+        replanner = BatchFailureReplanner()
+        result = replanner.replan(batch, results, specs, seed=42)
+        for pt in result.replacement_points:
+            for spec in specs:
+                lo = spec.lower or 0.0
+                hi = spec.upper or 1.0
+                assert lo <= pt[spec.name] <= hi
+
+    def test_mismatched_sizes_raises(self):
+        specs = _make_specs()
+        replanner = BatchFailureReplanner()
+        try:
+            replanner.replan([{"x1": 0.5}], [True, False], specs)
+            assert False, "Should have raised ValueError"
+        except ValueError:
+            pass
+
+
+# ── Adaptive Batch Sizer tests ──────────────────────────
+
+
+class TestAdaptiveBatchSizer:
+
+    def test_cold_start_large_batch(self):
+        sizer = AdaptiveBatchSizer()
+        rec = sizer.compute_size(Phase.COLD_START, n_params=3)
+        assert rec.batch_size >= 4  # 3 * 2 = 6
+
+    def test_exploitation_small_batch(self):
+        sizer = AdaptiveBatchSizer()
+        rec = sizer.compute_size(Phase.EXPLOITATION, n_params=5)
+        assert rec.batch_size <= 3
+
+    def test_high_noise_increases_batch(self):
+        sizer = AdaptiveBatchSizer()
+        low_noise = sizer.compute_size(Phase.LEARNING, n_params=3, noise_estimate=0.1)
+        high_noise = sizer.compute_size(Phase.LEARNING, n_params=3, noise_estimate=0.8)
+        assert high_noise.batch_size >= low_noise.batch_size
+        assert high_noise.noise_adjustment > 0
+
+    def test_high_failure_rate_increases_batch(self):
+        sizer = AdaptiveBatchSizer()
+        low_fail = sizer.compute_size(Phase.LEARNING, n_params=3, failure_rate=0.05)
+        high_fail = sizer.compute_size(Phase.LEARNING, n_params=3, failure_rate=0.5)
+        assert high_fail.batch_size >= low_fail.batch_size
+        assert high_fail.failure_adjustment > 0
+
+    def test_capped_at_max(self):
+        sizer = AdaptiveBatchSizer(max_batch=10)
+        rec = sizer.compute_size(
+            Phase.COLD_START, n_params=20, noise_estimate=0.9, failure_rate=0.5,
+        )
+        assert rec.batch_size <= 10
+
+    def test_at_least_min(self):
+        sizer = AdaptiveBatchSizer(min_batch=2)
+        rec = sizer.compute_size(Phase.EXPLOITATION, n_params=1)
+        assert rec.batch_size >= 2
+
+    def test_stagnation_restarts_exploration(self):
+        sizer = AdaptiveBatchSizer()
+        rec = sizer.compute_size(Phase.STAGNATION, n_params=3)
+        assert rec.batch_size >= 3
+        assert "stagnation" in rec.reason
