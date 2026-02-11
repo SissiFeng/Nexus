@@ -79,6 +79,58 @@ def get_campaign(campaign_id: str) -> CampaignDetailResponse:
         record = manager.get(campaign_id)
     except CampaignNotFoundError:
         raise HTTPException(status_code=404, detail=f"Campaign not found: {campaign_id}")
+
+    # Extract computed fields from workspace artifacts
+    workspace = get_workspace()
+    best_parameters = None
+    phases: list[dict] = []
+    kpi_history: dict = {"iterations": [], "values": []}
+
+    # Try to extract best_parameters from result
+    result = workspace.load_result(campaign_id)
+    if result is not None:
+        best_trial = result.get("best_trial")
+        if best_trial is not None:
+            best_parameters = best_trial.get("parameters")
+
+    # Try to extract phases and kpi_history from checkpoint
+    checkpoint = workspace.load_checkpoint(campaign_id)
+    if checkpoint is not None:
+        # Build phases from phase_history
+        raw_phases = checkpoint.get("phase_history", [])
+        for i, entry in enumerate(raw_phases):
+            start_iter = entry.get("iteration", 0)
+            # End is the start of the next phase, or the current iteration
+            if i + 1 < len(raw_phases):
+                end_iter = raw_phases[i + 1].get("iteration", start_iter)
+            else:
+                end_iter = checkpoint.get("iteration", start_iter)
+            phases.append({
+                "name": entry.get("to_phase", "unknown"),
+                "start": start_iter,
+                "end": end_iter,
+            })
+
+        # Build kpi_history from completed_trials
+        completed = checkpoint.get("completed_trials", [])
+        iter_kpi_pairs: list[tuple[int, float]] = []
+        for trial in completed:
+            trial_iter = trial.get("iteration", 0)
+            kpi_values = trial.get("kpi_values", {})
+            if kpi_values:
+                # Use the first KPI value as the primary metric
+                primary_value = next(iter(kpi_values.values()), None)
+                if primary_value is not None:
+                    iter_kpi_pairs.append((trial_iter, primary_value))
+
+        # Sort by iteration and build the history arrays
+        iter_kpi_pairs.sort(key=lambda p: p[0])
+        if iter_kpi_pairs:
+            kpi_history = {
+                "iterations": [p[0] for p in iter_kpi_pairs],
+                "values": [p[1] for p in iter_kpi_pairs],
+            }
+
     return CampaignDetailResponse(
         campaign_id=record.campaign_id,
         name=record.name,
@@ -92,6 +144,9 @@ def get_campaign(campaign_id: str) -> CampaignDetailResponse:
         error_message=record.error_message,
         tags=record.tags,
         metadata=record.metadata,
+        best_parameters=best_parameters,
+        phases=phases,
+        kpi_history=kpi_history,
     )
 
 

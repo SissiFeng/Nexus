@@ -115,12 +115,12 @@ export default function Compare() {
               <tbody>
                 {result.campaigns.map((c) => (
                   <tr
-                    key={c.id}
+                    key={c.campaign_id}
                     className={
-                      c.id === result.winner_id ? "row-winner" : ""
+                      c.campaign_id === result.winner_id ? "row-winner" : ""
                     }
                   >
-                    <td className="mono">{c.id.slice(0, 8)}</td>
+                    <td className="mono">{c.campaign_id.slice(0, 8)}</td>
                     <td>{c.name}</td>
                     <td>
                       <span className={`badge badge-${c.status}`}>
@@ -132,7 +132,7 @@ export default function Compare() {
                       {c.best_kpi !== null ? c.best_kpi.toFixed(4) : "-"}
                     </td>
                     <td>
-                      {c.id === result.winner_id ? (
+                      {c.campaign_id === result.winner_id ? (
                         <span className="winner-tag">Winner</span>
                       ) : (
                         "-"

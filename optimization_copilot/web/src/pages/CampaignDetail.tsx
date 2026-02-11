@@ -79,7 +79,7 @@ export default function CampaignDetail() {
       <div className="campaign-header">
         <div>
           <h1>{campaign.name}</h1>
-          <p className="campaign-id mono">{campaign.id}</p>
+          <p className="campaign-id mono">{campaign.campaign_id}</p>
         </div>
         <div className="campaign-header-right">
           <StatusBadge status={status} />

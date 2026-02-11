@@ -39,7 +39,7 @@ async function request<T>(
 /* ── Campaign CRUD ── */
 
 export interface Campaign {
-  id: string;
+  campaign_id: string;
   name: string;
   status: string;
   iteration: number;
@@ -53,7 +53,7 @@ export interface Campaign {
 }
 
 export interface CampaignSummary {
-  id: string;
+  campaign_id: string;
   name: string;
   status: string;
   iteration: number;
@@ -100,8 +100,8 @@ export function fetchCampaigns(): Promise<CampaignSummary[]> {
   return request<CampaignSummary[]>("/campaigns");
 }
 
-export function fetchCampaign(id: string): Promise<Campaign> {
-  return request<Campaign>(`/campaigns/${id}`);
+export function fetchCampaign(campaignId: string): Promise<Campaign> {
+  return request<Campaign>(`/campaigns/${campaignId}`);
 }
 
 export function createCampaign(
@@ -115,50 +115,50 @@ export function createCampaign(
   });
 }
 
-export function startCampaign(id: string): Promise<Campaign> {
-  return request<Campaign>(`/campaigns/${id}/start`, { method: "POST" });
+export function startCampaign(campaignId: string): Promise<Campaign> {
+  return request<Campaign>(`/campaigns/${campaignId}/start`, { method: "POST" });
 }
 
-export function stopCampaign(id: string): Promise<Campaign> {
-  return request<Campaign>(`/campaigns/${id}/stop`, { method: "POST" });
+export function stopCampaign(campaignId: string): Promise<Campaign> {
+  return request<Campaign>(`/campaigns/${campaignId}/stop`, { method: "POST" });
 }
 
-export function pauseCampaign(id: string): Promise<Campaign> {
-  return request<Campaign>(`/campaigns/${id}/pause`, { method: "POST" });
+export function pauseCampaign(campaignId: string): Promise<Campaign> {
+  return request<Campaign>(`/campaigns/${campaignId}/pause`, { method: "POST" });
 }
 
-export function resumeCampaign(id: string): Promise<Campaign> {
-  return request<Campaign>(`/campaigns/${id}/resume`, { method: "POST" });
+export function resumeCampaign(campaignId: string): Promise<Campaign> {
+  return request<Campaign>(`/campaigns/${campaignId}/resume`, { method: "POST" });
 }
 
-export function deleteCampaign(id: string): Promise<void> {
-  return request<void>(`/campaigns/${id}`, { method: "DELETE" });
+export function deleteCampaign(campaignId: string): Promise<void> {
+  return request<void>(`/campaigns/${campaignId}`, { method: "DELETE" });
 }
 
-export function fetchBatch(id: string): Promise<Batch> {
-  return request<Batch>(`/campaigns/${id}/batch`);
+export function fetchBatch(campaignId: string): Promise<Batch> {
+  return request<Batch>(`/campaigns/${campaignId}/batch`);
 }
 
 export function submitTrials(
-  id: string,
+  campaignId: string,
   results: Trial[]
 ): Promise<{ accepted: number }> {
-  return request<{ accepted: number }>(`/campaigns/${id}/trials`, {
+  return request<{ accepted: number }>(`/campaigns/${campaignId}/trials`, {
     method: "POST",
     body: JSON.stringify({ results }),
   });
 }
 
-export function fetchResult(id: string): Promise<Campaign> {
-  return request<Campaign>(`/campaigns/${id}/result`);
+export function fetchResult(campaignId: string): Promise<Campaign> {
+  return request<Campaign>(`/campaigns/${campaignId}/result`);
 }
 
-export function fetchStoreSummary(id: string): Promise<StoreSummary> {
-  return request<StoreSummary>(`/store/${id}/summary`);
+export function fetchStoreSummary(campaignId: string): Promise<StoreSummary> {
+  return request<StoreSummary>(`/store/${campaignId}/summary`);
 }
 
-export function fetchAuditLog(id: string): Promise<AuditEntry[]> {
-  return request<AuditEntry[]>(`/reports/${id}/audit`);
+export function fetchAuditLog(campaignId: string): Promise<AuditEntry[]> {
+  return request<AuditEntry[]>(`/reports/${campaignId}/audit`);
 }
 
 export function compareCampaigns(ids: string[]): Promise<CompareResult> {

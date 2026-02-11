@@ -100,14 +100,14 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {campaigns.map((c) => (
-                <tr key={c.id}>
+                <tr key={c.campaign_id}>
                   <td className="mono">
-                    <Link to={`/campaigns/${c.id}`}>
-                      {truncateId(c.id)}
+                    <Link to={`/campaigns/${c.campaign_id}`}>
+                      {truncateId(c.campaign_id)}
                     </Link>
                   </td>
                   <td>
-                    <Link to={`/campaigns/${c.id}`}>{c.name}</Link>
+                    <Link to={`/campaigns/${c.campaign_id}`}>{c.name}</Link>
                   </td>
                   <td>
                     <StatusBadge status={c.status} />
@@ -120,7 +120,7 @@ export default function Dashboard() {
                     {(c.status === "draft" || c.status === "paused") && (
                       <button
                         className="btn btn-sm btn-primary"
-                        onClick={() => handleAction(startCampaign, c.id)}
+                        onClick={() => handleAction(startCampaign, c.campaign_id)}
                       >
                         Start
                       </button>
@@ -128,19 +128,19 @@ export default function Dashboard() {
                     {c.status === "running" && (
                       <button
                         className="btn btn-sm btn-warning"
-                        onClick={() => handleAction(stopCampaign, c.id)}
+                        onClick={() => handleAction(stopCampaign, c.campaign_id)}
                       >
                         Stop
                       </button>
                     )}
                     <button
                       className="btn btn-sm btn-danger"
-                      onClick={() => handleAction(deleteCampaign, c.id)}
+                      onClick={() => handleAction(deleteCampaign, c.campaign_id)}
                     >
                       Delete
                     </button>
                     <Link
-                      to={`/reports/${c.id}`}
+                      to={`/reports/${c.campaign_id}`}
                       className="btn btn-sm btn-secondary"
                     >
                       Report

@@ -18,7 +18,7 @@ httpx = pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from optimization_copilot.api.app import create_app
-from optimization_copilot.api.deps import get_app_state
+
 from optimization_copilot.platform.models import Role
 
 
@@ -600,3 +600,114 @@ class TestCampaignDetailFields:
         assert "campaign_id" in data
         assert isinstance(data["campaign_id"], str)
         assert len(data["campaign_id"]) > 0
+
+    def test_detail_has_best_parameters_default_null(self, client, auth_headers, sample_spec):
+        """New campaign has no best_parameters (null)."""
+        resp = _create_campaign(client, auth_headers, spec=sample_spec)
+        cid = resp.json()["campaign_id"]
+
+        detail = client.get(f"/api/campaigns/{cid}", headers=auth_headers).json()
+        assert "best_parameters" in detail
+        assert detail["best_parameters"] is None
+
+    def test_detail_has_phases_default_empty(self, client, auth_headers, sample_spec):
+        """New campaign has empty phases list."""
+        resp = _create_campaign(client, auth_headers, spec=sample_spec)
+        cid = resp.json()["campaign_id"]
+
+        detail = client.get(f"/api/campaigns/{cid}", headers=auth_headers).json()
+        assert "phases" in detail
+        assert isinstance(detail["phases"], list)
+        assert detail["phases"] == []
+
+    def test_detail_has_kpi_history_default_empty(self, client, auth_headers, sample_spec):
+        """New campaign has empty kpi_history."""
+        resp = _create_campaign(client, auth_headers, spec=sample_spec)
+        cid = resp.json()["campaign_id"]
+
+        detail = client.get(f"/api/campaigns/{cid}", headers=auth_headers).json()
+        assert "kpi_history" in detail
+        assert isinstance(detail["kpi_history"], dict)
+        assert detail["kpi_history"]["iterations"] == []
+        assert detail["kpi_history"]["values"] == []
+
+    def test_detail_populates_from_checkpoint(self, client, app, auth_headers, sample_spec):
+        """When checkpoint data exists, phases and kpi_history are populated."""
+        resp = _create_campaign(client, auth_headers, spec=sample_spec)
+        cid = resp.json()["campaign_id"]
+
+        # Write a checkpoint with phase_history and completed_trials
+        workspace = app.state.platform.workspace
+        checkpoint = {
+            "spec": sample_spec,
+            "snapshot": {
+                "campaign_id": cid,
+                "parameter_specs": [],
+                "observations": [],
+                "objective_names": ["y"],
+                "objective_directions": ["minimize"],
+            },
+            "iteration": 3,
+            "phase_history": [
+                {"iteration": 0, "from_phase": None, "to_phase": "cold_start"},
+                {"iteration": 2, "from_phase": "cold_start", "to_phase": "learning"},
+            ],
+            "completed_trials": [
+                {"iteration": 0, "kpi_values": {"y": 0.9}, "parameters": {"x": 0.1}},
+                {"iteration": 1, "kpi_values": {"y": 0.7}, "parameters": {"x": 0.3}},
+                {"iteration": 2, "kpi_values": {"y": 0.4}, "parameters": {"x": 0.5}},
+            ],
+            "decision_history": [],
+            "pending_retries": [],
+            "terminated": False,
+            "termination_reason": "",
+            "seed": 42,
+        }
+        workspace.save_checkpoint(cid, checkpoint)
+
+        detail = client.get(f"/api/campaigns/{cid}", headers=auth_headers).json()
+
+        # Phases should be populated from phase_history
+        assert len(detail["phases"]) == 2
+        assert detail["phases"][0]["name"] == "cold_start"
+        assert detail["phases"][0]["start"] == 0
+        assert detail["phases"][0]["end"] == 2
+        assert detail["phases"][1]["name"] == "learning"
+        assert detail["phases"][1]["start"] == 2
+        assert detail["phases"][1]["end"] == 3
+
+        # kpi_history should be populated from completed_trials
+        assert detail["kpi_history"]["iterations"] == [0, 1, 2]
+        assert detail["kpi_history"]["values"] == [0.9, 0.7, 0.4]
+
+    def test_detail_populates_best_parameters_from_result(
+        self, client, app, auth_headers, sample_spec
+    ):
+        """When result data exists, best_parameters is populated."""
+        resp = _create_campaign(client, auth_headers, spec=sample_spec)
+        cid = resp.json()["campaign_id"]
+
+        # Write a result with best_trial
+        workspace = app.state.platform.workspace
+        result = {
+            "best_trial": {
+                "trial_id": "t-0002-00",
+                "iteration": 2,
+                "parameters": {"x": 0.42},
+                "kpi_values": {"y": 0.1},
+                "state": "completed",
+            },
+            "best_kpi_values": {"y": 0.1},
+            "total_iterations": 3,
+            "total_trials": 3,
+            "total_failures": 0,
+            "termination_reason": "max_iterations_reached:3",
+            "phase_history": [],
+            "decision_history": [],
+            "final_snapshot_dict": {},
+            "audit_trail": [],
+        }
+        workspace.save_result(cid, result)
+
+        detail = client.get(f"/api/campaigns/{cid}", headers=auth_headers).json()
+        assert detail["best_parameters"] == {"x": 0.42}

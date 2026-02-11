@@ -37,6 +37,12 @@ class CampaignListResponse(BaseModel):
 class CampaignDetailResponse(CampaignResponse):
     spec: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Computed fields for frontend consumption
+    best_parameters: dict[str, Any] | None = None
+    phases: list[dict[str, Any]] = Field(default_factory=list)
+    kpi_history: dict[str, Any] = Field(
+        default_factory=lambda: {"iterations": [], "values": []}
+    )
 
 
 # ── Trial Schemas ─────────────────────────────────────────────
