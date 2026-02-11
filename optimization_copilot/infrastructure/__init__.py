@@ -14,6 +14,10 @@ from optimization_copilot.infrastructure.constraint_engine import (
     ConstraintType,
 )
 from optimization_copilot.infrastructure.cost_tracker import CostTracker, TrialCost
+from optimization_copilot.infrastructure.integration import (
+    InfrastructureConfig,
+    InfrastructureStack,
+)
 from optimization_copilot.infrastructure.domain_encoding import (
     CustomDescriptorEncoding,
     Encoding,
@@ -53,6 +57,8 @@ __all__ = [
     "EncodingPipeline",
     "FidelityLevel",
     "ImportanceResult",
+    "InfrastructureConfig",
+    "InfrastructureStack",
     "MultiFidelityManager",
     "OneHotEncoding",
     "OrdinalEncoding",
