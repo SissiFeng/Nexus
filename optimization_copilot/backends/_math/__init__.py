@@ -8,6 +8,7 @@ Re-exports all public functions from sub-modules for convenience::
 from optimization_copilot.backends._math.linalg import (
     cholesky,
     determinant,
+    eigen_symmetric,
     identity,
     mat_add,
     mat_inv,
@@ -61,6 +62,7 @@ __all__ = [
     "outer_product",
     "mat_inv",
     "determinant",
+    "eigen_symmetric",
     # stats
     "norm_pdf",
     "norm_cdf",

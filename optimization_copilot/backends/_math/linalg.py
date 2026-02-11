@@ -7,6 +7,7 @@ can remain dependency-free.
 from __future__ import annotations
 
 import math
+import random
 
 
 # ---------------------------------------------------------------------------
@@ -314,3 +315,96 @@ def determinant(A: list[list[float]]) -> float:
     for i in range(len(L)):
         log_det += math.log(max(L[i][i], 1e-300))
     return math.exp(2.0 * log_det)
+
+
+# ---------------------------------------------------------------------------
+# Eigenvalue decomposition (power iteration with deflation)
+# ---------------------------------------------------------------------------
+
+def eigen_symmetric(
+    matrix: list[list[float]],
+    k: int | None = None,
+    seed: int = 42,
+    max_iterations: int = 300,
+    tol: float = 1e-10,
+) -> tuple[list[float], list[list[float]]]:
+    """Compute the top-k eigenvalues / eigenvectors of a symmetric matrix.
+
+    Uses power iteration with deflation — suitable for moderate-sized
+    covariance matrices arising in PCA, iSOM, and similar decompositions.
+
+    Parameters
+    ----------
+    matrix : list[list[float]]
+        Symmetric square matrix of shape ``(d, d)``.
+    k : int | None
+        Number of eigenvalue / eigenvector pairs to extract.
+        ``None`` extracts all ``d`` pairs.
+    seed : int
+        Random seed for deterministic initialisation.
+    max_iterations : int
+        Maximum iterations per component.
+    tol : float
+        Convergence tolerance (L2 norm of eigenvector change).
+
+    Returns
+    -------
+    tuple[list[float], list[list[float]]]
+        ``(eigenvalues, eigenvectors)`` ordered from largest to smallest
+        eigenvalue.  Each eigenvector is a list of length ``d``.
+        Eigenvalues are clamped to be non-negative.
+    """
+    d = len(matrix)
+    if k is None:
+        k = d
+    k = min(k, d)
+
+    rng = random.Random(seed)
+
+    # Work on a copy to avoid mutating the caller's matrix via deflation.
+    mat: list[list[float]] = [list(row) for row in matrix]
+
+    eigenvalues: list[float] = []
+    eigenvectors: list[list[float]] = []
+
+    for _ in range(k):
+        # Random unit vector.
+        v = [rng.gauss(0.0, 1.0) for _ in range(d)]
+        norm_v = math.sqrt(sum(x * x for x in v))
+        if norm_v == 0.0:
+            norm_v = 1.0
+        v = [x / norm_v for x in v]
+
+        eigenvalue = 0.0
+
+        for _it in range(max_iterations):
+            # w = mat @ v
+            w: list[float] = [0.0] * d
+            for i in range(d):
+                s = 0.0
+                for j in range(d):
+                    s += mat[i][j] * v[j]
+                w[i] = s
+
+            eigenvalue = sum(w_i * v_i for w_i, v_i in zip(w, v))
+
+            norm_w = math.sqrt(sum(x * x for x in w))
+            if norm_w == 0.0:
+                break
+            v_new = [x / norm_w for x in w]
+
+            diff = math.sqrt(sum((a - b) ** 2 for a, b in zip(v_new, v)))
+            v = v_new
+            if diff < tol:
+                break
+
+        eigenvalue = max(eigenvalue, 0.0)
+        eigenvalues.append(eigenvalue)
+        eigenvectors.append(v)
+
+        # Deflate: mat -= eigenvalue * v * v^T
+        for i in range(d):
+            for j in range(d):
+                mat[i][j] -= eigenvalue * v[i] * v[j]
+
+    return eigenvalues, eigenvectors
