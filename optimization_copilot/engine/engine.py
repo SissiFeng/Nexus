@@ -35,6 +35,7 @@ from optimization_copilot.engine.state import CampaignState
 from optimization_copilot.engine.trial import Trial, TrialBatch, TrialState
 from optimization_copilot.meta_controller.controller import MetaController
 from optimization_copilot.plugins.registry import PluginRegistry
+from optimization_copilot.infrastructure.integration import InfrastructureStack
 from optimization_copilot.profiler.profiler import ProblemProfiler
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,7 @@ class OptimizationEngine:
         registry: PluginRegistry,
         config: EngineConfig | None = None,
         state: CampaignState | None = None,
+        infrastructure: InfrastructureStack | None = None,
     ) -> None:
         # Validate spec has at least one parameter and one objective.
         if not spec.parameters:
@@ -172,6 +174,9 @@ class OptimizationEngine:
         # Event system.
         self._event_hook = EventHook()
 
+        # Optional infrastructure stack (opt-in modules).
+        self._infrastructure = infrastructure
+
         # Mutable campaign state: restore from checkpoint or create fresh.
         if state is not None:
             self._state = state
@@ -192,6 +197,7 @@ class OptimizationEngine:
         self._stopped: bool = False
         self._stop_reason: str = ""
         self._previous_phase: Phase | None = None
+        self._best_values_history: list[float] = []
 
     # ── Event registration ────────────────────────────────
 
@@ -227,6 +233,16 @@ class OptimizationEngine:
         """
         self._start_time = time.monotonic()
 
+        # Pre-loop: gather warm-start candidates from transfer learning.
+        warm_start_candidates: list[dict[str, Any]] = []
+        if self._infrastructure is not None and self._state.iteration == 0:
+            param_dicts = self._param_specs_to_dicts(
+                self._state.snapshot.parameter_specs
+            )
+            warm_start_candidates = self._infrastructure.warm_start_points(
+                parameter_specs=param_dicts,
+            )
+
         while True:
             # Step 1: Check termination.
             should_terminate, reason = self._check_termination()
@@ -235,6 +251,19 @@ class OptimizationEngine:
                 self._state.termination_reason = reason
                 self._emit(EngineEvent.TERMINATION, {"reason": reason})
                 return
+
+            # Step 1b: Infrastructure stopping criteria.
+            if self._infrastructure is not None:
+                stop_decision = self._infrastructure.check_stopping(
+                    n_trials=self._state.snapshot.n_observations,
+                    best_values=self._best_values_history or None,
+                )
+                if stop_decision is not None and stop_decision.should_stop:
+                    reason = f"infrastructure_stopping:{stop_decision.reason}"
+                    self._state.terminated = True
+                    self._state.termination_reason = reason
+                    self._emit(EngineEvent.TERMINATION, {"reason": reason})
+                    return
 
             iteration = self._state.iteration
 
@@ -246,12 +275,20 @@ class OptimizationEngine:
             fingerprint = self._profiler.profile(self._state.snapshot)
 
             # Step 4: Meta-controller decision.
+            infra_signals: dict[str, Any] = {}
+            if self._infrastructure is not None:
+                infra_signals = self._infrastructure.pre_decide_signals(
+                    snapshot=self._state.snapshot,
+                    diagnostics=diagnostics,
+                    fingerprint=fingerprint,
+                )
             decision = self._meta_controller.decide(
                 snapshot=self._state.snapshot,
                 diagnostics=diagnostics,
                 fingerprint=fingerprint,
                 seed=self._iteration_seed(iteration),
                 previous_phase=self._previous_phase,
+                **infra_signals,
             )
 
             # Detect phase change.
@@ -286,6 +323,21 @@ class OptimizationEngine:
 
             # Step 6: Apply frozen values.
             candidates = SpecBridge.apply_frozen_values(self._spec, candidates)
+
+            # Step 6b: Infrastructure constraint filtering.
+            if self._infrastructure is not None:
+                param_dicts = self._param_specs_to_dicts(
+                    self._state.snapshot.parameter_specs
+                )
+                candidates = self._infrastructure.filter_candidates(
+                    candidates=candidates,
+                    parameter_specs=param_dicts,
+                )
+
+            # Step 6c: Inject warm-start candidates (first iteration only).
+            if warm_start_candidates and iteration == 0:
+                candidates = warm_start_candidates + candidates
+                warm_start_candidates = []  # consumed
 
             # Include any pending retries in this batch.
             retry_trials: list[Trial] = []
@@ -357,6 +409,13 @@ class OptimizationEngine:
                     )
                     # Track best trial.
                     self._update_best_trial(trial)
+                    # Step 9b: Record in infrastructure modules.
+                    if self._infrastructure is not None:
+                        self._infrastructure.record_trial(
+                            trial_params=trial.parameters,
+                            kpi_values=trial.kpi_values,
+                            trial_id=trial.trial_id,
+                        )
 
             # Record completed trials.
             for trial in batch.trials:
@@ -693,6 +752,30 @@ class OptimizationEngine:
         else:
             if trial_value < best_value:
                 self._best_trial = trial
+
+        # Track running best for infrastructure stopping rule.
+        current_best = self._best_trial.kpi_values.get(primary_name) if self._best_trial else None
+        if current_best is not None:
+            self._best_values_history.append(current_best)
+
+    # ── Helpers for infrastructure integration ─────────────
+
+    @staticmethod
+    def _param_specs_to_dicts(specs: Any) -> list[dict[str, Any]]:
+        """Convert ParameterSpec objects to plain dicts for infrastructure."""
+        result: list[dict[str, Any]] = []
+        for s in specs:
+            if isinstance(s, dict):
+                result.append(s)
+            elif hasattr(s, "__dataclass_fields__"):
+                d: dict[str, Any] = {}
+                for fname in s.__dataclass_fields__:
+                    val = getattr(s, fname)
+                    d[fname] = val.value if hasattr(val, "value") else val
+                result.append(d)
+            else:
+                result.append({"name": str(s)})
+        return result
 
     # ── ID and seed generation ────────────────────────────
 

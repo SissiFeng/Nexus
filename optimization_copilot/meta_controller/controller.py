@@ -430,6 +430,11 @@ class MetaController:
             except Exception as exc:
                 fallback_events.append(f"portfolio_scorer_failed:{exc}")
 
+        # Use AutoSampler hint if backend_policy is a backend name string.
+        if isinstance(backend_policy, str) and backend_policy in self.available_backends:
+            reason_codes.append(f"auto_sampler_hint:{backend_policy}")
+            return backend_policy
+
         # Fallback to rule-based selection.
         return self._select_backend(
             phase, fingerprint, reason_codes, fallback_events, seed
