@@ -8,6 +8,8 @@ from optimization_copilot.api.routes.store import router as store_router
 from optimization_copilot.api.routes.advice import router as advice_router
 from optimization_copilot.api.routes.reports import router as reports_router
 from optimization_copilot.api.routes.ws import router as ws_router
+from optimization_copilot.api.routes.loop import router as loop_router
+from optimization_copilot.api.routes.analysis import router as analysis_router
 
 
 def create_api_router() -> APIRouter:
@@ -19,4 +21,6 @@ def create_api_router() -> APIRouter:
     api.include_router(advice_router)
     api.include_router(reports_router)
     api.include_router(ws_router)
+    api.include_router(loop_router)
+    api.include_router(analysis_router)
     return api

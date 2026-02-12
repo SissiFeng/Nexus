@@ -183,9 +183,19 @@ class ProblemFingerprint:
     data_scale: DataScale = DataScale.TINY
     dynamics: Dynamics = Dynamics.STATIC
     feasible_region: FeasibleRegion = FeasibleRegion.WIDE
+    fixed_dimensions: list[str] = field(default_factory=list)
+    effective_dimensionality: int = -1
+    simplification_hint: str = "full_bo"
+    encoding_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {k: v.value for k, v in asdict(self).items()}
+        d = {}
+        for k, v in asdict(self).items():
+            if hasattr(v, 'value'):
+                d[k] = v.value
+            else:
+                d[k] = v
+        return d
 
     def to_tuple(self) -> tuple:
         return (
@@ -197,4 +207,7 @@ class ProblemFingerprint:
             self.data_scale.value,
             self.dynamics.value,
             self.feasible_region.value,
+            tuple(self.fixed_dimensions),
+            self.effective_dimensionality,
+            self.simplification_hint,
         )

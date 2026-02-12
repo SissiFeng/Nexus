@@ -83,7 +83,19 @@ class Stabilizer:
             # Keep failures but mark them — no removal
             return obs, []
         elif policy == "impute":
-            # Replace failure KPIs with worst observed value
+            # Delegate to DeterministicImputer when available
+            try:
+                from optimization_copilot.imputation.imputer import DeterministicImputer
+                from optimization_copilot.imputation.models import ImputationConfig
+                imputer = DeterministicImputer(ImputationConfig())
+                obj_names = list(
+                    {k for o in obs for k in o.kpi_values if not o.is_failure}
+                )
+                imp_result = imputer.impute(obs, obj_names, [])
+                return imp_result.observations, []
+            except Exception:
+                pass
+            # Fallback: replace failure KPIs with worst observed value
             valid_kpis: dict[str, list[float]] = {}
             for o in obs:
                 if not o.is_failure:

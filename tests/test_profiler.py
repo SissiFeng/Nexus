@@ -474,15 +474,21 @@ class TestProfilerIntegration:
         assert isinstance(fp.feasible_region, FeasibleRegion)
 
     def test_to_dict_round_trip(self):
-        """The fingerprint can be serialized to a dict of string values."""
+        """The fingerprint can be serialized to a dict with proper types."""
         snap = _make_snapshot(n_obs=15)
         fp = profiler.profile(snap)
         d = fp.to_dict()
-        assert len(d) == 8
-        assert all(isinstance(v, str) for v in d.values())
+        assert len(d) == 12
+        # Original 8 enum fields are strings
+        for key in [
+            "variable_types", "objective_form", "noise_regime",
+            "cost_profile", "failure_informativeness", "data_scale",
+            "dynamics", "feasible_region",
+        ]:
+            assert isinstance(d[key], str)
 
     def test_to_tuple_length(self):
-        """The fingerprint tuple has exactly 8 elements."""
+        """The fingerprint tuple has exactly 11 elements."""
         snap = _make_snapshot(n_obs=15)
         fp = profiler.profile(snap)
-        assert len(fp.to_tuple()) == 8
+        assert len(fp.to_tuple()) == 11

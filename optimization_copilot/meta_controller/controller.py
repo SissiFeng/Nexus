@@ -52,6 +52,12 @@ FINGERPRINT_BACKEND_OVERRIDES: dict[str, list[str]] = {
     "mixed_variables": ["tpe", "random"],
     "multi_objective": ["random", "latin_hypercube"],  # Safe defaults
     "tiny_data": ["random", "latin_hypercube"],
+    "degenerate": ["random"],  # All dims fixed — nothing to optimise
+    "ranking": ["random"],  # Single categorical dim — enumerate
+    "bandit": ["random"],  # Few-arm categorical — bandit-style
+    "line_search": ["tpe", "random"],  # 1-D continuous search
+    "reduced_bo": ["tpe", "random_forest_surrogate"],  # Low-dim BO
+    "has_encoding": ["tpe", "random"],  # Molecular/string inputs
 }
 
 
@@ -256,6 +262,20 @@ class MetaController:
             overrides = FINGERPRINT_BACKEND_OVERRIDES["tiny_data"]
             preferred = self._prioritize(preferred, overrides)
             reason_codes.append("backend_override:tiny_data")
+
+        # Simplification hint overrides (from DimensionAnalyzer)
+        hint = getattr(fingerprint, "simplification_hint", "full_bo")
+        if hint in FINGERPRINT_BACKEND_OVERRIDES:
+            overrides = FINGERPRINT_BACKEND_OVERRIDES[hint]
+            preferred = self._prioritize(preferred, overrides)
+            reason_codes.append(f"backend_override:simplification_{hint}")
+
+        # Encoding metadata override (molecular/string inputs)
+        encoding_meta = getattr(fingerprint, "encoding_metadata", {})
+        if encoding_meta and "has_encoding" in FINGERPRINT_BACKEND_OVERRIDES:
+            overrides = FINGERPRINT_BACKEND_OVERRIDES["has_encoding"]
+            preferred = self._prioritize(preferred, overrides)
+            reason_codes.append("backend_override:has_encoding")
 
         # Select first available backend
         for backend in preferred:

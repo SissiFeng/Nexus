@@ -64,6 +64,8 @@ class EngineConfig:
     checkpoint_every: int = 0
     checkpoint_path: str | None = None
     available_backends: list[str] | None = None
+    confounder_config: Any = None
+    candidate_pool: Any = None
 
 
 # ── Result ────────────────────────────────────────────────
@@ -266,6 +268,17 @@ class OptimizationEngine:
                     return
 
             iteration = self._state.iteration
+
+            # Step 1c: Apply confounder governance if configured.
+            if self._config.confounder_config is not None:
+                try:
+                    from optimization_copilot.confounder.governance import ConfounderGovernor
+                    governor = ConfounderGovernor()
+                    self._state.snapshot, _audit = governor.apply(
+                        self._state.snapshot, self._config.confounder_config, seed=self._iteration_seed(iteration),
+                    )
+                except Exception:
+                    pass  # Graceful degradation
 
             # Step 2: Compute diagnostics.
             diagnostics_vec = self._diagnostic_engine.compute(self._state.snapshot)

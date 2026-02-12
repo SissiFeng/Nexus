@@ -24,14 +24,27 @@ class MultiObjectiveAnalyzer:
         self,
         snapshot: CampaignSnapshot,
         weights: dict[str, float] | None = None,
+        preference_config: Any = None,
     ) -> ParetoResult:
+        # Apply preference-based filtering if provided
+        if preference_config is not None:
+            if hasattr(preference_config, "weights") and preference_config.weights:
+                weights = preference_config.weights
+            if hasattr(preference_config, "objective_subset") and preference_config.objective_subset:
+                # Narrow analysis to specified objectives only
+                snapshot_obj_names = preference_config.objective_subset
+            else:
+                snapshot_obj_names = snapshot.objective_names
+        else:
+            snapshot_obj_names = snapshot.objective_names
+
         obs = snapshot.successful_observations
         directions = {
             name: d
             for name, d in zip(snapshot.objective_names, snapshot.objective_directions)
         }
 
-        if len(obs) < 2 or len(snapshot.objective_names) < 2:
+        if len(obs) < 2 or len(snapshot_obj_names) < 2:
             return ParetoResult(
                 pareto_front=list(obs),
                 pareto_indices=list(range(len(obs))),

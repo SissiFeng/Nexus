@@ -282,10 +282,21 @@ class ReplayBenchmark(ExperimentalBenchmark):
         results: dict[str, dict[str, float]] = {}
         for obj_name, surrogate in self._surrogates.items():
             mu, var = surrogate.predict(encoded)
-            noise_var = self._noise_levels[obj_name]
+            noise_var = self._noise_at_point(obj_name, encoded)
             y = self._rng.gauss(mu, max((var + noise_var), 1e-12) ** 0.5)
             results[obj_name] = {"value": y, "variance": noise_var}
         return results
+
+    def _noise_at_point(
+        self, obj_name: str, x_encoded: list[float]
+    ) -> float:
+        """Return noise variance at a specific point for *obj_name*.
+
+        Default returns the scalar noise level from ``_noise_levels``.
+        Subclasses can override to provide heteroscedastic (per-point)
+        noise models, enabling more realistic replay evaluation.
+        """
+        return self._noise_levels.get(obj_name, 0.01)
 
     def _encode(self, x: dict) -> list[float]:
         """Default encoding: extract continuous values in search-space order.

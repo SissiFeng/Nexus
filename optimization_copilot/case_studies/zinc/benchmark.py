@@ -15,6 +15,7 @@ zinc electrodeposition coulombic efficiency, with:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from optimization_copilot.case_studies.base import ReplayBenchmark
@@ -22,6 +23,10 @@ from optimization_copilot.case_studies.zinc.data_loader import (
     ZincDataLoader,
     _PARAM_NAMES,
     _OPTIMAL_EFFICIENCY,
+    _OPTIMAL_POINT,
+    _NOISE_NEAR_OPTIMUM,
+    _NOISE_FAR_FROM_OPTIMUM,
+    _NOISE_DISTANCE_SCALE,
 )
 
 
@@ -134,6 +139,25 @@ class ZincBenchmark(ReplayBenchmark):
         """
         total = sum(float(x.get(name, 0.0)) for name in _PARAM_NAMES)
         return 1.0 + 0.1 * total
+
+    def _noise_at_point(
+        self, obj_name: str, x_encoded: list[float]
+    ) -> float:
+        """Heteroscedastic noise variance from the zinc noise model.
+
+        Noise increases with distance from the known optimum, matching
+        the data generation model in :class:`ZincDataLoader`.
+
+        Returns variance (std**2), not standard deviation.
+        """
+        n = min(len(x_encoded), len(_OPTIMAL_POINT))
+        delta = [x_encoded[i] - _OPTIMAL_POINT[i] for i in range(n)]
+        dist = math.sqrt(sum(d * d for d in delta))
+        t = min(dist / _NOISE_DISTANCE_SCALE, 1.0)
+        noise_std = _NOISE_NEAR_OPTIMUM + t * (
+            _NOISE_FAR_FROM_OPTIMUM - _NOISE_NEAR_OPTIMUM
+        )
+        return noise_std ** 2
 
     def get_known_constraints(self) -> list[dict[str, Any]]:
         """Return known constraints for the zinc electrodeposition domain.

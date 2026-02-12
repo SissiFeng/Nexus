@@ -155,6 +155,10 @@ class CaseStudyEvaluator:
 
             x = suggestions[0]
 
+            # Guard against empty suggestion dicts from uninitialised strategies
+            if not x:
+                x = self._random_point(specs, rng)
+
             # 2. Evaluate
             result = self.benchmark.evaluate(x)
             is_failure = result is None
@@ -177,12 +181,20 @@ class CaseStudyEvaluator:
                 kpi_values = {
                     k: v["value"] for k, v in result.items()
                 }
+                # Extract per-KPI noise variances from evaluation result
+                noise_variances = {
+                    k: v.get("variance", 0.01) for k, v in result.items()
+                }
                 obs = Observation(
                     iteration=i,
                     parameters=x,
                     kpi_values=kpi_values,
                     qc_passed=True,
                     is_failure=False,
+                    metadata={
+                        "noise_variance": noise_variances.get(obj_name, 0.01),
+                        "noise_variances": noise_variances,
+                    },
                 )
 
             observations.append(obs)
