@@ -81,20 +81,19 @@ class ExperienceStore:
     def _fingerprint_similarity(
         self, fp1: ProblemFingerprint, fp2: ProblemFingerprint
     ) -> float:
-        """Compute dimension-by-dimension similarity between two fingerprints.
+        """Compute continuous similarity between two fingerprints using RBF kernel.
 
-        Each of the 8 dimensions is compared:
-        - Enum fields: 1.0 if equal, 0.0 otherwise
-        - All ProblemFingerprint fields are currently enums, so simple equality.
+        Uses domain-aware ordinal encoding for enum fields, producing smooth
+        similarity gradients instead of binary match/no-match.
 
-        Returns average similarity score in [0.0, 1.0].
+        Kernel: k(x,y) = exp(-||x-y||^2 / 2)  (RBF with length_scale=1.0)
+
+        Returns similarity score in [0.0, 1.0] where 1.0 is identical.
         """
-        t1 = fp1.to_tuple()
-        t2 = fp2.to_tuple()
-        if len(t1) == 0:
-            return 1.0
-        matches = sum(1.0 for a, b in zip(t1, t2) if a == b)
-        return matches / len(t1)
+        v1 = fp1.to_continuous_vector()
+        v2 = fp2.to_continuous_vector()
+        sq_dist = sum((a - b) ** 2 for a, b in zip(v1, v2))
+        return math.exp(-sq_dist / 2.0)
 
     # ── Recency weighting ─────────────────────────────────
 

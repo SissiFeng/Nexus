@@ -49,16 +49,36 @@ class WeightTuner:
     ) -> LearnedWeights | None:
         """Return learned weights for *fingerprint* if enough data exists.
 
-        Returns ``None`` during cold start (fewer than
-        ``config.min_experiences_for_learning`` campaigns recorded).
+        First tries exact key match, then falls back to similarity-based
+        lookup using continuous fingerprint kernel.  Returns ``None``
+        during cold start.
         """
         fingerprint_key = str(fingerprint.to_tuple())
         learned = self._learned.get(fingerprint_key)
-        if learned is None:
-            return None
-        if learned.n_campaigns < self._config.min_experiences_for_learning:
-            return None
-        return learned
+        if learned is not None:
+            if learned.n_campaigns >= self._config.min_experiences_for_learning:
+                return learned
+
+        # Similarity-based fallback: find most similar learned fingerprint
+        best_similarity = 0.0
+        best_weights: LearnedWeights | None = None
+        for key, lw in self._learned.items():
+            if lw.n_campaigns < self._config.min_experiences_for_learning:
+                continue
+            records = self._store.get_by_fingerprint(key)
+            if not records:
+                continue
+            sim = self._store._fingerprint_similarity(
+                fingerprint, records[0].outcome.fingerprint
+            )
+            if sim > best_similarity:
+                best_similarity = sim
+                best_weights = lw
+
+        # Only return if similarity exceeds threshold (0.5)
+        if best_weights is not None and best_similarity > 0.5:
+            return best_weights
+        return None
 
     def update_from_outcome(
         self, outcome: CampaignOutcome, weights_used: ScoringWeights
