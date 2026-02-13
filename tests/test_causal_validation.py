@@ -25,6 +25,11 @@ from optimization_copilot.causal.counterfactual import CounterfactualReasoner
 from optimization_copilot.causal.effects import CausalEffectEstimator
 from optimization_copilot.causal.interventional import InterventionalEngine
 from optimization_copilot.causal.models import CausalEdge, CausalGraph, CausalNode
+from optimization_copilot.causal.metrics import (
+    edge_precision_recall,
+    orientation_accuracy,
+    structural_hamming_distance,
+)
 from optimization_copilot.causal.structure import CausalStructureLearner
 
 
@@ -115,127 +120,16 @@ def _build_ground_truth_graph(
 # Metrics
 # ---------------------------------------------------------------------------
 
-def _compute_shd(predicted: CausalGraph, true_graph: CausalGraph) -> int:
-    """Structural Hamming Distance between two DAGs.
-
-    Counts the minimum number of edge additions, deletions, and reversals
-    needed to transform *predicted* into *true_graph*.
-
-    An edge present in both graphs but with reversed direction counts as
-    one reversal (not an addition plus a deletion).
-    """
-    all_nodes = sorted(set(true_graph.node_names) | set(predicted.node_names))
-
-    true_edges: set[tuple[str, str]] = set()
-    for e in true_graph.edges:
-        true_edges.add((e.source, e.target))
-
-    pred_edges: set[tuple[str, str]] = set()
-    for e in predicted.edges:
-        pred_edges.add((e.source, e.target))
-
-    shd = 0
-
-    # Check every ordered pair of nodes
-    visited_pairs: set[frozenset] = set()
-    for a in all_nodes:
-        for b in all_nodes:
-            if a == b:
-                continue
-            pair = frozenset((a, b))
-            if pair in visited_pairs:
-                continue
-            visited_pairs.add(pair)
-
-            t_ab = (a, b) in true_edges
-            t_ba = (b, a) in true_edges
-            p_ab = (a, b) in pred_edges
-            p_ba = (b, a) in pred_edges
-
-            if t_ab and not t_ba:
-                # True has a->b
-                if p_ab and not p_ba:
-                    pass  # match
-                elif p_ba and not p_ab:
-                    shd += 1  # reversal
-                elif not p_ab and not p_ba:
-                    shd += 1  # missing
-                else:
-                    # Both directions predicted -- treat as one reversal
-                    shd += 1
-            elif t_ba and not t_ab:
-                # True has b->a
-                if p_ba and not p_ab:
-                    pass  # match
-                elif p_ab and not p_ba:
-                    shd += 1  # reversal
-                elif not p_ab and not p_ba:
-                    shd += 1  # missing
-                else:
-                    shd += 1
-            elif not t_ab and not t_ba:
-                # True has no edge
-                if p_ab or p_ba:
-                    shd += 1  # extra edge(s) -- counts as one
-            else:
-                # True has both directions (shouldn't happen in a DAG)
-                pass
-
-    return shd
-
-
 def _compute_edge_metrics(
     predicted: CausalGraph, true_graph: CausalGraph,
 ) -> dict[str, float]:
-    """Compute skeleton-level and orientation metrics.
-
-    Returns
-    -------
-    dict with keys:
-        edge_precision : fraction of predicted skeleton edges that are true.
-        edge_recall    : fraction of true skeleton edges that are predicted.
-        orientation_accuracy : among correctly identified skeleton edges,
-            fraction with the correct direction.
-    """
-    # Build skeleton (undirected) edge sets
-    true_skeleton: set[frozenset] = set()
-    for e in true_graph.edges:
-        true_skeleton.add(frozenset((e.source, e.target)))
-
-    pred_skeleton: set[frozenset] = set()
-    for e in predicted.edges:
-        pred_skeleton.add(frozenset((e.source, e.target)))
-
-    correct_skeleton = true_skeleton & pred_skeleton
-
-    precision = len(correct_skeleton) / len(pred_skeleton) if pred_skeleton else 0.0
-    recall = len(correct_skeleton) / len(true_skeleton) if true_skeleton else 0.0
-
-    # Orientation accuracy: among skeleton-correct edges, how many have
-    # the correct direction?
-    true_directed = {(e.source, e.target) for e in true_graph.edges}
-    pred_directed = {(e.source, e.target) for e in predicted.edges}
-
-    correct_orientation = 0
-    total_skeleton_correct = 0
-    for pair in correct_skeleton:
-        a, b = tuple(pair)
-        total_skeleton_correct += 1
-        # Check if direction matches
-        if ((a, b) in true_directed and (a, b) in pred_directed) or \
-           ((b, a) in true_directed and (b, a) in pred_directed):
-            correct_orientation += 1
-
-    orientation_acc = (
-        correct_orientation / total_skeleton_correct
-        if total_skeleton_correct > 0
-        else 0.0
-    )
-
+    """Adapter: wraps causal.metrics functions for backward compatibility."""
+    precision, recall, _f1 = edge_precision_recall(predicted, true_graph)
+    orient_acc = orientation_accuracy(predicted, true_graph)
     return {
         "edge_precision": precision,
         "edge_recall": recall,
-        "orientation_accuracy": orientation_acc,
+        "orientation_accuracy": orient_acc,
     }
 
 
@@ -319,7 +213,7 @@ class TestDAGRecovery(unittest.TestCase):
         data, truth, var_names = self._chain_setup()
         predicted = self._learn(data, var_names)
 
-        shd = _compute_shd(predicted, truth)
+        shd = structural_hamming_distance(predicted, truth)
         metrics = _compute_edge_metrics(predicted, truth)
 
         self.assertLessEqual(shd, 1, f"Chain SHD={shd}, expected <= 1")
@@ -351,7 +245,7 @@ class TestDAGRecovery(unittest.TestCase):
         truth = _build_ground_truth_graph(var_names, edges)
         predicted = self._learn(data, var_names)
 
-        shd = _compute_shd(predicted, truth)
+        shd = structural_hamming_distance(predicted, truth)
         metrics = _compute_edge_metrics(predicted, truth)
 
         self.assertLessEqual(shd, 1, f"Fork SHD={shd}, expected <= 1")
@@ -383,7 +277,7 @@ class TestDAGRecovery(unittest.TestCase):
         truth = _build_ground_truth_graph(var_names, edges)
         predicted = self._learn(data, var_names)
 
-        shd = _compute_shd(predicted, truth)
+        shd = structural_hamming_distance(predicted, truth)
         metrics = _compute_edge_metrics(predicted, truth)
 
         self.assertLessEqual(shd, 2, f"Collider SHD={shd}, expected <= 2")
@@ -416,7 +310,7 @@ class TestDAGRecovery(unittest.TestCase):
         truth = _build_ground_truth_graph(var_names, edges)
         predicted = self._learn(data, var_names)
 
-        shd = _compute_shd(predicted, truth)
+        shd = structural_hamming_distance(predicted, truth)
         metrics = _compute_edge_metrics(predicted, truth)
 
         self.assertLessEqual(shd, 3, f"Diamond SHD={shd}, expected <= 3")
@@ -478,7 +372,7 @@ class TestDAGRecovery(unittest.TestCase):
         truth = _build_ground_truth_graph(var_names, edges)
         predicted = self._learn(data, var_names, alpha=0.05)
 
-        shd = _compute_shd(predicted, truth)
+        shd = structural_hamming_distance(predicted, truth)
         metrics = _compute_edge_metrics(predicted, truth)
 
         self.assertLessEqual(
@@ -506,7 +400,7 @@ class TestDAGRecovery(unittest.TestCase):
         for n in sample_sizes:
             data, truth, var_names = self._chain_setup(n=n, seed=self.SEED)
             predicted = self._learn(data, var_names)
-            shd = _compute_shd(predicted, truth)
+            shd = structural_hamming_distance(predicted, truth)
             shds.append(shd)
 
         # SHD should be non-increasing as sample size grows
@@ -535,7 +429,7 @@ class TestDAGRecovery(unittest.TestCase):
                 noise_std=noise_std, seed=self.SEED,
             )
             predicted = self._learn(data, var_names)
-            shd = _compute_shd(predicted, truth)
+            shd = structural_hamming_distance(predicted, truth)
             shds.append(shd)
 
         # SHD should be non-decreasing as noise grows

@@ -30,6 +30,11 @@ from optimization_copilot.hybrid.theory import (
 from optimization_copilot.hybrid.residual import ResidualGP
 from optimization_copilot.hybrid.composite import HybridModel
 from optimization_copilot.hybrid.discrepancy import DiscrepancyAnalyzer
+from optimization_copilot.hybrid.benchmarks import (
+    SampleEfficiencyBenchmark,
+    SampleEfficiencyCurve,
+    SampleEfficiencyResult,
+)
 
 __all__ = [
     # theory
@@ -44,4 +49,8 @@ __all__ = [
     "HybridModel",
     # discrepancy
     "DiscrepancyAnalyzer",
+    # benchmarks
+    "SampleEfficiencyBenchmark",
+    "SampleEfficiencyCurve",
+    "SampleEfficiencyResult",
 ]

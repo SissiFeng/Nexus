@@ -29,6 +29,7 @@ from optimization_copilot.physics.priors import (
     MichaelisMentenPrior,
     PowerLawPrior,
 )
+from optimization_copilot.physics.mismatch import MismatchDetector, MismatchReport
 
 __all__ = [
     # kernels
@@ -51,4 +52,7 @@ __all__ = [
     "MonotonicityConstraint",
     "PhysicsBound",
     "PhysicsConstraintModel",
+    # mismatch
+    "MismatchDetector",
+    "MismatchReport",
 ]
