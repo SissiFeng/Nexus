@@ -5,3 +5,4 @@ from optimization_copilot.agents.execution_trace import ExecutionTrace, TracedRe
 from optimization_copilot.agents.data_pipeline import DataAnalysisPipeline
 from optimization_copilot.agents.execution_guard import ExecutionGuard, GuardMode
 from optimization_copilot.agents.traced_agent import TracedScientificAgent
+from optimization_copilot.agents.experiment_planner import ExperimentPlannerAgent, PlannerConfig
