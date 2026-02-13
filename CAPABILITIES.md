@@ -97,7 +97,7 @@
 
 ---
 
-## Module Inventory (400+ modules across 79 packages)
+## Module Inventory (450+ modules across 87 packages)
 
 ### I. Core Intelligence
 
@@ -395,6 +395,14 @@ Supports `BackendPolicy` (allowlist / denylist) governance.
 - **Dominance ranking**: Layer-by-layer ranking (Rank 1 = Pareto front)
 - **Trade-off analysis**: Correlation analysis between objective pairs (conflict / synergy / independent)
 - **Weighted scoring**: User-defined weight scalarization
+- **Many-objective optimization** (>3 objectives):
+  - `HypervolumeIndicator`: 2D exact sweep, 3D+ Monte Carlo approximation
+  - `IGDMetric`: Inverted Generational Distance for Pareto front quality
+  - `ManyObjectiveRanker`: Rank by hypervolume contribution
+- **Interactive Pareto exploration**:
+  - `InteractiveParetoExplorer`: Weighted queries, aspiration levels, bounds filtering
+  - `nearest_to_ideal()`: Normalized Euclidean search
+  - `tradeoff_analysis()`: Slope, Pearson correlation, elasticity between objective pairs
 
 ---
 
@@ -423,6 +431,8 @@ Supports `BackendPolicy` (allowlist / denylist) governance.
 |-------|-------------|
 | `BatchDiversifier` | Batch diversification strategies (maximin / coverage / hybrid) |
 | `BatchPolicy` | Ensure within-batch parameter diversity, avoid redundant sampling |
+| `AsyncBatchExecutor` | PipeBO-style async execution: submit/complete/poll lifecycle, `incorporate_partial()` re-ranks candidates as partial results arrive |
+| `TimeAwareScheduler` | Time-aware scheduling: longest-job-first bin-packing to minimize wall-clock time, deadline-aware early stopping |
 
 ---
 
@@ -1071,6 +1081,13 @@ Each method returns `TracedResult` with full execution provenance.
 | `LiteratureAgent` | Mine literature for prior knowledge: parameter ranges, expected KPI values, domain constraints |
 | `PriorTables` | Structured prior knowledge tables from literature |
 
+#### 72e. Experiment Planner Agent (`agents/experiment_planner.py`)
+
+| Class | Description |
+|-------|-------------|
+| `ExperimentPlannerAgent` | LLM-driven experiment planning with pragmatic fallback. Two modes: `PRAGMATIC` (rule-based: stagnating→explore, improving→exploit, early→space-fill) and `LLM_ENHANCED` (Claude API with structured prompts). Activates on milestone/stagnation events or every 10th iteration |
+| `PlannerConfig` | Configuration: model_name, max_tokens, temperature, system_prompt |
+
 #### 72b. Mechanism Design Agent (`agents/mechanism/`)
 
 | Class | Description |
@@ -1305,7 +1322,61 @@ Five fundamental scientific reasoning layers that transform the system from an o
 
 ---
 
-### XXIX. Validation Testing (3-Tier Real Data Integration)
+### XXIX. SDL Gap Closure Modules
+
+Eight modules closing all identified self-driving laboratory community pain points.
+
+#### 92. Data Integration Layer (`integration/`)
+
+| Class | Description |
+|-------|-------------|
+| `CampaignExporter` | Export CampaignSnapshot to CSV, JSON, JSON-LD with schema versioning |
+| `CampaignImporter` | Import from CSV/JSON with column mapping and type inference |
+| `ProvenanceTracker` | Append-only provenance chain with W3C PROV-O JSON-LD export |
+| `ProvenanceChain` | O(1) lookup, lineage walk, children query, duplicate-ID detection |
+| `CSVConnector` / `JSONConnector` | File-based lab connectors for observation read + suggestion write |
+| `InMemoryConnector` | In-process connector for testing and integration |
+
+#### 93. Safety-First Optimization (`safety/`)
+
+| Class | Description |
+|-------|-------------|
+| `HazardRegistry` | Register and classify hazards per parameter (8 categories, 5 severity levels) |
+| `SafetyMonitor` | Real-time point/batch safety checking with graduated response (SAFE → WARNING → DANGER → EMERGENCY) |
+| `EmergencyProtocol` | Escalation logic: warning accumulation → PAUSE → DANGER → FALLBACK → CRITICAL → STOP |
+| `EmergencyLog` | Append-only audit trail for all emergency evaluations |
+
+#### 94. Campaign Reproducibility (`reproducibility/`)
+
+| Class | Description |
+|-------|-------------|
+| `CampaignLogger` | Append-only event logging (8 event types) with JSONL export/import |
+| `CampaignReplayer` | Replay campaigns using recorded seeds; compute reproducibility score |
+| `FAIRGenerator` | Generate FAIR-compliant metadata (schema.org JSON-LD) for campaign datasets |
+
+#### 95. Human-in-the-Loop (`hitl/`)
+
+| Class | Description |
+|-------|-------------|
+| `PriorRegistry` | Expert prior injection (Gaussian, Uniform, Constraint, Preference, Ranking) with confidence-weighted re-ranking |
+| `AutonomyPolicy` | Progressive autonomy: MANUAL → SUPERVISED → COLLABORATIVE → AUTONOMOUS |
+| `TrustTracker` | EMA-based trust score with auto-escalation/de-escalation thresholds |
+| `SteeringEngine` | Interactive steering: FOCUS_REGION, AVOID_REGION, MODIFY, ACCEPT, REJECT with full audit trail |
+
+#### 96. Community Benchmark Integration (`community_benchmarks/`)
+
+| Class | Description |
+|-------|-------------|
+| `OLYMPUS_REGISTRY` | 6 built-in Olympus surfaces (photobleaching, crossed_barrel, colors_bob, hplc, benzylation, suzuki) |
+| `OlympusSurface` | Tabular benchmark with nearest-neighbor evaluation; `to_benchmark()` for standard interface |
+| `AccelerationFactor` | How much faster BO reaches target vs. random search |
+| `EnhancementFactor` | How much better BO result is at fixed budget |
+| `DegreeOfAutonomy` | 1 - (human_interventions / total_decisions) |
+| `SDLMetricsCalculator` | All-in-one SDL performance evaluation (Nature Communications 2024 metrics) |
+
+---
+
+### XXX. Validation Testing (3-Tier Real Data Integration)
 
 Three tiers of integration tests proving end-to-end system functionality:
 
@@ -1505,7 +1576,7 @@ Via problem fingerprinting + plugin architecture, the system has been validated 
 
 ## Test Suite
 
-**5,947 tests** across **139 test files**, all passing (<30s):
+**6,383 tests** across **147 test files**, all passing:
 
 ### Acceptance Tests
 
@@ -1570,8 +1641,16 @@ Via problem fingerprinting + plugin architecture, the system has been validated 
 | `test_tier3_closedloop.py` | 19 |
 | `test_adversarial_robustness.py` | 14 |
 | `test_continuous_similarity.py` | 26 |
+| `test_integration_package.py` | 18 |
+| `test_safety_module.py` | 22 |
+| `test_reproducibility.py` | 22 |
+| `test_hitl.py` | 28 |
+| `test_community_benchmarks.py` | 18 |
+| `test_batch_enhancements.py` | 16 |
+| `test_many_objective.py` | 20 |
+| `test_experiment_planner.py` | 15 |
 | ... (58 more files) | ... |
-| **Total: 139 files** | **5,947** |
+| **Total: 147 files** | **6,383** |
 
 ---
 
@@ -1661,6 +1740,55 @@ Via problem fingerprinting + plugin architecture, the system has been validated 
 | `meta_learning/` (7 sub-modules) | Cross-project meta-learning: strategy, weights, thresholds, failure strategies, drift robustness |
 | `infrastructure/transfer_learning` | Knowledge transfer from prior campaigns |
 
+### Pain Point 11: No standardized data integration / provenance
+
+| Module | Capability |
+|--------|-----------|
+| `integration/formats` | CSV/JSON/JSON-LD import/export with schema versioning |
+| `integration/provenance` | W3C PROV-O compliant provenance chain with DAG lineage tracking |
+| `integration/connectors` | Abstract lab connector interface with CSV, JSON, and in-memory adapters |
+
+### Pain Point 12: Safety-first operation missing
+
+| Module | Capability |
+|--------|-----------|
+| `safety/hazards` | 8-category hazard classification with 5 severity levels |
+| `safety/monitor` | Real-time safety monitoring with graduated response (SAFE → EMERGENCY) |
+| `safety/emergency` | Emergency escalation protocol with configurable thresholds and safe-region fallback |
+
+### Pain Point 13: Campaign reproducibility / FAIR compliance
+
+| Module | Capability |
+|--------|-----------|
+| `reproducibility/logger` | Append-only campaign event logging (8 event types) with JSONL serialization |
+| `reproducibility/replay` | Deterministic campaign replay with reproducibility scoring |
+| `reproducibility/fair` | FAIR metadata generation with schema.org JSON-LD export |
+
+### Pain Point 14: Human-in-the-loop not supported
+
+| Module | Capability |
+|--------|-----------|
+| `hitl/priors` | Expert prior injection with confidence-weighted candidate re-ranking |
+| `hitl/autonomy` | Progressive autonomy (MANUAL → AUTONOMOUS) with EMA trust tracking |
+| `hitl/steering` | Interactive optimization steering (focus/avoid regions, modify suggestions) |
+
+### Pain Point 15: No community benchmark compatibility
+
+| Module | Capability |
+|--------|-----------|
+| `community_benchmarks/olympus_compat` | 6 built-in Olympus surfaces with nearest-neighbor interpolation |
+| `community_benchmarks/sdl_metrics` | Standardized SDL metrics: Acceleration Factor, Enhancement Factor, Degree of Autonomy |
+
+### Pain Point 16: Many-objective / async batch / LLM planning
+
+| Module | Capability |
+|--------|-----------|
+| `multi_objective/many_objective` | Hypervolume indicator, IGD, many-objective ranking |
+| `multi_objective/interactive` | Interactive Pareto exploration with tradeoff analysis |
+| `batch/async_executor` | PipeBO-style async execution with partial result incorporation |
+| `batch/time_aware` | Time-aware scheduling minimizing wall-clock time |
+| `agents/experiment_planner` | LLM-enhanced experiment planning with pragmatic fallback |
+
 ### Pain Point Coverage Summary
 
 | # | Pain Point | Depth | Core Modules | Status |
@@ -1669,12 +1797,18 @@ Via problem fingerprinting + plugin architecture, the system has been validated 
 | 2 | Constraints / infeasible | Full | feasibility, constraints, feasibility_first | All enhancements complete |
 | 3 | Non-stationarity | Full | drift, nonstationary, data_quality | All enhancements complete |
 | 4 | Noise / measurement | Full | diagnostics, stabilization, data_quality, cost | All enhancements complete |
-| 5 | Multi-objective | Full | multi_objective, preference, NSGA-II | All enhancements complete |
-| 6 | Batch clustering | Full | batch, feasibility_first, batch_scheduler | All enhancements complete |
-| 7 | Reproducibility | Full | schema, replay, compliance, benchmark | All enhancements complete |
+| 5 | Multi-objective | Full | multi_objective, preference, NSGA-II, many_objective, interactive | All enhancements complete |
+| 6 | Batch clustering | Full | batch, feasibility_first, batch_scheduler, async_executor, time_aware | All enhancements complete |
+| 7 | Reproducibility | Full | schema, replay, compliance, benchmark, reproducibility/ | All enhancements complete |
 | 8 | Diverse data | Full | feature_extraction, latent | All enhancements complete |
 | 9 | Data entry barrier | Full | store, ingestion, problem_builder | All enhancements complete |
 | 10 | Starting from scratch | Full | meta_learning (7 sub-modules), transfer_learning | All enhancements complete |
+| 11 | Data integration / provenance | Full | integration/ (formats, provenance, connectors) | **NEW** — complete |
+| 12 | Safety-first operation | Full | safety/ (hazards, monitor, emergency) | **NEW** — complete |
+| 13 | Reproducibility / FAIR | Full | reproducibility/ (logger, replay, fair) | **NEW** — complete |
+| 14 | Human-in-the-loop | Full | hitl/ (priors, autonomy, steering) | **NEW** — complete |
+| 15 | Community benchmarks | Full | community_benchmarks/ (olympus, sdl_metrics) | **NEW** — complete |
+| 16 | Many-objective / async / LLM | Full | many_objective, interactive, async_executor, experiment_planner | **NEW** — complete |
 
 ---
 
@@ -1693,7 +1827,7 @@ Via problem fingerprinting + plugin architecture, the system has been validated 
 | Shadow mode (Agent vs. Baseline comparison) | Yes |
 | SLO monitoring (latency p50/p95, drift FP, action FP) | Yes |
 | Release gate automation (8 gate checks) | Yes |
-| 5,947 tests (acceptance + unit/integration + 3-tier real data) | Yes |
+| 6,383 tests (acceptance + unit/integration + 3-tier real data + SDL gap closure) | Yes |
 | Type annotations throughout | Yes |
 | Zero external runtime dependencies | Yes |
 | Auto data import (CSV/JSON -> unified store -> snapshot) | Yes |
@@ -1733,6 +1867,14 @@ Via problem fingerprinting + plugin architecture, the system has been validated 
 | Adversarial robustness testing | Yes |
 | 3-tier real data integration tests (Tier 1 pipeline, Tier 2 stress, Tier 3 closed-loop) | Yes |
 | Closed-loop optimization beats random baseline (proven) | Yes |
+| Data integration with provenance (W3C PROV-O) | Yes |
+| Safety-first optimization (graduated hazard response) | Yes |
+| Campaign reproducibility with FAIR metadata | Yes |
+| Human-in-the-loop (progressive autonomy, expert priors, steering) | Yes |
+| Community benchmark compatibility (6 Olympus surfaces, SDL metrics) | Yes |
+| Many-objective optimization (hypervolume, IGD) | Yes |
+| Async batch execution with partial incorporation | Yes |
+| LLM experiment planning with pragmatic fallback | Yes |
 
 ---
 
@@ -1745,7 +1887,8 @@ optimization_copilot/
 │   ├── literature/     # Literature mining agent
 │   ├── mechanism/      # Mechanism design agent
 │   ├── phase_structure/ # Phase structure analysis agent
-│   └── symreg/         # Symbolic regression agent
+│   ├── symreg/         # Symbolic regression agent
+│   └── experiment_planner.py  # LLM experiment planning agent
 ├── anomaly/            # Three-layer anomaly detection
 ├── campaign/           # Campaign engine: surrogate, ranker, stage_gate, output, loop
 ├── candidate_pool/     # External molecular library management
@@ -1783,10 +1926,10 @@ optimization_copilot/
 ├── hybrid/            # Theory-data hybrid models (residual GP, discrepancy detection)
 ├── hypothesis/        # Hypothesis lifecycle (generation, testing, tracking)
 ├── constraints/         # Implicit constraint discovery
-├── multi_objective/     # Pareto front + multi-objective analysis
+├── multi_objective/     # Pareto front + many-objective + interactive exploration
 ├── preference/          # Preference learning (Bradley-Terry)
 ├── cost/                # Cost-aware analysis
-├── batch/               # Batch diversification
+├── batch/               # Batch diversification + async executor + time-aware scheduling
 ├── multi_fidelity/      # Multi-fidelity planning (successive halving)
 ├── explain/            # Interaction maps, equation discovery, insight reports
 ├── explainability/      # Human-readable decision explanations
@@ -1811,6 +1954,11 @@ optimization_copilot/
 ├── meta_learning/       # Cross-project meta-learning (7 sub-modules)
 ├── infrastructure/      # Infrastructure stack (10+ modules)
 ├── physics/           # Physics-informed modeling (kernels, priors, ODE solver)
+├── integration/       # Data integration (formats, provenance, connectors)
+├── safety/            # Safety-first optimization (hazards, monitor, emergency)
+├── reproducibility/   # Campaign reproducibility (logger, replay, FAIR)
+├── hitl/              # Human-in-the-loop (priors, autonomy, steering)
+├── community_benchmarks/  # Olympus compatibility + SDL performance metrics
 ├── uncertainty/       # Measurement uncertainty types and propagation
 ├── platform/            # Platform services (auth, campaign manager, events, workspace, RAG)
 ├── api/                 # FastAPI REST endpoints + WebSocket

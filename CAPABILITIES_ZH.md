@@ -97,7 +97,7 @@
 
 ---
 
-## 模块清单 (400+ 模块，分布在 79 个包中)
+## 模块清单 (450+ 模块，分布在 87 个包中)
 
 ### I. 核心智能
 
@@ -1570,8 +1570,16 @@ print(report.format_text())
 | `test_tier3_closedloop.py` | 19 |
 | `test_adversarial_robustness.py` | 14 |
 | `test_continuous_similarity.py` | 26 |
+| `test_integration_package.py` | 18 |
+| `test_safety_module.py` | 22 |
+| `test_reproducibility.py` | 22 |
+| `test_hitl.py` | 28 |
+| `test_community_benchmarks.py` | 18 |
+| `test_batch_enhancements.py` | 16 |
+| `test_many_objective.py` | 20 |
+| `test_experiment_planner.py` | 15 |
 | ...（另外 58 个文件） | ... |
-| **总计：139 个文件** | **5,947** |
+| **总计：147 个文件** | **6,383** |
 
 ---
 
@@ -1620,6 +1628,8 @@ print(report.format_text())
 | 模块 | 能力 |
 |------|------|
 | `multi_objective/` | Pareto 前沿检测、支配排序、权衡分析、加权评分 |
+| `multi_objective/many_objective` | 超体积指标（2D 精确扫描、3D+ 蒙特卡洛）、IGD 指标、多目标排序 |
+| `multi_objective/interactive` | 交互式 Pareto 探索：加权查询、期望水平、边界过滤、权衡分析 |
 | `preference/` | Bradley-Terry MM 从成对比较学习偏好 |
 | `backends/NSGA2Sampler` | 原生多目标优化，带拥挤距离 |
 
@@ -1628,6 +1638,8 @@ print(report.format_text())
 | 模块 | 能力 |
 |------|------|
 | `batch/` | 3 种去相关策略：maximin、coverage、hybrid |
+| `batch/async_executor` | PipeBO 风格异步执行：submit/complete/poll 生命周期，`incorporate_partial()` 部分结果合并重排 |
+| `batch/time_aware` | 时间感知调度：最长作业优先装箱，最小化挂钟时间，截止时间感知 |
 | `infrastructure/batch_scheduler` | 异步试验调度，带批次队列管理 |
 
 ### 痛点 7：评估 & 可复现性差
@@ -1661,6 +1673,55 @@ print(report.format_text())
 | `meta_learning/`（7 个子模块） | 跨项目元学习：策略、权重、阈值、失败策略、漂移鲁棒性 |
 | `infrastructure/transfer_learning` | 从历史 campaign 迁移知识 |
 
+### 痛点 11：缺乏标准化数据集成 / 溯源
+
+| 模块 | 能力 |
+|------|------|
+| `integration/formats` | CSV/JSON/JSON-LD 导入导出，含 schema 版本 |
+| `integration/provenance` | W3C PROV-O 兼容溯源链，DAG 谱系追踪 |
+| `integration/connectors` | 抽象实验室连接器接口，含 CSV、JSON、内存适配器 |
+
+### 痛点 12：缺乏安全优先运行机制
+
+| 模块 | 能力 |
+|------|------|
+| `safety/hazards` | 8 类危害分类，5 级严重程度 |
+| `safety/monitor` | 实时安全监控，分级响应（SAFE → WARNING → DANGER → EMERGENCY） |
+| `safety/emergency` | 紧急升级协议，可配置阈值和安全区域回退 |
+
+### 痛点 13：Campaign 可复现性 / FAIR 合规
+
+| 模块 | 能力 |
+|------|------|
+| `reproducibility/logger` | 仅追加式 campaign 事件日志（8 种事件类型），JSONL 序列化 |
+| `reproducibility/replay` | 确定性 campaign 回放，可复现性评分 |
+| `reproducibility/fair` | FAIR 元数据生成，schema.org JSON-LD 导出 |
+
+### 痛点 14：不支持人机协作
+
+| 模块 | 能力 |
+|------|------|
+| `hitl/priors` | 专家先验注入，置信度加权候选重排 |
+| `hitl/autonomy` | 渐进自主（MANUAL → SUPERVISED → COLLABORATIVE → AUTONOMOUS），EMA 信任追踪 |
+| `hitl/steering` | 交互式优化引导（聚焦/回避区域、修改建议），完整审计轨迹 |
+
+### 痛点 15：缺乏社区基准兼容
+
+| 模块 | 能力 |
+|------|------|
+| `community_benchmarks/olympus_compat` | 6 个内置 Olympus 曲面，近邻插值 |
+| `community_benchmarks/sdl_metrics` | 标准化 SDL 指标：加速因子、增强因子、自主度 |
+
+### 痛点 16：多目标 / 异步批次 / LLM 规划
+
+| 模块 | 能力 |
+|------|------|
+| `multi_objective/many_objective` | 超体积指标、IGD、多目标排序 |
+| `multi_objective/interactive` | 交互式 Pareto 探索 + 权衡分析 |
+| `batch/async_executor` | PipeBO 风格异步执行 + 部分结果合并 |
+| `batch/time_aware` | 时间感知调度，最小化挂钟时间 |
+| `agents/experiment_planner` | LLM 增强实验规划 + 务实规则回退 |
+
 ### 痛点覆盖汇总
 
 | # | 痛点 | 深度 | 核心模块 | 状态 |
@@ -1669,12 +1730,18 @@ print(report.format_text())
 | 2 | 约束 / 不可行 | 完整 | feasibility, constraints, feasibility_first | 所有增强已完成 |
 | 3 | 非平稳性 | 完整 | drift, nonstationary, data_quality | 所有增强已完成 |
 | 4 | 噪声 / 测量 | 完整 | diagnostics, stabilization, data_quality, cost | 所有增强已完成 |
-| 5 | 多目标 | 完整 | multi_objective, preference, NSGA-II | 所有增强已完成 |
-| 6 | 批次聚集 | 完整 | batch, feasibility_first, batch_scheduler | 所有增强已完成 |
-| 7 | 可复现性 | 完整 | schema, replay, compliance, benchmark | 所有增强已完成 |
+| 5 | 多目标 | 完整 | multi_objective, preference, NSGA-II, many_objective, interactive | 所有增强已完成 |
+| 6 | 批次聚集 | 完整 | batch, feasibility_first, batch_scheduler, async_executor, time_aware | 所有增强已完成 |
+| 7 | 可复现性 | 完整 | schema, replay, compliance, benchmark, reproducibility/ | 所有增强已完成 |
 | 8 | 多样数据 | 完整 | feature_extraction, latent | 所有增强已完成 |
 | 9 | 数据录入门槛 | 完整 | store, ingestion, problem_builder | 所有增强已完成 |
 | 10 | 从零开始 | 完整 | meta_learning（7 个子模块）, transfer_learning | 所有增强已完成 |
+| 11 | 数据集成 / 溯源 | 完整 | integration/（formats, provenance, connectors） | **新增** — 已完成 |
+| 12 | 安全优先运行 | 完整 | safety/（hazards, monitor, emergency） | **新增** — 已完成 |
+| 13 | 可复现性 / FAIR | 完整 | reproducibility/（logger, replay, fair） | **新增** — 已完成 |
+| 14 | 人机协作 | 完整 | hitl/（priors, autonomy, steering） | **新增** — 已完成 |
+| 15 | 社区基准 | 完整 | community_benchmarks/（olympus, sdl_metrics） | **新增** — 已完成 |
+| 16 | 多目标 / 异步 / LLM | 完整 | many_objective, interactive, async_executor, experiment_planner | **新增** — 已完成 |
 
 ---
 
@@ -1693,7 +1760,7 @@ print(report.format_text())
 | 影子模式（Agent vs. Baseline 对比） | 是 |
 | SLO 监控（延迟 p50/p95、漂移 FP、动作 FP） | 是 |
 | 发布门自动化（8 项门检查） | 是 |
-| 5,947 个测试（验收 + 单元/集成 + 三层真实数据） | 是 |
+| 6,383 个测试（验收 + 单元/集成 + 三层真实数据 + SDL 缺口闭合） | 是 |
 | 全量类型注解 | 是 |
 | 零外部运行时依赖 | 是 |
 | 自动数据导入（CSV/JSON -> 统一仓库 -> 快照） | 是 |
@@ -1733,6 +1800,14 @@ print(report.format_text())
 | 对抗鲁棒性测试 | 是 |
 | 三层真实数据集成测试（Tier 1 流水线、Tier 2 压力、Tier 3 闭环） | 是 |
 | 闭环优化优于随机基线（已证明） | 是 |
+| 数据集成与溯源（W3C PROV-O） | 是 |
+| 安全优先优化（分级危害响应） | 是 |
+| Campaign 可复现性与 FAIR 元数据 | 是 |
+| 人机协作（渐进自主、专家先验、交互引导） | 是 |
+| 社区基准兼容（6 个 Olympus 曲面、SDL 指标） | 是 |
+| 多目标优化（超体积、IGD） | 是 |
+| 异步批次执行与部分结果合并 | 是 |
+| LLM 实验规划与务实规则回退 | 是 |
 
 ---
 
@@ -1745,13 +1820,14 @@ optimization_copilot/
 │   ├── literature/     # 文献挖掘代理
 │   ├── mechanism/      # 机理设计代理
 │   ├── phase_structure/ # 相结构分析代理
-│   └── symreg/         # 符号回归代理
+│   ├── symreg/         # 符号回归代理
+│   └── experiment_planner.py  # LLM 实验规划代理
 ├── anomaly/            # 三层异常检测
 ├── api/                 # FastAPI REST 端点 + WebSocket
 ├── backends/            # 10 个内置优化算法
 │   ├── builtin.py       # Random, LHS, TPE, Sobol, GP-BO, RF-BO, CMA-ES, DE, NSGA-II, TuRBO
 │   └── _math/           # 纯 Python 数学库（linalg, stats, sobol, kernels, acquisition）
-├── batch/               # 批次多样化
+├── batch/               # 批次多样化 + 异步执行器 + 时间感知调度
 ├── benchmark/           # 基准运行器 + 排行榜
 ├── benchmark_generator/ # 合成基准生成器
 ├── benchmark_protocol/ # SDL 基准评估
@@ -1792,9 +1868,14 @@ optimization_copilot/
 ├── meta_controller/     # 核心智能：阶段编排 + 策略选择
 ├── meta_learning/       # 跨项目元学习（7 个子模块）
 ├── multi_fidelity/      # 多保真度规划（逐次减半）
-├── multi_objective/     # Pareto 前沿 + 多目标分析
+├── multi_objective/     # Pareto 前沿 + 多目标 + 交互式探索
 ├── nonstationary/       # 时间加权 + 季节性检测
 ├── physics/           # 物理先验建模（核函数、先验、ODE 求解器）
+├── integration/       # 数据集成（格式、溯源、连接器）
+├── safety/            # 安全优先优化（危害、监控、紧急协议）
+├── reproducibility/   # Campaign 可复现性（日志、回放、FAIR）
+├── hitl/              # 人机协作（先验、自主、引导）
+├── community_benchmarks/  # Olympus 兼容 + SDL 性能指标
 ├── platform/            # 平台服务（认证、campaign 管理、事件、工作区、RAG）
 ├── plugins/             # 插件基类 + 注册表 + 治理
 ├── portfolio/           # 算法组合学习 + 多维评分
@@ -1818,7 +1899,7 @@ optimization_copilot/
 ├── workflow/           # 多阶段实验 DAG
 └── config.py            # 环境配置
 
-tests/                   # 5,947 个测试，139 个文件
+tests/                   # 6,383 个测试，147 个文件
 ├── test_tier1_endtoend.py       # 10 个测试：完整 8 阶段流水线
 ├── test_tier2_stress.py         # 14 个测试：漂移/批次/混杂因素压力
 ├── test_tier3_closedloop.py     # 19 个测试：闭环优化
@@ -1833,6 +1914,14 @@ tests/                   # 5,947 个测试，139 个文件
 ├── test_viz_*.py                # 10 个可视化测试文件
 ├── test_shap_values.py          # KernelSHAP 测试
 ├── test_eigen_linalg.py         # 特征分解测试
+├── test_integration_package.py  # 18 个数据集成测试
+├── test_safety_module.py       # 22 个安全模块测试
+├── test_reproducibility.py     # 22 个可复现性测试
+├── test_hitl.py                # 28 个人机协作测试
+├── test_community_benchmarks.py # 18 个社区基准测试
+├── test_batch_enhancements.py  # 16 个批次增强测试
+├── test_many_objective.py      # 20 个多目标测试
+├── test_experiment_planner.py  # 15 个实验规划测试
 ├── ...（另外 63 个文件）
-└── 总计：5,947 个测试
+└── 总计：6,383 个测试
 ```
