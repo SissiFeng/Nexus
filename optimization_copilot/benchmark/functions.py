@@ -240,6 +240,96 @@ def _make_multifidelity_branin(fidelity: int = 2) -> Callable[[dict[str, float]]
     return _fn
 
 
+# ── Additional benchmark functions ─────────────────────────────────
+
+
+def sphere5(params: dict[str, float]) -> dict[str, float]:
+    """Sphere function in 5D. Domain: xi in [-5.12, 5.12]. f* = 0 at origin."""
+    x = [params[f"x{i}"] for i in range(1, 6)]
+    return {"objective": sum(xi**2 for xi in x)}
+
+
+def ackley10(params: dict[str, float]) -> dict[str, float]:
+    """Ackley function in 10D. Domain: xi in [-32.768, 32.768]. f* = 0 at origin."""
+    d = 10
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    sum_sq = sum(xi**2 for xi in x)
+    sum_cos = sum(math.cos(2.0 * math.pi * xi) for xi in x)
+    val = -20.0 * math.exp(-0.2 * math.sqrt(sum_sq / d)) - math.exp(sum_cos / d) + 20.0 + math.e
+    return {"objective": val}
+
+
+def rastrigin10(params: dict[str, float]) -> dict[str, float]:
+    """Rastrigin function in 10D. Domain: xi in [-5.12, 5.12]. f* = 0 at origin."""
+    d = 10
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    val = 10.0 * d + sum(xi**2 - 10.0 * math.cos(2.0 * math.pi * xi) for xi in x)
+    return {"objective": val}
+
+
+def griewank10(params: dict[str, float]) -> dict[str, float]:
+    """Griewank function in 10D. Domain: xi in [-600, 600]. f* = 0 at origin."""
+    d = 10
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    sum_sq = sum(xi**2 for xi in x) / 4000.0
+    prod_cos = 1.0
+    for i, xi in enumerate(x, 1):
+        prod_cos *= math.cos(xi / math.sqrt(i))
+    return {"objective": sum_sq - prod_cos + 1.0}
+
+
+def schwefel10(params: dict[str, float]) -> dict[str, float]:
+    """Schwefel function in 10D. Domain: xi in [-500, 500]. f* ~ 0 at xi=420.9687."""
+    d = 10
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    val = 418.9829 * d - sum(xi * math.sin(math.sqrt(abs(xi))) for xi in x)
+    return {"objective": val}
+
+
+def styblinski_tang10(params: dict[str, float]) -> dict[str, float]:
+    """Styblinski-Tang in 10D. Domain: xi in [-5, 5]. f* = -39.16599*d at xi=-2.903534."""
+    d = 10
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    val = sum(xi**4 - 16.0 * xi**2 + 5.0 * xi for xi in x) / 2.0
+    return {"objective": val}
+
+
+def dixon_price10(params: dict[str, float]) -> dict[str, float]:
+    """Dixon-Price in 10D. Domain: xi in [-10, 10]. f* = 0."""
+    d = 10
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    val = (x[0] - 1.0) ** 2
+    for i in range(1, d):
+        val += (i + 1) * (2.0 * x[i] ** 2 - x[i - 1]) ** 2
+    return {"objective": val}
+
+
+def michalewicz10(params: dict[str, float]) -> dict[str, float]:
+    """Michalewicz in 10D. Domain: xi in [0, pi]. f* ~ -9.66015."""
+    d = 10
+    m = 10  # steepness parameter
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    val = -sum(math.sin(xi) * math.sin((i + 1) * xi**2 / math.pi) ** (2 * m) for i, xi in enumerate(x))
+    return {"objective": val}
+
+
+def zakharov10(params: dict[str, float]) -> dict[str, float]:
+    """Zakharov in 10D. Domain: xi in [-5, 10]. f* = 0 at origin."""
+    d = 10
+    x = [params[f"x{i}"] for i in range(1, d + 1)]
+    sum_sq = sum(xi**2 for xi in x)
+    sum_half = sum(0.5 * (i + 1) * xi for i, xi in enumerate(x))
+    return {"objective": sum_sq + sum_half**2 + sum_half**4}
+
+
+def bohachevsky2(params: dict[str, float]) -> dict[str, float]:
+    """Bohachevsky #2 in 2D. Domain: xi in [-100, 100]. f* = 0 at origin."""
+    x1 = params["x1"]
+    x2 = params["x2"]
+    val = x1**2 + 2.0 * x2**2 - 0.3 * math.cos(3.0 * math.pi * x1) * math.cos(4.0 * math.pi * x2) + 0.3
+    return {"objective": val}
+
+
 # ── Registry ─────────────────────────────────────────────────────────
 
 
@@ -401,6 +491,86 @@ BENCHMARK_SUITE: dict[str, BenchmarkFunction] = {
             "n_objectives": 2,
             "pareto_front": "f2 = 1 - sqrt(f1)",
         },
+    ),
+    "sphere5": BenchmarkFunction(
+        name="sphere5",
+        evaluate=sphere5,
+        parameter_specs=_make_specs(5, (-5.12, 5.12)),
+        known_optimum={"objective": 0.0},
+        optimal_params={f"x{i}": 0.0 for i in range(1, 6)},
+        metadata={"dimensionality": 5, "difficulty": "easy", "characteristics": ["separable", "unimodal", "continuous"]},
+    ),
+    "ackley10": BenchmarkFunction(
+        name="ackley10",
+        evaluate=ackley10,
+        parameter_specs=_make_specs(10, (-32.768, 32.768)),
+        known_optimum={"objective": 0.0},
+        optimal_params={f"x{i}": 0.0 for i in range(1, 11)},
+        metadata={"dimensionality": 10, "difficulty": "hard", "characteristics": ["multimodal", "deceptive", "continuous"]},
+    ),
+    "rastrigin10": BenchmarkFunction(
+        name="rastrigin10",
+        evaluate=rastrigin10,
+        parameter_specs=_make_specs(10, (-5.12, 5.12)),
+        known_optimum={"objective": 0.0},
+        optimal_params={f"x{i}": 0.0 for i in range(1, 11)},
+        metadata={"dimensionality": 10, "difficulty": "hard", "characteristics": ["highly_multimodal", "continuous"]},
+    ),
+    "griewank10": BenchmarkFunction(
+        name="griewank10",
+        evaluate=griewank10,
+        parameter_specs=_make_specs(10, (-600.0, 600.0)),
+        known_optimum={"objective": 0.0},
+        optimal_params={f"x{i}": 0.0 for i in range(1, 11)},
+        metadata={"dimensionality": 10, "difficulty": "moderate", "characteristics": ["multimodal", "continuous"]},
+    ),
+    "schwefel10": BenchmarkFunction(
+        name="schwefel10",
+        evaluate=schwefel10,
+        parameter_specs=_make_specs(10, (-500.0, 500.0)),
+        known_optimum={"objective": 0.0},
+        optimal_params={f"x{i}": 420.9687 for i in range(1, 11)},
+        metadata={"dimensionality": 10, "difficulty": "hard", "characteristics": ["deceptive", "continuous"]},
+    ),
+    "styblinski_tang10": BenchmarkFunction(
+        name="styblinski_tang10",
+        evaluate=styblinski_tang10,
+        parameter_specs=_make_specs(10, (-5.0, 5.0)),
+        known_optimum={"objective": -391.6599},
+        optimal_params={f"x{i}": -2.903534 for i in range(1, 11)},
+        metadata={"dimensionality": 10, "difficulty": "moderate", "characteristics": ["multimodal", "continuous"]},
+    ),
+    "dixon_price10": BenchmarkFunction(
+        name="dixon_price10",
+        evaluate=dixon_price10,
+        parameter_specs=_make_specs(10, (-10.0, 10.0)),
+        known_optimum={"objective": 0.0},
+        optimal_params=None,
+        metadata={"dimensionality": 10, "difficulty": "moderate", "characteristics": ["unimodal", "valley", "continuous"]},
+    ),
+    "michalewicz10": BenchmarkFunction(
+        name="michalewicz10",
+        evaluate=michalewicz10,
+        parameter_specs=_make_specs(10, (0.0, math.pi)),
+        known_optimum={"objective": -9.66015},
+        optimal_params=None,
+        metadata={"dimensionality": 10, "difficulty": "hard", "characteristics": ["deceptive", "ridges", "continuous"]},
+    ),
+    "zakharov10": BenchmarkFunction(
+        name="zakharov10",
+        evaluate=zakharov10,
+        parameter_specs=_make_specs(10, (-5.0, 10.0)),
+        known_optimum={"objective": 0.0},
+        optimal_params={f"x{i}": 0.0 for i in range(1, 11)},
+        metadata={"dimensionality": 10, "difficulty": "moderate", "characteristics": ["unimodal", "plate", "continuous"]},
+    ),
+    "bohachevsky2": BenchmarkFunction(
+        name="bohachevsky2",
+        evaluate=bohachevsky2,
+        parameter_specs=_make_specs(2, (-100.0, 100.0)),
+        known_optimum={"objective": 0.0},
+        optimal_params={"x1": 0.0, "x2": 0.0},
+        metadata={"dimensionality": 2, "difficulty": "easy", "characteristics": ["multimodal", "continuous"]},
     ),
 }
 

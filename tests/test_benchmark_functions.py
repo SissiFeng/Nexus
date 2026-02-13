@@ -14,17 +14,27 @@ import pytest
 from optimization_copilot.benchmark.functions import (
     BENCHMARK_SUITE,
     BenchmarkFunction,
+    ackley10,
+    bohachevsky2,
     branin,
     constrained_branin,
+    dixon_price10,
     get_benchmark,
+    griewank10,
     hartmann3,
     hartmann6,
     levy,
     list_benchmarks,
     make_spec,
+    michalewicz10,
     multifidelity_branin,
     noisy_hartmann6,
+    rastrigin10,
     rosenbrock,
+    schwefel10,
+    sphere5,
+    styblinski_tang10,
+    zakharov10,
     zdt1,
 )
 
@@ -558,15 +568,273 @@ class TestZDT1:
         assert result["f2"] == pytest.approx(0.4, abs=1e-10)
 
 
+# ── sphere5 tests ──────────────────────────────────────────────────
+
+
+class TestSphere5:
+    """Tests for the Sphere function in 5D."""
+
+    def test_at_known_optimum(self):
+        """sphere5 at the origin should return 0."""
+        params = {f"x{i}": 0.0 for i in range(1, 6)}
+        result = sphere5(params)
+        assert result["objective"] == pytest.approx(0.0, abs=1e-12)
+
+    def test_returns_dict_with_objective_key(self):
+        """sphere5 should return a dict with 'objective' key."""
+        params = {f"x{i}": 1.0 for i in range(1, 6)}
+        result = sphere5(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_positive_away_from_origin(self):
+        """sphere5 at all-ones should return 5.0."""
+        params = {f"x{i}": 1.0 for i in range(1, 6)}
+        result = sphere5(params)
+        assert result["objective"] == pytest.approx(5.0, abs=1e-12)
+
+
+# ── ackley10 tests ─────────────────────────────────────────────────
+
+
+class TestAckley10:
+    """Tests for the Ackley function in 10D."""
+
+    def test_at_known_optimum(self):
+        """ackley10 at the origin should return 0."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = ackley10(params)
+        assert result["objective"] == pytest.approx(0.0, abs=1e-10)
+
+    def test_returns_dict_with_objective_key(self):
+        """ackley10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = ackley10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_positive_away_from_origin(self):
+        """ackley10 away from origin should be positive."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = ackley10(params)
+        assert result["objective"] > 0.0
+
+
+# ── rastrigin10 tests ──────────────────────────────────────────────
+
+
+class TestRastrigin10:
+    """Tests for the Rastrigin function in 10D."""
+
+    def test_at_known_optimum(self):
+        """rastrigin10 at the origin should return 0."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = rastrigin10(params)
+        assert result["objective"] == pytest.approx(0.0, abs=1e-10)
+
+    def test_returns_dict_with_objective_key(self):
+        """rastrigin10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = rastrigin10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_positive_away_from_origin(self):
+        """rastrigin10 away from origin should be positive."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = rastrigin10(params)
+        assert result["objective"] > 0.0
+
+
+# ── griewank10 tests ───────────────────────────────────────────────
+
+
+class TestGriewank10:
+    """Tests for the Griewank function in 10D."""
+
+    def test_at_known_optimum(self):
+        """griewank10 at the origin should return 0."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = griewank10(params)
+        assert result["objective"] == pytest.approx(0.0, abs=1e-10)
+
+    def test_returns_dict_with_objective_key(self):
+        """griewank10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = griewank10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_nonnegative(self):
+        """griewank10 at large values should be nonnegative."""
+        params = {f"x{i}": 100.0 for i in range(1, 11)}
+        result = griewank10(params)
+        assert result["objective"] >= 0.0
+
+
+# ── schwefel10 tests ───────────────────────────────────────────────
+
+
+class TestSchwefel10:
+    """Tests for the Schwefel function in 10D."""
+
+    def test_at_known_optimum(self):
+        """schwefel10 at xi=420.9687 should be close to 0."""
+        params = {f"x{i}": 420.9687 for i in range(1, 11)}
+        result = schwefel10(params)
+        assert result["objective"] == pytest.approx(0.0, abs=1.0)  # wider tolerance
+
+    def test_returns_dict_with_objective_key(self):
+        """schwefel10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = schwefel10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_finite_at_bounds(self):
+        """schwefel10 should be finite at domain bounds."""
+        params = {f"x{i}": -500.0 for i in range(1, 11)}
+        result = schwefel10(params)
+        assert math.isfinite(result["objective"])
+
+
+# ── styblinski_tang10 tests ────────────────────────────────────────
+
+
+class TestStyblinskiTang10:
+    """Tests for the Styblinski-Tang function in 10D."""
+
+    def test_at_known_optimum(self):
+        """styblinski_tang10 at xi=-2.903534 should be close to -391.6599."""
+        params = {f"x{i}": -2.903534 for i in range(1, 11)}
+        result = styblinski_tang10(params)
+        assert result["objective"] == pytest.approx(-391.6599, abs=0.01)
+
+    def test_returns_dict_with_objective_key(self):
+        """styblinski_tang10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = styblinski_tang10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_at_origin(self):
+        """styblinski_tang10 at origin should be 0."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = styblinski_tang10(params)
+        assert result["objective"] == pytest.approx(0.0, abs=1e-10)
+
+
+# ── dixon_price10 tests ────────────────────────────────────────────
+
+
+class TestDixonPrice10:
+    """Tests for the Dixon-Price function in 10D."""
+
+    def test_returns_dict_with_objective_key(self):
+        """dixon_price10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = dixon_price10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_nonnegative(self):
+        """dixon_price10 should be nonnegative."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = dixon_price10(params)
+        assert result["objective"] >= 0.0
+
+    def test_at_origin(self):
+        """dixon_price10 at origin: (0-1)^2 + sum i*(2*0^2 - 0)^2 = 1."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = dixon_price10(params)
+        # At origin: (0-1)^2 + sum i*(2*0^2 - 0)^2 = 1 + 0 = 1
+        assert result["objective"] == pytest.approx(1.0, abs=1e-10)
+
+
+# ── michalewicz10 tests ────────────────────────────────────────────
+
+
+class TestMichalewicz10:
+    """Tests for the Michalewicz function in 10D."""
+
+    def test_returns_dict_with_objective_key(self):
+        """michalewicz10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = michalewicz10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_negative_at_good_points(self):
+        """michalewicz10 should be negative at reasonable interior points."""
+        params = {f"x{i}": 1.5 for i in range(1, 11)}
+        result = michalewicz10(params)
+        assert result["objective"] < 0.0
+
+    def test_finite_output(self):
+        """michalewicz10 should return a finite value at pi/2."""
+        params = {f"x{i}": math.pi / 2.0 for i in range(1, 11)}
+        result = michalewicz10(params)
+        assert math.isfinite(result["objective"])
+
+
+# ── zakharov10 tests ───────────────────────────────────────────────
+
+
+class TestZakharov10:
+    """Tests for the Zakharov function in 10D."""
+
+    def test_at_known_optimum(self):
+        """zakharov10 at origin should return 0."""
+        params = {f"x{i}": 0.0 for i in range(1, 11)}
+        result = zakharov10(params)
+        assert result["objective"] == pytest.approx(0.0, abs=1e-12)
+
+    def test_returns_dict_with_objective_key(self):
+        """zakharov10 should return a dict with 'objective' key."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = zakharov10(params)
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_positive_away_from_origin(self):
+        """zakharov10 away from origin should be positive."""
+        params = {f"x{i}": 1.0 for i in range(1, 11)}
+        result = zakharov10(params)
+        assert result["objective"] > 0.0
+
+
+# ── bohachevsky2 tests ─────────────────────────────────────────────
+
+
+class TestBohachevsky2:
+    """Tests for the Bohachevsky #2 function in 2D."""
+
+    def test_at_known_optimum(self):
+        """bohachevsky2 at origin should return 0."""
+        result = bohachevsky2({"x1": 0.0, "x2": 0.0})
+        assert result["objective"] == pytest.approx(0.0, abs=1e-10)
+
+    def test_returns_dict_with_objective_key(self):
+        """bohachevsky2 should return a dict with 'objective' key."""
+        result = bohachevsky2({"x1": 1.0, "x2": 1.0})
+        assert isinstance(result, dict)
+        assert "objective" in result
+
+    def test_positive_away_from_origin(self):
+        """bohachevsky2 away from origin should be positive."""
+        result = bohachevsky2({"x1": 5.0, "x2": 5.0})
+        assert result["objective"] > 0.0
+
+
 # ── BENCHMARK_SUITE registry tests ──────────────────────────────────
 
 
 class TestBenchmarkSuiteRegistry:
     """Tests for the BENCHMARK_SUITE registry."""
 
-    def test_contains_10_entries(self):
-        """The suite should contain exactly 10 benchmark entries."""
-        assert len(BENCHMARK_SUITE) == 10
+    def test_contains_20_entries(self):
+        """The suite should contain exactly 20 benchmark entries."""
+        assert len(BENCHMARK_SUITE) == 20
 
     def test_all_entries_are_benchmark_function(self):
         """Every entry should be a BenchmarkFunction instance."""
@@ -588,7 +856,7 @@ class TestBenchmarkSuiteRegistry:
         """list_benchmarks should return all names in sorted order."""
         names = list_benchmarks()
         assert names == sorted(names)
-        assert len(names) == 10
+        assert len(names) == 20
         assert "branin" in names
         assert "zdt1" in names
 
@@ -605,6 +873,16 @@ class TestBenchmarkSuiteRegistry:
             "noisy_hartmann6",
             "multifidelity_branin",
             "zdt1",
+            "sphere5",
+            "ackley10",
+            "rastrigin10",
+            "griewank10",
+            "schwefel10",
+            "styblinski_tang10",
+            "dixon_price10",
+            "michalewicz10",
+            "zakharov10",
+            "bohachevsky2",
         }
         assert set(BENCHMARK_SUITE.keys()) == expected
 
