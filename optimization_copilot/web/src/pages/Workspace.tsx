@@ -88,6 +88,9 @@ import {
   Wind,
   Magnet,
   Focus,
+  Droplets,
+  BarChartHorizontal,
+  Flame,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -2936,6 +2939,102 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Exploration Density Shift */}
+              {trials.length >= 12 && (() => {
+                const edSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (edSpecs.length === 0) return null;
+                const edSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const edWinSize = Math.max(4, Math.floor(edSorted.length / 4));
+                const edWindows: { start: number; end: number; label: string }[] = [];
+                for (let i = 0; i <= edSorted.length - edWinSize; i += Math.max(1, Math.floor(edWinSize / 2))) {
+                  edWindows.push({ start: i, end: i + edWinSize, label: `W${edWindows.length + 1}` });
+                  if (edWindows.length >= 6) break;
+                }
+                if (edWindows.length < 2) return null;
+                // For each window, compute centroid and spread (avg distance to centroid) in normalized space
+                const edNorm = (t: Record<string, number>) => edSpecs.map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0; const hi = sp.upper ?? 1;
+                  return hi > lo ? (Number(t[sp.name]) - lo) / (hi - lo) : 0.5;
+                });
+                const edMetrics = edWindows.map(w => {
+                  const pts = edSorted.slice(w.start, w.end).map(t => edNorm(t.parameters));
+                  const d = edSpecs.length;
+                  const centroid = Array.from({ length: d }, (_, j) => pts.reduce((s, p) => s + p[j], 0) / pts.length);
+                  const spread = pts.reduce((s, p) => s + Math.sqrt(p.reduce((a, v, j) => a + (v - centroid[j]) ** 2, 0)), 0) / pts.length;
+                  // Density = inverse of spread (higher = more concentrated)
+                  const density = spread > 0 ? 1 / spread : 10;
+                  return { label: w.label, spread, density, centroidShift: 0 };
+                });
+                // Compute centroid shift between consecutive windows
+                for (let i = 1; i < edMetrics.length; i++) {
+                  const ptsA = edSorted.slice(edWindows[i - 1].start, edWindows[i - 1].end).map(t => edNorm(t.parameters));
+                  const ptsB = edSorted.slice(edWindows[i].start, edWindows[i].end).map(t => edNorm(t.parameters));
+                  const d = edSpecs.length;
+                  const cA = Array.from({ length: d }, (_, j) => ptsA.reduce((s, p) => s + p[j], 0) / ptsA.length);
+                  const cB = Array.from({ length: d }, (_, j) => ptsB.reduce((s, p) => s + p[j], 0) / ptsB.length);
+                  edMetrics[i].centroidShift = Math.sqrt(cA.reduce((s, v, j) => s + (v - cB[j]) ** 2, 0));
+                }
+                const edMaxSpread = Math.max(...edMetrics.map(m => m.spread), 0.01);
+                const edMaxShift = Math.max(...edMetrics.map(m => m.centroidShift), 0.01);
+                const edFirstSpread = (edMetrics[0].spread + (edMetrics[1]?.spread ?? edMetrics[0].spread)) / 2;
+                const edLastSpread = (edMetrics[edMetrics.length - 1].spread + (edMetrics[edMetrics.length - 2]?.spread ?? edMetrics[edMetrics.length - 1].spread)) / 2;
+                const edTrend = edFirstSpread > 0 ? ((edLastSpread - edFirstSpread) / edFirstSpread * 100) : 0;
+                const edLabel = edTrend < -15 ? "Concentrating" : edTrend > 15 ? "Expanding" : "Stable";
+                const edColor = edTrend < -15 ? "var(--color-blue)" : edTrend > 15 ? "#22c55e" : "var(--color-text-muted)";
+                // Chart dimensions
+                const edW = 320, edH = 100, edPadL = 36, edPadR = 10, edPadT = 12, edPadB = 22;
+                const edPlotW = edW - edPadL - edPadR;
+                const edPlotH = edH - edPadT - edPadB;
+                const edBarW = Math.min(20, (edPlotW / edMetrics.length) * 0.6);
+                const edGap = edPlotW / edMetrics.length;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Droplets size={15} style={{ color: "var(--color-primary)" }} />
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Exploration Density Shift</h3>
+                      </div>
+                      <span className="findings-badge" style={{ background: edColor, color: "#fff" }}>{edLabel} ({edTrend > 0 ? "+" : ""}{edTrend.toFixed(0)}%)</span>
+                    </div>
+                    <svg width={edW} height={edH} viewBox={`0 0 ${edW} ${edH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Y axis labels */}
+                      <text x={edPadL - 4} y={edPadT + 4} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">High</text>
+                      <text x={edPadL - 4} y={edPadT + edPlotH} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">Low</text>
+                      <text x={edPadL - 2} y={edPadT + edPlotH / 2 + 2} fontSize="5" fill="var(--color-text-muted)" textAnchor="end" transform={`rotate(-90, ${edPadL - 14}, ${edPadT + edPlotH / 2})`}>Spread</text>
+                      {/* Bars for spread + dots for centroid shift */}
+                      {edMetrics.map((m, i) => {
+                        const cx = edPadL + i * edGap + edGap / 2;
+                        const barH = (m.spread / edMaxSpread) * edPlotH;
+                        const shiftY = edPadT + edPlotH - (m.centroidShift / edMaxShift) * edPlotH * 0.9;
+                        const barColor = m.spread / edMaxSpread > 0.6 ? "#22c55e" : m.spread / edMaxSpread > 0.3 ? "var(--color-primary)" : "#f97316";
+                        return (
+                          <g key={i}>
+                            <rect x={cx - edBarW / 2} y={edPadT + edPlotH - barH} width={edBarW} height={barH} rx={2} fill={barColor} opacity={0.7} />
+                            {i > 0 && (
+                              <line
+                                x1={edPadL + (i - 1) * edGap + edGap / 2}
+                                y1={edPadT + edPlotH - (edMetrics[i - 1].centroidShift / edMaxShift) * edPlotH * 0.9}
+                                x2={cx} y2={shiftY}
+                                stroke="#a855f7" strokeWidth="1.2" strokeDasharray="3,2"
+                              />
+                            )}
+                            <circle cx={cx} cy={shiftY} r="2.5" fill="#a855f7" />
+                            <text x={cx} y={edPadT + edPlotH + 12} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="middle">{m.label}</text>
+                          </g>
+                        );
+                      })}
+                      {/* Baseline */}
+                      <line x1={edPadL} y1={edPadT + edPlotH} x2={edPadL + edPlotW} y2={edPadT + edPlotH} stroke="var(--color-border)" strokeWidth="0.5" />
+                    </svg>
+                    <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "var(--color-primary)", marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.7 }} />Spread</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 0, borderTop: "2px dashed #a855f7", marginRight: 4, verticalAlign: "middle" }} />Centroid Shift</span>
+                      <span className="efficiency-legend-item" style={{ marginLeft: "auto", fontSize: "0.7rem" }}>{edSpecs.length}D space, {edWindows.length} windows</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -4114,6 +4213,117 @@ export default function Workspace() {
                       <rect x={gcPadL + 60} y={gcPadT + gcParams.length * gcCellH + 4} width={20} height={6} rx={2} fill="rgba(34,197,94,0.6)" />
                       <text x={gcPadL + 84} y={gcPadT + gcParams.length * gcCellH + 10} fontSize="5.5" fill="var(--color-text-muted)">Positive</text>
                     </svg>
+                  </div>
+                );
+              })()}
+
+              {/* Prediction Residual Map */}
+              {trials.length >= 8 && (() => {
+                const prSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (prSpecs.length === 0) return null;
+                const prK = Math.min(5, Math.floor(trials.length / 2));
+                if (prK < 2) return null;
+                const prObjKey = Object.keys(trials[0].kpis)[0];
+                if (!prObjKey) return null;
+                // LOO k-NN prediction residuals per trial
+                const prNorm = (t: Record<string, number>) => prSpecs.map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0; const hi = sp.upper ?? 1;
+                  return hi > lo ? (Number(t[sp.name]) - lo) / (hi - lo) : 0.5;
+                });
+                const prAll = trials.map(t => ({ norm: prNorm(t.parameters), actual: Number(t.kpis[prObjKey]) || 0, params: t.parameters }));
+                const prResiduals = prAll.map((pt, idx) => {
+                  const dists = prAll.map((o, j) => ({ j, d: j === idx ? Infinity : Math.sqrt(pt.norm.reduce((s, v, k) => s + (v - o.norm[k]) ** 2, 0)) }));
+                  dists.sort((a, b) => a.d - b.d);
+                  const neighbors = dists.slice(0, prK);
+                  const predicted = neighbors.reduce((s, n) => s + prAll[n.j].actual, 0) / prK;
+                  return { residual: pt.actual - predicted, actual: pt.actual, predicted, params: pt.params };
+                });
+                // Per-parameter: group residuals into 4 bins and compute mean residual per bin
+                const prMaxParams = Math.min(prSpecs.length, 6);
+                const prParamData = prSpecs.slice(0, prMaxParams).map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0; const hi = sp.upper ?? 1;
+                  const nBins = 4;
+                  const bins = Array.from({ length: nBins }, (_, b) => {
+                    const bLo = lo + (b / nBins) * (hi - lo);
+                    const bHi = lo + ((b + 1) / nBins) * (hi - lo);
+                    const inBin = prResiduals.filter(r => {
+                      const v = Number(r.params[sp.name]);
+                      return b === nBins - 1 ? v >= bLo && v <= bHi : v >= bLo && v < bHi;
+                    });
+                    const meanR = inBin.length > 0 ? inBin.reduce((s, r) => s + r.residual, 0) / inBin.length : 0;
+                    return { binIdx: b, meanResidual: meanR, count: inBin.length, label: ((bLo + bHi) / 2).toPrecision(2) };
+                  });
+                  const maxBias = Math.max(...bins.map(b => Math.abs(b.meanResidual)), 0.001);
+                  return { name: sp.name, bins, maxBias };
+                });
+                const prGlobalMaxBias = Math.max(...prParamData.map(p => p.maxBias), 0.001);
+                const prMeanAbsResidual = prResiduals.reduce((s, r) => s + Math.abs(r.residual), 0) / prResiduals.length;
+                const prBiasCount = prParamData.filter(p => p.bins.some(b => Math.abs(b.meanResidual) / prGlobalMaxBias > 0.6)).length;
+                const prLabel = prBiasCount === 0 ? "Unbiased" : prBiasCount <= 2 ? "Mild Bias" : "Systematic Bias";
+                const prColor = prBiasCount === 0 ? "#22c55e" : prBiasCount <= 2 ? "#eab308" : "#ef4444";
+                // Small multiples
+                const prCols = Math.min(3, prParamData.length);
+                const prCellW = 110, prCellH = 70;
+                const prSvgW = prCols * prCellW;
+                const prRows = Math.ceil(prParamData.length / prCols);
+                const prSvgH = prRows * prCellH;
+                const prBarPad = 8;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <BarChartHorizontal size={15} style={{ color: "var(--color-primary)" }} />
+                        <h2 style={{ margin: 0 }}>Prediction Residual Map</h2>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <span className="findings-badge" style={{ background: prColor, color: "#fff" }}>{prLabel}</span>
+                        <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>MAE: {prMeanAbsResidual.toFixed(3)}</span>
+                      </div>
+                    </div>
+                    <svg width={prSvgW} height={prSvgH} viewBox={`0 0 ${prSvgW} ${prSvgH}`} style={{ width: "100%", height: "auto" }}>
+                      {prParamData.map((param, pi) => {
+                        const col = pi % prCols;
+                        const row = Math.floor(pi / prCols);
+                        const ox = col * prCellW;
+                        const oy = row * prCellH;
+                        const midY = oy + prCellH / 2 + 4;
+                        const maxBarH = prCellH / 2 - 12;
+                        const barW = (prCellW - 2 * prBarPad) / param.bins.length * 0.7;
+                        const barGap = (prCellW - 2 * prBarPad) / param.bins.length;
+                        return (
+                          <g key={pi}>
+                            <text x={ox + prCellW / 2} y={oy + 10} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle" fontWeight="500">{param.name}</text>
+                            {/* Zero line */}
+                            <line x1={ox + prBarPad} y1={midY} x2={ox + prCellW - prBarPad} y2={midY} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="2,1" />
+                            {param.bins.map((bin, bi) => {
+                              const bx = ox + prBarPad + bi * barGap + barGap / 2;
+                              const h = (Math.abs(bin.meanResidual) / prGlobalMaxBias) * maxBarH;
+                              const isNeg = bin.meanResidual < 0;
+                              const barColor = Math.abs(bin.meanResidual) / prGlobalMaxBias > 0.6 ? "#ef4444" : Math.abs(bin.meanResidual) / prGlobalMaxBias > 0.3 ? "#eab308" : "#22c55e";
+                              return (
+                                <g key={bi}>
+                                  <rect
+                                    x={bx - barW / 2}
+                                    y={isNeg ? midY : midY - h}
+                                    width={barW}
+                                    height={Math.max(h, 1)}
+                                    rx={1.5}
+                                    fill={barColor}
+                                    opacity={0.75}
+                                  />
+                                  <text x={bx} y={oy + prCellH - 2} fontSize="4.5" fill="var(--color-text-muted)" textAnchor="middle">{bin.label}</text>
+                                </g>
+                              );
+                            })}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>k={prK} LOO, 4 bins/param</span>
+                      <span>{prBiasCount}/{prParamData.length} params with bias</span>
+                      <span style={{ marginLeft: "auto" }}>Bars above/below = over/under-prediction</span>
+                    </div>
                   </div>
                 );
               })()}
@@ -6450,6 +6660,97 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Improvement vs Novelty Profile */}
+              {suggestions && suggestions.suggestions.length >= 2 && trials.length >= 3 && (() => {
+                const inSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (inSpecs.length === 0) return null;
+                const inObjKey = Object.keys(trials[0].kpis)[0];
+                if (!inObjKey) return null;
+                const inKpiVals = trials.map(t => Number(t.kpis[inObjKey]) || 0);
+                const inBest = Math.min(...inKpiVals);
+                const inWorst = Math.max(...inKpiVals);
+                const inRange = inWorst - inBest || 1;
+                // Normalize function
+                const inNorm = (params: Record<string, number>) => inSpecs.map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0; const hi = sp.upper ?? 1;
+                  return hi > lo ? (Number(params[sp.name]) - lo) / (hi - lo) : 0.5;
+                });
+                const inTrialNorms = trials.map(t => inNorm(t.parameters));
+                const inSugs = suggestions.suggestions.map((sug, idx) => {
+                  const sugNorm = inNorm(sug);
+                  // Novelty: min distance to any prior trial
+                  const dists = inTrialNorms.map(tn => Math.sqrt(sugNorm.reduce((s, v, j) => s + (v - tn[j]) ** 2, 0)));
+                  const minDist = Math.min(...dists);
+                  // Predicted improvement: k-NN average of closest trials' KPI
+                  const k = Math.min(3, trials.length);
+                  const sorted = dists.map((d, i) => ({ d, kpi: inKpiVals[i] })).sort((a, b) => a.d - b.d);
+                  const predKpi = sorted.slice(0, k).reduce((s, n) => s + n.kpi, 0) / k;
+                  // Improvement = how much better than worst (lower is better assumption)
+                  const improvement = (inWorst - predKpi) / inRange;
+                  return { idx, novelty: minDist, improvement, predKpi };
+                });
+                const inMaxNovelty = Math.max(...inSugs.map(s => s.novelty), 0.01);
+                const inMaxImprove = Math.max(...inSugs.map(s => s.improvement), 0.01);
+                // Chart dimensions
+                const inW = 280, inH = 150, inPadL = 38, inPadR = 12, inPadT = 14, inPadB = 24;
+                const inPlotW = inW - inPadL - inPadR;
+                const inPlotH = inH - inPadT - inPadB;
+                // Classify
+                const inExploiters = inSugs.filter(s => s.novelty / inMaxNovelty < 0.5 && s.improvement / inMaxImprove > 0.5).length;
+                const inExplorers = inSugs.filter(s => s.novelty / inMaxNovelty >= 0.5).length;
+                const inLabel = inExploiters > inExplorers ? "Exploitation-Heavy" : inExplorers > inExploiters ? "Exploration-Heavy" : "Balanced";
+                const inColor = inLabel === "Balanced" ? "#22c55e" : "var(--color-primary)";
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <ScatterChart size={15} style={{ color: "var(--color-primary)" }} />
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Improvement vs. Novelty</h3>
+                      </div>
+                      <span className="findings-badge" style={{ background: inColor, color: "#fff" }}>{inLabel}</span>
+                    </div>
+                    <svg width={inW} height={inH} viewBox={`0 0 ${inW} ${inH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Quadrant backgrounds */}
+                      <rect x={inPadL} y={inPadT} width={inPlotW / 2} height={inPlotH / 2} fill="rgba(34,197,94,0.06)" />
+                      <rect x={inPadL + inPlotW / 2} y={inPadT} width={inPlotW / 2} height={inPlotH / 2} fill="rgba(59,130,246,0.06)" />
+                      <rect x={inPadL} y={inPadT + inPlotH / 2} width={inPlotW / 2} height={inPlotH / 2} fill="rgba(156,163,175,0.04)" />
+                      <rect x={inPadL + inPlotW / 2} y={inPadT + inPlotH / 2} width={inPlotW / 2} height={inPlotH / 2} fill="rgba(234,179,8,0.06)" />
+                      {/* Quadrant labels */}
+                      <text x={inPadL + inPlotW * 0.25} y={inPadT + 10} fontSize="5.5" fill="rgba(34,197,94,0.5)" textAnchor="middle" fontWeight="500">High Value</text>
+                      <text x={inPadL + inPlotW * 0.75} y={inPadT + 10} fontSize="5.5" fill="rgba(59,130,246,0.5)" textAnchor="middle" fontWeight="500">Frontier</text>
+                      <text x={inPadL + inPlotW * 0.25} y={inPadT + inPlotH - 4} fontSize="5.5" fill="rgba(156,163,175,0.4)" textAnchor="middle">Low Value</text>
+                      <text x={inPadL + inPlotW * 0.75} y={inPadT + inPlotH - 4} fontSize="5.5" fill="rgba(234,179,8,0.5)" textAnchor="middle">Risky Explore</text>
+                      {/* Axes */}
+                      <line x1={inPadL} y1={inPadT + inPlotH} x2={inPadL + inPlotW} y2={inPadT + inPlotH} stroke="var(--color-border)" strokeWidth="0.5" />
+                      <line x1={inPadL} y1={inPadT} x2={inPadL} y2={inPadT + inPlotH} stroke="var(--color-border)" strokeWidth="0.5" />
+                      {/* Midlines */}
+                      <line x1={inPadL + inPlotW / 2} y1={inPadT} x2={inPadL + inPlotW / 2} y2={inPadT + inPlotH} stroke="var(--color-border)" strokeWidth="0.3" strokeDasharray="2,2" />
+                      <line x1={inPadL} y1={inPadT + inPlotH / 2} x2={inPadL + inPlotW} y2={inPadT + inPlotH / 2} stroke="var(--color-border)" strokeWidth="0.3" strokeDasharray="2,2" />
+                      {/* Axis labels */}
+                      <text x={inPadL + inPlotW / 2} y={inH - 2} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="middle">Novelty (min distance)</text>
+                      <text x={6} y={inPadT + inPlotH / 2} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90, 6, ${inPadT + inPlotH / 2})`}>Predicted Improvement</text>
+                      {/* Points */}
+                      {inSugs.map((s, i) => {
+                        const px = inPadL + (s.novelty / inMaxNovelty) * inPlotW * 0.9 + inPlotW * 0.05;
+                        const py = inPadT + inPlotH - (s.improvement / inMaxImprove) * inPlotH * 0.9 - inPlotH * 0.05;
+                        const hue = (s.improvement / inMaxImprove) * 120;
+                        return (
+                          <g key={i}>
+                            <circle cx={px} cy={py} r="6" fill={`hsl(${hue}, 70%, 50%)`} opacity={0.8} stroke="white" strokeWidth="0.8" />
+                            <text x={px} y={py + 2} fontSize="5" fill="white" textAnchor="middle" fontWeight="700">{i + 1}</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>{inExploiters} high-value</span>
+                      <span>{inExplorers} exploratory</span>
+                      <span style={{ marginLeft: "auto" }}>k=3 NN prediction</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -7920,6 +8221,128 @@ export default function Workspace() {
                     <div style={{ display: "flex", gap: "16px", marginTop: 4, flexWrap: "wrap" }}>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 3, background: "#f97316", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Condition #</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 0, borderTop: "2px dashed #a855f7", marginRight: 4, verticalAlign: "middle" }} />Eff. Rank (/{lcD}D)</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Optimization Momentum Indicator */}
+              {trials.length >= 10 && (() => {
+                const omSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const omObjKey = Object.keys(omSorted[0].kpis)[0];
+                if (!omObjKey) return null;
+                // Best-so-far curve
+                const omBsf: number[] = [];
+                let omRunBest = Infinity;
+                for (const t of omSorted) {
+                  const v = Number(t.kpis[omObjKey]) || 0;
+                  omRunBest = Math.min(omRunBest, v);
+                  omBsf.push(omRunBest);
+                }
+                // First differences (velocity) and second differences (acceleration)
+                const omVelocity: number[] = [];
+                for (let i = 1; i < omBsf.length; i++) omVelocity.push(omBsf[i] - omBsf[i - 1]);
+                const omAccel: number[] = [];
+                for (let i = 1; i < omVelocity.length; i++) omAccel.push(omVelocity[i] - omVelocity[i - 1]);
+                if (omAccel.length < 3) return null;
+                // Smooth with 3-point moving average
+                const omSmooth = (arr: number[]) => arr.map((_, i) => {
+                  const s = Math.max(0, i - 1), e = Math.min(arr.length - 1, i + 1);
+                  return arr.slice(s, e + 1).reduce((a, b) => a + b, 0) / (e - s + 1);
+                });
+                const omSmAccel = omSmooth(omAccel);
+                // Classify each window
+                const omPhases = omSmAccel.map(a => {
+                  if (a < -0.001) return "accelerating";
+                  if (a > 0.001) return "decelerating";
+                  return Math.abs(a) <= 0.001 ? "cruising" : "stalled";
+                });
+                // Check if best-so-far actually changed in recent windows
+                const omRecentVel = omVelocity.slice(-Math.min(5, omVelocity.length));
+                const omIsStalled = omRecentVel.every(v => Math.abs(v) < 1e-10);
+                if (omIsStalled) {
+                  for (let i = Math.max(0, omPhases.length - 5); i < omPhases.length; i++) {
+                    omPhases[i] = "stalled";
+                  }
+                }
+                const omMaxAbs = Math.max(...omSmAccel.map(a => Math.abs(a)), 0.0001);
+                // Current momentum
+                const omRecent = omPhases.slice(-3);
+                const omDominant = omRecent.filter(p => p === "accelerating").length >= 2 ? "Accelerating"
+                  : omRecent.filter(p => p === "decelerating").length >= 2 ? "Decelerating"
+                  : omRecent.filter(p => p === "stalled").length >= 2 ? "Stalled"
+                  : "Cruising";
+                const omColor = omDominant === "Accelerating" ? "#22c55e" : omDominant === "Decelerating" ? "#eab308" : omDominant === "Stalled" ? "#ef4444" : "var(--color-primary)";
+                const omPhaseColors: Record<string, string> = {
+                  accelerating: "#22c55e",
+                  cruising: "var(--color-primary)",
+                  decelerating: "#eab308",
+                  stalled: "#ef4444",
+                };
+                // Chart
+                const omW = 320, omH = 110, omPadL = 34, omPadR = 10, omPadT = 12, omPadB = 26;
+                const omPlotW = omW - omPadL - omPadR;
+                const omPlotH = omH - omPadT - omPadB;
+                const omBarW = Math.min(8, omPlotW / omSmAccel.length * 0.7);
+                const omGap = omPlotW / omSmAccel.length;
+                const omMidY = omPadT + omPlotH / 2;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Flame size={15} style={{ color: omColor }} />
+                        <h2 style={{ margin: 0 }}>Optimization Momentum</h2>
+                      </div>
+                      <span className="findings-badge" style={{ background: omColor, color: "#fff" }}>{omDominant}</span>
+                    </div>
+                    <svg width={omW} height={omH} viewBox={`0 0 ${omW} ${omH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Zero line */}
+                      <line x1={omPadL} y1={omMidY} x2={omPadL + omPlotW} y2={omMidY} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,2" />
+                      <text x={omPadL - 4} y={omPadT + 6} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">Accel</text>
+                      <text x={omPadL - 4} y={omPadT + omPlotH} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">Decel</text>
+                      {/* Bars */}
+                      {omSmAccel.map((a, i) => {
+                        const cx = omPadL + i * omGap + omGap / 2;
+                        const h = (Math.abs(a) / omMaxAbs) * (omPlotH / 2 - 4);
+                        const isNeg = a >= 0; // positive accel = decelerating (BSF stopped decreasing)
+                        const phase = omPhases[i];
+                        return (
+                          <g key={i}>
+                            <rect
+                              x={cx - omBarW / 2}
+                              y={isNeg ? omMidY : omMidY - h}
+                              width={omBarW}
+                              height={Math.max(h, 0.5)}
+                              rx={1.5}
+                              fill={omPhaseColors[phase]}
+                              opacity={0.75}
+                            />
+                          </g>
+                        );
+                      })}
+                      {/* Trend line connecting bar tips */}
+                      {omSmAccel.length > 1 && (() => {
+                        const pts = omSmAccel.map((a, i) => {
+                          const cx = omPadL + i * omGap + omGap / 2;
+                          const h = (a / omMaxAbs) * (omPlotH / 2 - 4);
+                          return `${i === 0 ? "M" : "L"}${cx.toFixed(1)},${(omMidY - h).toFixed(1)}`;
+                        });
+                        return <path d={pts.join(" ")} fill="none" stroke="var(--color-text-muted)" strokeWidth="0.8" opacity={0.5} />;
+                      })()}
+                      {/* X-axis iteration labels (sparse) */}
+                      {omSmAccel.map((_, i) => {
+                        if (i % Math.max(1, Math.floor(omSmAccel.length / 6)) !== 0 && i !== omSmAccel.length - 1) return null;
+                        const cx = omPadL + i * omGap + omGap / 2;
+                        return <text key={i} x={cx} y={omH - 6} fontSize="5" fill="var(--color-text-muted)" textAnchor="middle">t{i + 2}</text>;
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
+                      {(["accelerating", "cruising", "decelerating", "stalled"] as const).map(phase => (
+                        <span key={phase} className="efficiency-legend-item">
+                          <span style={{ display: "inline-block", width: 10, height: 8, background: omPhaseColors[phase], marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.75 }} />
+                          {phase.charAt(0).toUpperCase() + phase.slice(1)} ({omPhases.filter(p => p === phase).length})
+                        </span>
+                      ))}
                     </div>
                   </div>
                 );
