@@ -21,7 +21,6 @@ import {
 import { useCampaign } from "../hooks/useCampaign";
 import { ChatPanel } from "../components/ChatPanel";
 import PhaseTimeline from "../components/PhaseTimeline";
-import TrialTable from "../components/TrialTable";
 import RealConvergencePlot from "../components/ConvergencePlot";
 import RealDiagnosticCards from "../components/DiagnosticCards";
 import RealParameterImportance from "../components/ParameterImportance";
@@ -260,13 +259,23 @@ export default function Workspace() {
     { id: "export", label: "Export", icon: Download },
   ] as const;
 
-  // Build trial table data from best_parameters (mock for now — real data from /batch)
-  const mockTrials = campaign.kpi_history.iterations.map((iter, i) => ({
-    id: `trial-${iter}`,
-    parameters: campaign.best_parameters || {},
-    kpis: { objective: campaign.kpi_history.values[i] },
-    status: "completed",
+  // Build trial data from real observations
+  const trials = (campaign.observations ?? []).map((obs) => ({
+    id: `trial-${obs.iteration}`,
+    iteration: obs.iteration,
+    parameters: obs.parameters,
+    kpis: obs.kpi_values,
+    status: "completed" as const,
   }));
+
+  // Find best result
+  const bestResult = trials.length > 0
+    ? trials.reduce((best, trial) => {
+        const bestVal = Object.values(best.kpis)[0] ?? 0;
+        const trialVal = Object.values(trial.kpis)[0] ?? 0;
+        return trialVal < bestVal ? trial : best; // minimize by default
+      })
+    : null;
 
   return (
     <ErrorBoundary>
@@ -327,6 +336,34 @@ export default function Workspace() {
                   </div>
                 </div>
               </div>
+
+              {/* Best Result Highlight */}
+              {bestResult && (
+                <div className="best-result-card">
+                  <div className="best-result-header">
+                    <div className="best-result-badge">
+                      <CheckCircle size={16} /> Best Result Found
+                    </div>
+                    <span className="best-result-iter">Iteration {bestResult.iteration}</span>
+                  </div>
+                  <div className="best-result-kpi">
+                    {Object.entries(bestResult.kpis).map(([name, value]) => (
+                      <div key={name} className="best-result-kpi-item">
+                        <span className="best-result-kpi-label">{name}</span>
+                        <span className="best-result-kpi-value mono">{typeof value === 'number' ? value.toFixed(4) : String(value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="best-result-params">
+                    {Object.entries(bestResult.parameters).map(([name, value]) => (
+                      <div key={name} className="best-result-param">
+                        <span className="best-result-param-name">{name}</span>
+                        <span className="best-result-param-value mono">{typeof value === 'number' ? value.toFixed(3) : String(value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="card">
                 <h2>Convergence</h2>
@@ -602,8 +639,47 @@ export default function Workspace() {
           {activeTab === "history" && (
             <div className="tab-panel">
               <div className="card">
-                <h2>Trial History</h2>
-                <TrialTable trials={mockTrials} />
+                <div className="history-header">
+                  <h2>Trial History ({trials.length} experiments)</h2>
+                </div>
+                {trials.length > 0 ? (
+                  <div className="history-table-wrapper">
+                    <table className="history-table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          {Object.keys(trials[0].parameters).map((p) => (
+                            <th key={p}>{p}</th>
+                          ))}
+                          {Object.keys(trials[0].kpis).map((k) => (
+                            <th key={k} className="history-kpi-col">{k}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...trials].reverse().map((trial) => {
+                          const isBest = bestResult && trial.iteration === bestResult.iteration;
+                          return (
+                            <tr key={trial.id} className={isBest ? "history-row-best" : ""}>
+                              <td className="history-iter">{trial.iteration}</td>
+                              {Object.values(trial.parameters).map((v, j) => (
+                                <td key={j} className="mono">{typeof v === "number" ? v.toFixed(3) : String(v)}</td>
+                              ))}
+                              {Object.values(trial.kpis).map((v, j) => (
+                                <td key={j} className={`mono history-kpi-val ${isBest ? "history-best-val" : ""}`}>
+                                  {typeof v === "number" ? v.toFixed(4) : String(v)}
+                                  {isBest && <span className="history-best-badge">Best</span>}
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="empty-state">No experiments recorded yet.</p>
+                )}
               </div>
             </div>
           )}
