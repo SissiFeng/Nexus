@@ -379,28 +379,38 @@ def _generate_suggestions(
             predicted_values.append(c.predicted_mean)
             predicted_uncertainties.append(c.predicted_std)
 
-        return SuggestionResponse(
-            suggestions=suggestions,
-            predicted_values=predicted_values,
-            predicted_uncertainties=predicted_uncertainties,
-            backend_used="campaign_loop",
-            phase=deliverable.reasoning.diagnostic_summary.get("phase", "exploitation")
-            if deliverable.reasoning.diagnostic_summary else "exploitation",
-        )
+        if suggestions:
+            return SuggestionResponse(
+                suggestions=suggestions,
+                predicted_values=predicted_values,
+                predicted_uncertainties=predicted_uncertainties,
+                backend_used="campaign_loop",
+                phase=deliverable.reasoning.diagnostic_summary.get("phase", "exploitation")
+                if deliverable.reasoning.diagnostic_summary else "exploitation",
+            )
+        # Fall through to LHS fallback if campaign_loop returned no candidates
     except Exception:
         pass
 
     # Fallback: generate suggestions via Latin Hypercube sampling within bounds
     import random
     suggestions = []
-    for _ in range(n):
+    num_params = len(snapshot.parameter_specs)
+    # LHS: divide each dimension into n strata, shuffle independently
+    strata = [list(range(n)) for _ in range(max(num_params, 1))]
+    for s in strata:
+        random.shuffle(s)
+    for i in range(n):
         params: dict[str, Any] = {}
-        for spec in snapshot.parameter_specs:
+        for j, spec in enumerate(snapshot.parameter_specs):
             if spec.type == VariableType.CATEGORICAL and spec.categories:
                 params[spec.name] = random.choice(spec.categories)
             elif spec.lower is not None and spec.upper is not None:
+                # LHS: sample within stratum j for parameter i
+                stratum = strata[j][i] if j < len(strata) else i
+                u = (stratum + random.random()) / n
                 params[spec.name] = round(
-                    spec.lower + random.random() * (spec.upper - spec.lower), 6
+                    spec.lower + u * (spec.upper - spec.lower), 6
                 )
             else:
                 params[spec.name] = round(random.gauss(0, 1), 6)
@@ -408,7 +418,7 @@ def _generate_suggestions(
 
     return SuggestionResponse(
         suggestions=suggestions,
-        backend_used="random_fallback",
+        backend_used="latin_hypercube",
         phase="exploration",
     )
 

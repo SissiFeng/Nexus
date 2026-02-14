@@ -9,6 +9,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Lightbulb,
+  Sparkles,
+  FlaskConical,
+  Info,
+  FileDown,
+  Zap,
+  AlertTriangle,
+  CheckCircle,
+  ArrowRight,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { ChatPanel } from "../components/ChatPanel";
@@ -58,6 +66,7 @@ export default function Workspace() {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [loadingDiag, setLoadingDiag] = useState(false);
   const [loadingImportance, setLoadingImportance] = useState(false);
+  const [batchSize, setBatchSize] = useState(5);
 
   // Fetch diagnostics when overview tab is active
   useEffect(() => {
@@ -120,13 +129,110 @@ export default function Workspace() {
   const handleGenerateSuggestions = async () => {
     setLoadingSuggestions(true);
     try {
-      const data = await fetchSuggestions(id, 5);
+      const data = await fetchSuggestions(id, batchSize);
       setSuggestions(data);
     } catch (err) {
       console.error("Failed to generate suggestions:", err);
     } finally {
       setLoadingSuggestions(false);
     }
+  };
+
+  const handleExportSuggestionsCSV = () => {
+    if (!suggestions || suggestions.suggestions.length === 0) return;
+    const rows = suggestions.suggestions;
+    const headers = Object.keys(rows[0]);
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) => headers.map((h) => row[h] ?? "").join(",")),
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `suggestions-${id.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  /** Smart advisor: analyze diagnostics and suggest next steps */
+  const getAdvisorInsights = () => {
+    if (!diagnostics) return [];
+    const insights: Array<{
+      type: "success" | "warning" | "action";
+      title: string;
+      description: string;
+    }> = [];
+
+    // Check plateau
+    if (diagnostics.plateau_length > 30) {
+      insights.push({
+        type: "warning",
+        title: "Optimization has plateaued",
+        description: `No improvement for ${diagnostics.plateau_length} iterations. Consider expanding your search space, adding new parameters, or switching to a different optimization strategy.`,
+      });
+    } else if (diagnostics.plateau_length > 15) {
+      insights.push({
+        type: "action",
+        title: "Approaching a plateau",
+        description: `No improvement for ${diagnostics.plateau_length} iterations. The optimizer may be converging — consider generating a diverse batch to explore alternative regions.`,
+      });
+    }
+
+    // Check exploration coverage
+    if (diagnostics.exploration_coverage < 0.3) {
+      insights.push({
+        type: "action",
+        title: "Low exploration coverage",
+        description: `Only ${(diagnostics.exploration_coverage * 100).toFixed(0)}% of the parameter space has been explored. Consider running more exploration trials before exploiting.`,
+      });
+    } else if (diagnostics.exploration_coverage > 0.8) {
+      insights.push({
+        type: "success",
+        title: "Good exploration coverage",
+        description: `${(diagnostics.exploration_coverage * 100).toFixed(0)}% of the space explored. The optimizer has a solid understanding of the landscape.`,
+      });
+    }
+
+    // Check noise
+    if (diagnostics.noise_estimate > 0.2) {
+      insights.push({
+        type: "warning",
+        title: "High measurement noise",
+        description: "Consider running replicate experiments to improve model accuracy, or check for systematic errors in your measurement process.",
+      });
+    }
+
+    // Check convergence trend
+    if (diagnostics.convergence_trend > 0.01) {
+      insights.push({
+        type: "success",
+        title: "Still improving",
+        description: `Convergence trend is ${diagnostics.convergence_trend.toFixed(3)} — the optimization is still finding better solutions. Keep going!`,
+      });
+    }
+
+    // Check signal to noise
+    if (diagnostics.signal_to_noise_ratio < 3) {
+      insights.push({
+        type: "warning",
+        title: "Low signal-to-noise ratio",
+        description: "The optimization signal is weak relative to noise. Consider increasing sample sizes or reducing experimental variability.",
+      });
+    }
+
+    // If all good, add encouragement
+    if (insights.length === 0) {
+      insights.push({
+        type: "success",
+        title: "Campaign looks healthy",
+        description: "All diagnostics are within normal ranges. Continue generating suggestions and running experiments.",
+      });
+    }
+
+    return insights;
   };
 
   const handleExport = async (format: "csv" | "json" | "xlsx") => {
@@ -265,6 +371,43 @@ export default function Workspace() {
                 <h2>Phase Timeline</h2>
                 <PhaseTimeline phases={campaign.phases} />
               </div>
+
+              {/* Smart Advisor Panel */}
+              {diagnostics && (
+                <div className="card advisor-panel">
+                  <div className="advisor-header">
+                    <Zap size={18} />
+                    <h2>What to Do Next</h2>
+                  </div>
+                  <div className="advisor-insights">
+                    {getAdvisorInsights().map((insight, i) => (
+                      <div key={i} className={`advisor-insight advisor-insight-${insight.type}`}>
+                        <div className="advisor-insight-icon">
+                          {insight.type === "success" ? (
+                            <CheckCircle size={16} />
+                          ) : insight.type === "warning" ? (
+                            <AlertTriangle size={16} />
+                          ) : (
+                            <ArrowRight size={16} />
+                          )}
+                        </div>
+                        <div className="advisor-insight-content">
+                          <div className="advisor-insight-title">{insight.title}</div>
+                          <div className="advisor-insight-desc">{insight.description}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="advisor-cta">
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => setActiveTab("suggestions")}
+                    >
+                      <Sparkles size={14} /> Generate Suggestions
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -334,23 +477,95 @@ export default function Workspace() {
 
           {activeTab === "suggestions" && (
             <div className="tab-panel">
-              <div className="suggestions-header">
-                <button
-                  className="btn btn-primary"
-                  onClick={handleGenerateSuggestions}
-                  disabled={loadingSuggestions}
-                >
-                  {loadingSuggestions
-                    ? "Generating..."
-                    : "Generate Suggestions"}
-                </button>
+              {/* Suggestions Controls */}
+              <div className="suggestions-controls">
+                <div className="suggestions-controls-left">
+                  <button
+                    className="btn btn-primary suggestions-generate-btn"
+                    onClick={handleGenerateSuggestions}
+                    disabled={loadingSuggestions}
+                  >
+                    {loadingSuggestions ? (
+                      <>
+                        <span className="suggestions-spinner" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} />
+                        Generate Next Experiments
+                      </>
+                    )}
+                  </button>
+                  <label className="suggestions-batch-label">
+                    Batch size
+                    <select
+                      className="suggestions-batch-select"
+                      value={batchSize}
+                      onChange={(e) => setBatchSize(Number(e.target.value))}
+                    >
+                      <option value="3">3</option>
+                      <option value="5">5</option>
+                      <option value="8">8</option>
+                      <option value="10">10</option>
+                    </select>
+                  </label>
+                </div>
                 {suggestions && (
-                  <span style={{ marginLeft: "12px", fontSize: "0.85rem", color: "#718096" }}>
-                    Backend: {suggestions.backend_used} | Phase: {suggestions.phase}
-                  </span>
+                  <div className="suggestions-meta">
+                    <span className="suggestions-meta-pill">
+                      <FlaskConical size={12} /> {suggestions.backend_used}
+                    </span>
+                    <span className="suggestions-meta-pill">
+                      Phase: {suggestions.phase}
+                    </span>
+                    <button
+                      className="btn btn-secondary btn-sm suggestions-export-btn"
+                      onClick={handleExportSuggestionsCSV}
+                      title="Download suggestions as CSV"
+                    >
+                      <FileDown size={14} /> Export CSV
+                    </button>
+                  </div>
                 )}
               </div>
 
+              {/* Empty State */}
+              {!suggestions && !loadingSuggestions && (
+                <div className="suggestions-empty">
+                  <div className="suggestions-empty-icon">
+                    <Beaker size={32} />
+                  </div>
+                  <h3>Ready to suggest your next experiments</h3>
+                  <p>
+                    The optimization engine will analyze your {campaign.total_trials} past experiments
+                    and suggest the most promising parameter configurations to try next.
+                  </p>
+                  <div className="suggestions-empty-info">
+                    <Info size={14} />
+                    <span>
+                      Each suggestion includes a confidence score and an explanation of why
+                      it was chosen, so you can make informed decisions.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Loading Skeleton */}
+              {loadingSuggestions && !suggestions && (
+                <div className="suggestions-grid">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="suggestion-skeleton">
+                      <div className="skeleton-line skeleton-line-short" />
+                      <div className="skeleton-line skeleton-line-medium" />
+                      <div className="skeleton-line skeleton-line-long" />
+                      <div className="skeleton-line skeleton-line-medium" />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Suggestion Cards */}
               {suggestions && (
                 <div className="suggestions-grid">
                   {suggestions.suggestions.map((sug, i) => (
@@ -359,16 +574,18 @@ export default function Workspace() {
                       index={i + 1}
                       suggestion={sug}
                       parameterSpecs={
-                        campaign.best_parameters
-                          ? Object.keys(campaign.best_parameters).map((name) => ({
-                              name,
-                              type: "continuous" as const,
-                            }))
-                          : []
+                        campaign.spec?.parameters ??
+                        Object.keys(sug).map((name) => ({
+                          name,
+                          type: "continuous" as const,
+                          lower: 0,
+                          upper: 1,
+                        }))
                       }
-                      objectiveName="Objective"
+                      objectiveName={campaign.objective_names?.[0] ?? "Objective"}
                       predictedValue={suggestions.predicted_values?.[i]}
                       predictedUncertainty={suggestions.predicted_uncertainties?.[i]}
+                      phase={suggestions.phase}
                     />
                   ))}
                 </div>
@@ -607,15 +824,138 @@ export default function Workspace() {
           background: var(--color-bg);
         }
 
-        .suggestions-header {
+        .suggestions-controls {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
           margin-bottom: 24px;
+          flex-wrap: wrap;
+          gap: 12px;
+        }
+        .suggestions-controls-left {
           display: flex;
           align-items: center;
+          gap: 16px;
+        }
+        .suggestions-generate-btn {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 600;
+        }
+        .suggestions-spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        .suggestions-batch-label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.82rem;
+          color: var(--color-text-muted);
+          font-weight: 500;
+        }
+        .suggestions-batch-select {
+          padding: 4px 8px;
+          border: 1px solid var(--color-border);
+          border-radius: 6px;
+          background: var(--color-surface);
+          font-size: 0.82rem;
+          font-family: inherit;
+          color: var(--color-text);
+        }
+        .suggestions-meta {
+          display: flex;
+          gap: 8px;
+        }
+        .suggestions-meta-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 4px 10px;
+          background: var(--color-bg);
+          border: 1px solid var(--color-border);
+          border-radius: 20px;
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+          font-weight: 500;
+        }
+        .suggestions-empty {
+          text-align: center;
+          padding: 60px 24px;
+          max-width: 480px;
+          margin: 0 auto;
+        }
+        .suggestions-empty-icon {
+          width: 72px;
+          height: 72px;
+          border-radius: 50%;
+          background: var(--color-primary-subtle, rgba(79, 110, 247, 0.08));
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 20px;
+          color: var(--color-primary);
+        }
+        .suggestions-empty h3 {
+          font-size: 1.1rem;
+          font-weight: 600;
+          margin: 0 0 8px;
+          color: var(--color-text);
+        }
+        .suggestions-empty p {
+          font-size: 0.88rem;
+          color: var(--color-text-muted);
+          line-height: 1.6;
+          margin: 0 0 16px;
+        }
+        .suggestions-empty-info {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          padding: 12px 16px;
+          background: var(--color-bg);
+          border-radius: 8px;
+          font-size: 0.82rem;
+          color: var(--color-text-muted);
+          line-height: 1.5;
+          text-align: left;
+        }
+        .suggestions-empty-info svg {
+          flex-shrink: 0;
+          margin-top: 2px;
+        }
+        .suggestion-skeleton {
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: 12px;
+          padding: 20px;
+        }
+        .skeleton-line {
+          height: 12px;
+          background: var(--color-bg);
+          border-radius: 6px;
+          margin-bottom: 12px;
+          animation: pulse 1.5s ease-in-out infinite;
+        }
+        .skeleton-line-short { width: 40%; }
+        .skeleton-line-medium { width: 70%; }
+        .skeleton-line-long { width: 90%; }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
         }
 
         .suggestions-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
           gap: 16px;
           margin-bottom: 24px;
         }

@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
-  Beaker,
   Search,
   Archive,
   ArchiveRestore,
@@ -12,6 +11,10 @@ import {
   Trophy,
   FlaskConical,
   LayoutGrid,
+  Upload,
+  BookOpen,
+  Sparkles,
+  ArrowRight,
 } from "lucide-react";
 import {
   fetchCampaigns,
@@ -352,13 +355,209 @@ export default function Dashboard() {
         {loading ? (
           <div className="loading">Loading campaigns...</div>
         ) : !hasCampaigns ? (
-          <EmptyState
-            icon={Beaker}
-            title="No campaigns yet"
-            description="Create your first optimization campaign by uploading experimental data. The AI agent will help you discover patterns and suggest better experiments."
-            actionLabel="+ Create First Campaign"
-            onAction={() => navigate("/new-campaign")}
-          />
+          <>
+            {/* Getting Started */}
+            <div className="getting-started">
+              <div className="gs-hero">
+                <h2 className="gs-hero-title">Welcome to Optimization Copilot</h2>
+                <p className="gs-hero-subtitle">
+                  An intelligent platform that helps scientists discover optimal experimental
+                  conditions using Bayesian optimization. Upload your data, and let the AI
+                  suggest your next experiments.
+                </p>
+              </div>
+
+              <div className="gs-steps">
+                <div className="gs-step">
+                  <div className="gs-step-number">1</div>
+                  <div className="gs-step-content">
+                    <h3>Upload Data</h3>
+                    <p>Upload a CSV with your experimental results — parameters and measured outcomes.</p>
+                  </div>
+                </div>
+                <div className="gs-step-arrow"><ArrowRight size={16} /></div>
+                <div className="gs-step">
+                  <div className="gs-step-number">2</div>
+                  <div className="gs-step-content">
+                    <h3>Map Columns</h3>
+                    <p>Tell us which columns are parameters (inputs) and which are objectives (outputs).</p>
+                  </div>
+                </div>
+                <div className="gs-step-arrow"><ArrowRight size={16} /></div>
+                <div className="gs-step">
+                  <div className="gs-step-number">3</div>
+                  <div className="gs-step-content">
+                    <h3>Get Suggestions</h3>
+                    <p>The AI analyzes patterns and suggests the most promising experiments to try next.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="gs-actions">
+                <button className="btn btn-primary gs-action-btn" onClick={() => navigate("/new-campaign")}>
+                  <Upload size={16} />
+                  Upload Your Data
+                </button>
+                <button className="btn btn-secondary gs-action-btn" onClick={() => navigate("/demos")}>
+                  <BookOpen size={16} />
+                  Explore Demo Datasets
+                </button>
+              </div>
+
+              <div className="gs-features">
+                <div className="gs-feature">
+                  <Sparkles size={18} className="gs-feature-icon" />
+                  <div>
+                    <strong>Explainable Suggestions</strong>
+                    <span>Every suggestion comes with a "why" — understand the reasoning behind each experiment.</span>
+                  </div>
+                </div>
+                <div className="gs-feature">
+                  <FlaskConical size={18} className="gs-feature-icon" />
+                  <div>
+                    <strong>Works with Small Data</strong>
+                    <span>Start optimizing with as few as 5-10 experiments. No large datasets required.</span>
+                  </div>
+                </div>
+                <div className="gs-feature">
+                  <Activity size={18} className="gs-feature-icon" />
+                  <div>
+                    <strong>Real-time Diagnostics</strong>
+                    <span>Monitor convergence, exploration coverage, and model health as your campaign progresses.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <style>{`
+              .getting-started {
+                max-width: 720px;
+                margin: 0 auto;
+                padding: 20px 0 40px;
+              }
+              .gs-hero {
+                text-align: center;
+                margin-bottom: 36px;
+              }
+              .gs-hero-title {
+                font-size: 1.5rem;
+                font-weight: 700;
+                margin: 0 0 10px;
+                color: var(--color-text);
+              }
+              .gs-hero-subtitle {
+                font-size: 0.92rem;
+                color: var(--color-text-muted);
+                line-height: 1.6;
+                margin: 0;
+                max-width: 540px;
+                margin-left: auto;
+                margin-right: auto;
+              }
+              .gs-steps {
+                display: flex;
+                align-items: flex-start;
+                gap: 8px;
+                margin-bottom: 32px;
+              }
+              .gs-step {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                gap: 10px;
+              }
+              .gs-step-number {
+                width: 36px;
+                height: 36px;
+                border-radius: 50%;
+                background: var(--color-primary);
+                color: white;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 0.88rem;
+                font-weight: 700;
+              }
+              .gs-step-content h3 {
+                font-size: 0.9rem;
+                font-weight: 600;
+                margin: 0 0 4px;
+                color: var(--color-text);
+              }
+              .gs-step-content p {
+                font-size: 0.8rem;
+                color: var(--color-text-muted);
+                line-height: 1.5;
+                margin: 0;
+              }
+              .gs-step-arrow {
+                color: var(--color-border);
+                margin-top: 10px;
+                flex-shrink: 0;
+              }
+              .gs-actions {
+                display: flex;
+                gap: 12px;
+                justify-content: center;
+                margin-bottom: 36px;
+              }
+              .gs-action-btn {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 12px 24px;
+                font-weight: 600;
+              }
+              .gs-features {
+                display: flex;
+                flex-direction: column;
+                gap: 14px;
+                padding: 20px;
+                background: var(--color-surface);
+                border: 1px solid var(--color-border);
+                border-radius: 12px;
+              }
+              .gs-feature {
+                display: flex;
+                align-items: flex-start;
+                gap: 12px;
+                font-size: 0.85rem;
+                line-height: 1.5;
+              }
+              .gs-feature-icon {
+                flex-shrink: 0;
+                color: var(--color-primary);
+                margin-top: 1px;
+              }
+              .gs-feature strong {
+                display: block;
+                font-weight: 600;
+                color: var(--color-text);
+                margin-bottom: 2px;
+              }
+              .gs-feature span {
+                color: var(--color-text-muted);
+              }
+              @media (max-width: 640px) {
+                .gs-steps {
+                  flex-direction: column;
+                  align-items: stretch;
+                }
+                .gs-step {
+                  flex-direction: row;
+                  text-align: left;
+                }
+                .gs-step-arrow {
+                  display: none;
+                }
+                .gs-actions {
+                  flex-direction: column;
+                }
+              }
+            `}</style>
+          </>
         ) : (
           <>
             {/* Stats Summary */}

@@ -50,6 +50,9 @@ export interface Campaign {
   tags: string[];
   phases: { name: string; start: number; end: number }[];
   kpi_history: { iterations: number[]; values: number[] };
+  spec?: {
+    parameters: Array<{ name: string; type: string; lower?: number; upper?: number; categories?: string[] }>;
+  };
   // Multi-objective support
   objective_names?: string[];
   observations?: Array<{

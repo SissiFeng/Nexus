@@ -476,7 +476,10 @@ a:hover {
   padding: 22px;
   margin-bottom: 20px;
   box-shadow: var(--shadow-sm);
-  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base), transform var(--transition-base);
+}
+.card:hover {
+  border-color: color-mix(in srgb, var(--color-border) 60%, var(--color-primary) 40%);
 }
 
 .card h2 {
@@ -734,7 +737,23 @@ a:hover {
   border-radius: var(--radius-lg);
   padding: 18px;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--transition-base), transform var(--transition-base);
+  transition: box-shadow var(--transition-base), transform var(--transition-base), border-color var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+.stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--color-primary);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.stat-card:hover::before {
+  opacity: 1;
 }
 
 .stat-card:hover {
@@ -979,6 +998,22 @@ a:hover {
   text-align: center;
   padding: 40px;
   color: var(--color-text-muted);
+  animation: fadeIn 0.3s ease;
+}
+.loading::before {
+  content: "";
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: loadingSpin 0.8s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+@keyframes loadingSpin {
+  to { transform: rotate(360deg); }
 }
 
 .error-banner {
@@ -2237,6 +2272,218 @@ a:hover {
   color: var(--color-text-muted);
 }
 
+/* ── Suggestions Controls ── */
+
+.suggestions-controls {
+  margin-bottom: 20px;
+}
+
+.suggestions-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.suggestions-generate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.suggestions-batch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.suggestions-batch-select {
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--color-text);
+}
+
+.suggestions-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.suggestions-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 20px;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.suggestions-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.suggestions-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* ── Suggestions Empty State ── */
+
+.suggestions-empty {
+  text-align: center;
+  padding: 60px 20px;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.suggestions-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  margin-bottom: 16px;
+}
+
+.suggestions-empty h3 {
+  font-size: 1rem;
+  margin-bottom: 8px;
+}
+
+.suggestions-empty p {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.suggestions-empty-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  padding: 12px;
+  border-radius: var(--radius);
+}
+
+/* ── Suggestion Skeleton ── */
+
+.suggestion-skeleton {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.skeleton-line {
+  height: 12px;
+  background: linear-gradient(90deg, var(--color-bg) 25%, var(--color-border-subtle) 50%, var(--color-bg) 75%);
+  background-size: 200% 100%;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-line-short { width: 40%; }
+.skeleton-line-medium { width: 70%; }
+.skeleton-line-long { width: 100%; }
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Smart Advisor Panel ── */
+
+.advisor-panel {
+  border-left: 3px solid var(--color-primary);
+}
+
+.advisor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--color-primary);
+}
+
+.advisor-header h2 {
+  color: var(--color-text);
+}
+
+.advisor-insights {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.advisor-insight {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.advisor-insight-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.advisor-insight-success .advisor-insight-icon { color: var(--color-green); }
+.advisor-insight-warning .advisor-insight-icon { color: var(--color-yellow); }
+.advisor-insight-action .advisor-insight-icon { color: var(--color-primary); }
+
+.advisor-insight-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.advisor-insight-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.advisor-cta {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.advisor-cta .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* ── Responsive Overrides ── */
 
 @media (max-width: 1024px) {
@@ -2415,7 +2662,20 @@ a:hover {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 20px;
-  animation: fadeIn 0.2s ease;
+  animation: fadeIn 0.25s ease;
+}
+.dashboard-grid > * {
+  animation: cardSlideIn 0.3s ease both;
+}
+.dashboard-grid > *:nth-child(1) { animation-delay: 0s; }
+.dashboard-grid > *:nth-child(2) { animation-delay: 0.04s; }
+.dashboard-grid > *:nth-child(3) { animation-delay: 0.08s; }
+.dashboard-grid > *:nth-child(4) { animation-delay: 0.12s; }
+.dashboard-grid > *:nth-child(5) { animation-delay: 0.16s; }
+.dashboard-grid > *:nth-child(6) { animation-delay: 0.2s; }
+@keyframes cardSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .dashboard-card {
