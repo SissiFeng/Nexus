@@ -49,6 +49,11 @@ import {
   Crosshair,
   CheckSquare,
   Package,
+  BookOpen,
+  Tag,
+  Hexagon,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -195,6 +200,27 @@ export default function Workspace() {
   // Batch selection (Suggestions tab)
   const [selectedSuggestions, setSelectedSuggestions] = useState<Set<number>>(new Set());
 
+  // Trial annotations / tags
+  const [trialTags, setTrialTags] = useState<Record<string, string[]>>(() => {
+    if (!id) return {};
+    try { const s = localStorage.getItem(`opt-tags-${id}`); return s ? JSON.parse(s) : {}; }
+    catch { return {}; }
+  });
+  const TRIAL_TAG_OPTIONS = ["promising", "anomaly", "investigate", "baseline", "outlier", "equipment-issue"] as const;
+
+  // Decision journal (Overview tab)
+  const [journalEntries, setJournalEntries] = useState<Array<{ id: string; text: string; iteration: number; timestamp: number }>>(() => {
+    if (!id) return [];
+    try { const s = localStorage.getItem(`opt-journal-${id}`); return s ? JSON.parse(s) : []; }
+    catch { return []; }
+  });
+  const [journalInput, setJournalInput] = useState("");
+  const [showJournal, setShowJournal] = useState(true);
+
+  // Replay animation (Overview convergence)
+  const [replayIdx, setReplayIdx] = useState<number | null>(null);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+
   const HISTORY_PAGE_SIZE = 25;
 
   // Persist bookmarks & notes to localStorage
@@ -214,6 +240,14 @@ export default function Workspace() {
     if (!id) return;
     localStorage.setItem(`opt-goals-${id}`, JSON.stringify(goals));
   }, [id, goals]);
+  useEffect(() => {
+    if (!id) return;
+    localStorage.setItem(`opt-tags-${id}`, JSON.stringify(trialTags));
+  }, [id, trialTags]);
+  useEffect(() => {
+    if (!id) return;
+    localStorage.setItem(`opt-journal-${id}`, JSON.stringify(journalEntries));
+  }, [id, journalEntries]);
 
   const toggleBookmark = useCallback((trialId: string) => {
     setBookmarks(prev => {
@@ -394,6 +428,41 @@ export default function Workspace() {
     URL.revokeObjectURL(url);
     toast(`Exported ${selected.length} suggestions as CSV`);
   }, [suggestions, selectedSuggestions, id, toast]);
+
+  // Trial tag management
+  const toggleTrialTag = useCallback((trialId: string, tag: string) => {
+    setTrialTags(prev => {
+      const existing = prev[trialId] || [];
+      const has = existing.includes(tag);
+      return { ...prev, [trialId]: has ? existing.filter(t => t !== tag) : [...existing, tag] };
+    });
+  }, []);
+
+  // Decision journal
+  const addJournalEntry = useCallback(() => {
+    if (!journalInput.trim()) return;
+    setJournalEntries(prev => [{
+      id: `j-${Date.now()}`,
+      text: journalInput.trim(),
+      iteration: campaign?.iteration ?? 0,
+      timestamp: Date.now(),
+    }, ...prev]);
+    setJournalInput("");
+    toast("Journal entry added");
+  }, [journalInput, campaign?.iteration, toast]);
+
+  const removeJournalEntry = useCallback((entryId: string) => {
+    setJournalEntries(prev => prev.filter(e => e.id !== entryId));
+  }, []);
+
+  // Replay animation timer
+  const replayMaxIdx = campaign?.kpi_history?.iterations?.length ?? 0;
+  useEffect(() => {
+    if (!replayPlaying || replayIdx === null || replayMaxIdx === 0) return;
+    if (replayIdx >= replayMaxIdx - 1) { setReplayPlaying(false); return; }
+    const timer = setTimeout(() => setReplayIdx(prev => (prev ?? 0) + 1), 120);
+    return () => clearTimeout(timer);
+  }, [replayPlaying, replayIdx, replayMaxIdx]);
 
   if (loading) {
     return (
@@ -1217,14 +1286,55 @@ export default function Workspace() {
               })()}
 
               <div className="card">
-                <h2>Convergence</h2>
+                <div className="convergence-header">
+                  <h2>Convergence</h2>
+                  {convergenceData.length > 5 && (
+                    <div className="replay-controls">
+                      {replayIdx !== null && (
+                        <span className="replay-counter">
+                          {replayIdx + 1} / {convergenceData.length}
+                        </span>
+                      )}
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => {
+                          if (replayPlaying) {
+                            setReplayPlaying(false);
+                          } else {
+                            setReplayIdx(0);
+                            setReplayPlaying(true);
+                          }
+                        }}
+                        title={replayPlaying ? "Pause replay" : "Replay optimization journey"}
+                      >
+                        {replayPlaying ? <><Pause size={12} /> Pause</> : <><RotateCcw size={12} /> Replay</>}
+                      </button>
+                      {replayIdx !== null && !replayPlaying && (
+                        <button className="btn btn-sm btn-secondary" onClick={() => { setReplayIdx(null); setReplayPlaying(false); }} title="Reset">
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 {convergenceData.length > 0 ? (
-                  <RealConvergencePlot
-                    data={convergenceData}
-                    objectiveName="Objective"
-                    direction="minimize"
-                    phases={convergencePhases}
-                  />
+                  <>
+                    <RealConvergencePlot
+                      data={replayIdx !== null ? convergenceData.slice(0, replayIdx + 1) : convergenceData}
+                      objectiveName="Objective"
+                      direction="minimize"
+                      phases={convergencePhases}
+                    />
+                    {replayIdx !== null && replayIdx < convergenceData.length && (
+                      <div className="replay-info">
+                        <span className="replay-dot" />
+                        Iteration {convergenceData[replayIdx]?.iteration ?? replayIdx}
+                        {convergenceData[replayIdx]?.best !== undefined && (
+                          <span className="replay-best"> — Best: {convergenceData[replayIdx].best.toFixed(4)}</span>
+                        )}
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <p className="empty-state">No convergence data yet.</p>
                 )}
@@ -1306,6 +1416,55 @@ export default function Workspace() {
               <div className="card">
                 <h2>Phase Timeline</h2>
                 <PhaseTimeline phases={campaign.phases} />
+              </div>
+
+              {/* Decision Journal */}
+              <div className="card decision-journal-card">
+                <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <BookOpen size={16} style={{ color: "var(--color-primary)" }} />
+                    <h2 style={{ margin: 0 }}>Decision Journal</h2>
+                    {journalEntries.length > 0 && (
+                      <span className="journal-count">{journalEntries.length}</span>
+                    )}
+                  </div>
+                  <ChevronRight size={16} style={{ transform: showJournal ? "rotate(90deg)" : "none", transition: "transform 0.2s", color: "var(--color-text-muted)" }} />
+                </div>
+                {showJournal && (
+                  <div className="decision-journal-body">
+                    <div className="journal-input-row">
+                      <input
+                        type="text"
+                        className="journal-input"
+                        placeholder="Record your reasoning, strategy changes, or observations..."
+                        value={journalInput}
+                        onChange={(e) => setJournalInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") addJournalEntry(); }}
+                      />
+                      <button className="btn btn-sm btn-primary" onClick={addJournalEntry} disabled={!journalInput.trim()}>
+                        Add
+                      </button>
+                    </div>
+                    {journalEntries.length === 0 ? (
+                      <p className="journal-empty">No entries yet. Record your experimental reasoning here for future reference.</p>
+                    ) : (
+                      <div className="journal-entries">
+                        {journalEntries.map((entry) => (
+                          <div key={entry.id} className="journal-entry">
+                            <div className="journal-entry-meta">
+                              <span className="journal-iter">Iter {entry.iteration}</span>
+                              <span className="journal-time">{new Date(entry.timestamp).toLocaleDateString()} {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                              <button className="journal-delete" onClick={() => removeJournalEntry(entry.id)} title="Delete entry">
+                                <X size={12} />
+                              </button>
+                            </div>
+                            <div className="journal-entry-text">{entry.text}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Smart Advisor Panel */}
@@ -1611,6 +1770,82 @@ export default function Workspace() {
                         strokeWidth="2"
                       />
                     </svg>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Sensitivity Radar Chart */}
+              {trials.length >= 5 && importance && importance.importances.length >= 3 && (() => {
+                const items = [...importance.importances].sort((a, b) => b.importance - a.importance);
+                const n = items.length;
+                const cx = 130, cy = 130, R = 100;
+                const angleStep = (2 * Math.PI) / n;
+                const maxImp = Math.max(...items.map(i => i.importance), 0.01);
+                // Compute objective correlation per parameter
+                const objVals = trials.map(t => Number(Object.values(t.kpis)[0]) || 0);
+                const meanObj = objVals.reduce((a, b) => a + b, 0) / objVals.length;
+                const corrMap: Record<string, number> = {};
+                items.forEach(item => {
+                  const pVals = trials.map(t => Number(t.parameters[item.name]) || 0);
+                  const meanP = pVals.reduce((a, b) => a + b, 0) / pVals.length;
+                  let num = 0, denP = 0, denO = 0;
+                  pVals.forEach((p, i) => { const dp = p - meanP; const dobj = objVals[i] - meanObj; num += dp * dobj; denP += dp * dp; denO += dobj * dobj; });
+                  corrMap[item.name] = denP > 0 && denO > 0 ? num / Math.sqrt(denP * denO) : 0;
+                });
+                // Build radar polygon
+                const points = items.map((item, i) => {
+                  const angle = -Math.PI / 2 + i * angleStep;
+                  const r = (item.importance / maxImp) * R;
+                  return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), name: item.name, imp: item.importance, corr: corrMap[item.name] || 0, angle };
+                });
+                const polyStr = points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                // Grid rings
+                const rings = [0.25, 0.5, 0.75, 1.0];
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Hexagon size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Parameter Sensitivity</h2>
+                    </div>
+                    <p className="range-desc">Radar view of parameter importance. Larger radius = higher importance. Color indicates objective correlation direction.</p>
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <svg width={260} height={260} viewBox="0 0 260 260" style={{ overflow: "visible" }}>
+                        {/* Grid rings */}
+                        {rings.map(r => (
+                          <circle key={r} cx={cx} cy={cy} r={R * r} fill="none" stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray={r < 1 ? "3,3" : "none"} />
+                        ))}
+                        {/* Axis lines */}
+                        {points.map((p, i) => (
+                          <line key={i} x1={cx} y1={cy} x2={cx + R * Math.cos(p.angle)} y2={cy + R * Math.sin(p.angle)} stroke="var(--color-border)" strokeWidth="0.5" />
+                        ))}
+                        {/* Filled polygon */}
+                        <polygon points={polyStr} fill="var(--color-primary)" fillOpacity={0.15} stroke="var(--color-primary)" strokeWidth="1.5" />
+                        {/* Data points */}
+                        {points.map((p, i) => (
+                          <g key={i}>
+                            <circle cx={p.x} cy={p.y} r={5} fill={p.corr < -0.2 ? "#22c55e" : p.corr > 0.2 ? "#ef4444" : "var(--color-text-muted)"} stroke="var(--color-surface)" strokeWidth="1.5" />
+                            <title>{p.name}: importance {(p.imp * 100).toFixed(1)}%, correlation {p.corr.toFixed(3)}</title>
+                          </g>
+                        ))}
+                        {/* Labels */}
+                        {points.map((p, i) => {
+                          const labelR = R + 20;
+                          const lx = cx + labelR * Math.cos(p.angle);
+                          const ly = cy + labelR * Math.sin(p.angle);
+                          const anchor = Math.abs(p.angle) < 0.1 || Math.abs(p.angle - Math.PI) < 0.1 ? "middle" : p.angle > -Math.PI / 2 && p.angle < Math.PI / 2 ? "start" : "end";
+                          return (
+                            <text key={i} x={lx} y={ly} textAnchor={anchor} dominantBaseline="central" fontSize="11" fontFamily="var(--font-mono)" fill="var(--color-text)" fontWeight={p.imp === maxImp ? 600 : 400}>
+                              {p.name}
+                            </text>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                    <div className="radar-legend">
+                      <span className="radar-legend-item"><span className="radar-dot" style={{ background: "#22c55e" }} /> Negative corr (better)</span>
+                      <span className="radar-legend-item"><span className="radar-dot" style={{ background: "#ef4444" }} /> Positive corr (worse)</span>
+                      <span className="radar-legend-item"><span className="radar-dot" style={{ background: "var(--color-text-muted)" }} /> Neutral</span>
+                    </div>
                   </div>
                 );
               })()}
@@ -2221,7 +2456,12 @@ export default function Workspace() {
                                         fill={bookmarks.has(trial.id) ? "currentColor" : "none"}
                                       />
                                     </td>
-                                    <td className="history-iter">{trial.iteration}</td>
+                                    <td className="history-iter">
+                                      {trial.iteration}
+                                      {(trialTags[trial.id]?.length > 0) && (
+                                        <span className="trial-tag-dot" title={trialTags[trial.id].join(", ")} />
+                                      )}
+                                    </td>
                                     {paramKeys.map((p) => {
                                       const spec = specMap.get(p);
                                       const val = trial.parameters[p];
@@ -2294,6 +2534,23 @@ export default function Workspace() {
                                               onChange={(e) => setTrialNote(trial.id, e.target.value)}
                                               onClick={(e) => e.stopPropagation()}
                                             />
+                                          </div>
+                                          <div className="history-detail-tags" onClick={(e) => e.stopPropagation()}>
+                                            <span className="history-detail-label"><Tag size={12} /> Tags</span>
+                                            <div className="trial-tag-row">
+                                              {TRIAL_TAG_OPTIONS.map(tag => {
+                                                const active = (trialTags[trial.id] || []).includes(tag);
+                                                return (
+                                                  <button
+                                                    key={tag}
+                                                    className={`trial-tag-btn ${active ? "trial-tag-active" : ""} trial-tag-${tag}`}
+                                                    onClick={() => toggleTrialTag(trial.id, tag)}
+                                                  >
+                                                    {tag}
+                                                  </button>
+                                                );
+                                              })}
+                                            </div>
                                           </div>
                                         </div>
                                       </td>
@@ -4060,6 +4317,209 @@ export default function Workspace() {
         .batch-planner-right {
           display: flex;
           gap: 8px;
+        }
+
+        /* ── Decision Journal ── */
+        .decision-journal-card { padding: 16px 20px; }
+        .decision-journal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .journal-count {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 20px;
+          height: 20px;
+          padding: 0 6px;
+          background: var(--color-primary-subtle, rgba(79, 110, 247, 0.1));
+          color: var(--color-primary);
+          border-radius: 10px;
+          font-size: 0.72rem;
+          font-weight: 600;
+        }
+        .journal-input-row {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+        .journal-input {
+          flex: 1;
+          padding: 8px 12px;
+          border: 1px solid var(--color-border);
+          border-radius: 8px;
+          background: var(--color-bg);
+          color: var(--color-text);
+          font-family: var(--font-mono);
+          font-size: 0.82rem;
+        }
+        .journal-input:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.1); }
+        .journal-empty {
+          font-size: 0.82rem;
+          color: var(--color-text-muted);
+          font-style: italic;
+          padding: 8px 0;
+          margin: 0;
+        }
+        .journal-entries {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          max-height: 280px;
+          overflow-y: auto;
+        }
+        .journal-entry {
+          padding: 10px 12px;
+          background: var(--color-bg);
+          border: 1px solid var(--color-border-subtle, var(--color-border));
+          border-radius: 8px;
+          border-left: 3px solid var(--color-primary);
+        }
+        .journal-entry-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 4px;
+          font-size: 0.72rem;
+          color: var(--color-text-muted);
+        }
+        .journal-iter {
+          font-weight: 600;
+          color: var(--color-primary);
+          background: var(--color-primary-subtle, rgba(79, 110, 247, 0.08));
+          padding: 1px 6px;
+          border-radius: 4px;
+        }
+        .journal-delete {
+          margin-left: auto;
+          background: none;
+          border: none;
+          color: var(--color-text-muted);
+          cursor: pointer;
+          padding: 2px;
+          border-radius: 4px;
+          opacity: 0;
+          transition: opacity 0.15s;
+        }
+        .journal-entry:hover .journal-delete { opacity: 1; }
+        .journal-delete:hover { color: var(--color-red, #ef4444); background: rgba(239, 68, 68, 0.08); }
+        .journal-entry-text {
+          font-size: 0.85rem;
+          color: var(--color-text);
+          line-height: 1.5;
+        }
+
+        /* ── Replay Controls ── */
+        .convergence-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .convergence-header h2 { margin: 0; }
+        .replay-controls {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .replay-counter {
+          font-family: var(--font-mono);
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+          padding: 2px 8px;
+          background: var(--color-bg);
+          border-radius: 6px;
+          border: 1px solid var(--color-border);
+        }
+        .replay-info {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 12px;
+          margin-top: 8px;
+          background: var(--color-primary-subtle, rgba(79, 110, 247, 0.06));
+          border-radius: 8px;
+          font-size: 0.8rem;
+          font-family: var(--font-mono);
+          color: var(--color-text);
+        }
+        .replay-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: var(--color-primary);
+          animation: pulse 1s ease-in-out infinite;
+        }
+        .replay-best { font-weight: 600; color: var(--color-primary); }
+
+        /* ── Trial Tags ── */
+        .history-detail-tags {
+          margin-top: 8px;
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+        }
+        .history-detail-tags .history-detail-label {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding-top: 3px;
+        }
+        .trial-tag-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+        }
+        .trial-tag-btn {
+          padding: 2px 10px;
+          border-radius: 12px;
+          border: 1px solid var(--color-border);
+          background: var(--color-bg);
+          color: var(--color-text-muted);
+          font-size: 0.72rem;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .trial-tag-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+        .trial-tag-active { border-color: transparent !important; color: white !important; }
+        .trial-tag-active.trial-tag-promising { background: #22c55e; }
+        .trial-tag-active.trial-tag-anomaly { background: #f59e0b; }
+        .trial-tag-active.trial-tag-investigate { background: #3b82f6; }
+        .trial-tag-active.trial-tag-baseline { background: #8b5cf6; }
+        .trial-tag-active.trial-tag-outlier { background: #ef4444; }
+        .trial-tag-active.trial-tag-equipment-issue { background: #64748b; }
+        .trial-tag-dot {
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: var(--color-primary);
+          margin-left: 4px;
+          vertical-align: middle;
+        }
+
+        /* ── Radar Chart ── */
+        .radar-legend {
+          display: flex;
+          justify-content: center;
+          gap: 16px;
+          margin-top: 8px;
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+        }
+        .radar-legend-item {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .radar-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
         }
       `}</style>
     </div>
