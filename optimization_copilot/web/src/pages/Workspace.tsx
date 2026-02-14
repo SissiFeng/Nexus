@@ -131,6 +131,7 @@ import {
   Siren,
   Repeat2,
   MoveUpRight,                     // Batch 27
+  Radio,                           // Batch 31
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -4358,6 +4359,78 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Diversity Decay */}
+              {trials.length >= 10 && (() => {
+                const ddW = 10;
+                const ddKey = Object.keys(trials[0]?.parameters ?? {})[0];
+                if (!ddKey) return null;
+                const ddParams = Object.keys(trials[0].parameters);
+                const ddSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const ddWindows: number[] = [];
+                for (let i = 0; i <= ddSorted.length - ddW; i += Math.max(1, Math.floor(ddW / 2))) {
+                  const win = ddSorted.slice(i, i + ddW);
+                  let ddSum = 0, ddCount = 0;
+                  for (let a = 0; a < win.length; a++) {
+                    for (let b = a + 1; b < win.length; b++) {
+                      let d2 = 0;
+                      for (const p of ddParams) {
+                        const diff = (win[a].parameters[p] ?? 0) - (win[b].parameters[p] ?? 0);
+                        d2 += diff * diff;
+                      }
+                      ddSum += Math.sqrt(d2);
+                      ddCount++;
+                    }
+                  }
+                  ddWindows.push(ddCount > 0 ? ddSum / ddCount : 0);
+                }
+                if (ddWindows.length < 3) return null;
+                const ddMax = Math.max(...ddWindows);
+                const ddMin = Math.min(...ddWindows);
+                const ddRange = ddMax - ddMin || 1;
+                const ddNorm = ddWindows.map(v => (v - ddMin) / ddRange);
+                // Trend: compare last quarter to first quarter
+                const ddQ = Math.max(1, Math.floor(ddNorm.length / 4));
+                const ddEarly = ddNorm.slice(0, ddQ).reduce((a, b) => a + b, 0) / ddQ;
+                const ddLate = ddNorm.slice(-ddQ).reduce((a, b) => a + b, 0) / ddQ;
+                const ddDelta = ddLate - ddEarly;
+                const ddBadge = ddDelta < -0.15 ? "Converging" : ddDelta > 0.15 ? "Expanding" : "Stable";
+                const ddColor = ddBadge === "Converging" ? "var(--color-primary)" : ddBadge === "Expanding" ? "var(--color-blue)" : "#eab308";
+                const ddW2 = 220, ddH = 48, ddPad = 2;
+                const ddPts = ddNorm.map((v, i) => ({
+                  x: ddPad + (i / (ddNorm.length - 1)) * (ddW2 - 2 * ddPad),
+                  y: ddPad + (1 - v) * (ddH - 2 * ddPad),
+                }));
+                const ddLine = ddPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const ddArea = ddLine + ` L${ddPts[ddPts.length - 1].x.toFixed(1)},${ddH - ddPad} L${ddPts[0].x.toFixed(1)},${ddH - ddPad} Z`;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Minimize2 size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Diversity Decay</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: ddBadge === "Converging" ? "var(--color-success-bg)" : ddBadge === "Expanding" ? "rgba(59,130,246,0.12)" : "rgba(234,179,8,0.12)", color: ddColor }}>{ddBadge}</span>
+                    </div>
+                    <svg width={ddW2} height={ddH} viewBox={`0 0 ${ddW2} ${ddH}`} style={{ width: "100%", height: ddH, display: "block" }}>
+                      <defs>
+                        <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={ddColor} stopOpacity="0.25" />
+                          <stop offset="100%" stopColor={ddColor} stopOpacity="0.02" />
+                        </linearGradient>
+                      </defs>
+                      <path d={ddArea} fill="url(#ddGrad)" />
+                      <path d={ddLine} fill="none" stroke={ddColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      {ddPts.length > 0 && <circle cx={ddPts[ddPts.length - 1].x} cy={ddPts[ddPts.length - 1].y} r="3" fill={ddColor} />}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>early</span>
+                      <span>recent</span>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {ddBadge === "Converging" ? "Search is narrowing — optimizer is focusing on promising regions." : ddBadge === "Expanding" ? "Search is broadening — still exploring widely." : "Diversity is stable — balanced exploration and exploitation."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -6974,6 +7047,66 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", textAlign: "center", marginTop: "2px" }}>
                       {efBadge === "High Fidelity" ? "2D projections reliably represent high-D structure." : efBadge === "Moderate" ? "Some distortion — interpret visual clusters cautiously." : "Low preservation — 2D views may be misleading."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Noise Floor Map */}
+              {trials.length >= 15 && (() => {
+                const nfParams = (campaign.spec?.parameters ?? []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (nfParams.length === 0) return null;
+                const nfKey = Object.keys(trials[0]?.kpis ?? {})[0];
+                if (!nfKey) return null;
+                const nfObs = trials.filter((t: { kpis: Record<string, number> }) => t.kpis[nfKey] != null);
+                if (nfObs.length < 15) return null;
+                const nfResults: { name: string; noise: number }[] = [];
+                for (const param of nfParams) {
+                  const sorted = [...nfObs].sort((a: { parameters: Record<string, number> }, b: { parameters: Record<string, number> }) => (a.parameters[param.name] ?? 0) - (b.parameters[param.name] ?? 0));
+                  const nfBinSize = Math.max(3, Math.floor(sorted.length / 5));
+                  const variances: number[] = [];
+                  for (let i = 0; i <= sorted.length - nfBinSize; i += Math.max(1, Math.floor(nfBinSize / 2))) {
+                    const bin = sorted.slice(i, i + nfBinSize);
+                    const vals = bin.map((t: { kpis: Record<string, number> }) => t.kpis[nfKey]);
+                    const mean = vals.reduce((a: number, b: number) => a + b, 0) / vals.length;
+                    const v = vals.reduce((a: number, b: number) => a + (b - mean) ** 2, 0) / vals.length;
+                    variances.push(v);
+                  }
+                  const medianVar = [...variances].sort((a, b) => a - b)[Math.floor(variances.length / 2)] ?? 0;
+                  nfResults.push({ name: param.name, noise: Math.sqrt(medianVar) });
+                }
+                const nfMax = Math.max(...nfResults.map(r => r.noise)) || 1;
+                const nfAvg = nfResults.reduce((a, b) => a + b.noise, 0) / nfResults.length;
+                const nfBadge = nfAvg / nfMax < 0.3 ? "Clean" : nfAvg / nfMax < 0.6 ? "Moderate" : "Noisy";
+                const nfColor = nfBadge === "Clean" ? "var(--color-primary)" : nfBadge === "Moderate" ? "#eab308" : "#ef4444";
+                const nfBarH = 18, nfGap = 4;
+                const nfSvgH = nfResults.length * (nfBarH + nfGap) - nfGap + 4;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Radio size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Noise Floor Map</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: nfBadge === "Clean" ? "var(--color-success-bg)" : nfBadge === "Moderate" ? "rgba(234,179,8,0.12)" : "rgba(239,68,68,0.1)", color: nfColor }}>{nfBadge}</span>
+                    </div>
+                    <svg width="100%" height={nfSvgH} viewBox={`0 0 260 ${nfSvgH}`} style={{ display: "block", overflow: "visible" }}>
+                      {nfResults.map((r, i) => {
+                        const y = i * (nfBarH + nfGap) + 2;
+                        const pct = nfMax > 0 ? (r.noise / nfMax) * 100 : 0;
+                        const barCol = pct > 70 ? "#ef4444" : pct > 40 ? "#eab308" : "var(--color-primary)";
+                        return (
+                          <g key={r.name}>
+                            <text x="0" y={y + nfBarH / 2 + 4} fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">{r.name.length > 8 ? r.name.slice(0, 7) + "…" : r.name}</text>
+                            <rect x="70" y={y} width="140" height={nfBarH} rx="3" fill="var(--color-border)" />
+                            <rect x="70" y={y} width={Math.max(2, 140 * pct / 100)} height={nfBarH} rx="3" fill={barCol} opacity="0.8" />
+                            <text x="215" y={y + nfBarH / 2 + 4} fontSize="10" fontWeight="600" fill={barCol} fontFamily="var(--font-mono)">{(r.noise).toFixed(4)}</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      {nfBadge === "Clean" ? "Low measurement noise — optimization can resolve fine differences." : nfBadge === "Moderate" ? "Moderate noise — consider replicates for noisy parameters." : "High noise floor — improvements near noise level may be statistical artifacts."}
                     </div>
                   </div>
                 );
@@ -10748,6 +10881,86 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Batch Synergy */}
+              {suggestions && suggestions.suggestions.length >= 2 && (() => {
+                const bsParams = (campaign.spec?.parameters ?? []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (bsParams.length < 2) return null;
+                const bsSuggs = suggestions.suggestions;
+                // Normalize each suggestion parameter to [0,1]
+                const bsNorm = bsSuggs.map((s: Record<string, number>) =>
+                  bsParams.map((p: { name: string; lower?: number; upper?: number }) => {
+                    const lo = p.lower ?? 0, hi = p.upper ?? 1, range = hi - lo || 1;
+                    return ((s[p.name] ?? 0) - lo) / range;
+                  })
+                );
+                // Compute pairwise angles between suggestion vectors (centered)
+                const bsMean = bsParams.map((_: unknown, j: number) => bsNorm.reduce((a: number, r: number[]) => a + r[j], 0) / bsNorm.length);
+                const bsCentered = bsNorm.map((r: number[]) => r.map((v: number, j: number) => v - bsMean[j]));
+                // Compute minimum pairwise angle as synergy measure
+                let bsMinCos = 1;
+                for (let a = 0; a < bsCentered.length; a++) {
+                  for (let b = a + 1; b < bsCentered.length; b++) {
+                    let dot = 0, magA = 0, magB = 0;
+                    for (let k = 0; k < bsCentered[a].length; k++) {
+                      dot += bsCentered[a][k] * bsCentered[b][k];
+                      magA += bsCentered[a][k] ** 2;
+                      magB += bsCentered[b][k] ** 2;
+                    }
+                    const cos = (magA > 0 && magB > 0) ? Math.abs(dot) / (Math.sqrt(magA) * Math.sqrt(magB)) : 1;
+                    if (cos < bsMinCos) bsMinCos = cos;
+                  }
+                }
+                // Also compute average pairwise cosine similarity
+                let bsCosSum = 0, bsCosCount = 0;
+                for (let a = 0; a < bsCentered.length; a++) {
+                  for (let b = a + 1; b < bsCentered.length; b++) {
+                    let dot = 0, magA = 0, magB = 0;
+                    for (let k = 0; k < bsCentered[a].length; k++) {
+                      dot += bsCentered[a][k] * bsCentered[b][k];
+                      magA += bsCentered[a][k] ** 2;
+                      magB += bsCentered[b][k] ** 2;
+                    }
+                    const cos = (magA > 0 && magB > 0) ? Math.abs(dot) / (Math.sqrt(magA) * Math.sqrt(magB)) : 1;
+                    bsCosSum += cos;
+                    bsCosCount++;
+                  }
+                }
+                const bsAvgCos = bsCosCount > 0 ? bsCosSum / bsCosCount : 1;
+                const bsSynergy = 1 - bsAvgCos; // 1 = perfectly orthogonal, 0 = identical directions
+                const bsBadge = bsSynergy > 0.6 ? "Synergistic" : bsSynergy > 0.3 ? "Moderate" : "Redundant";
+                const bsColor = bsBadge === "Synergistic" ? "var(--color-primary)" : bsBadge === "Moderate" ? "#eab308" : "#ef4444";
+                // Gauge visualization
+                const bsGW = 180, bsGH = 100;
+                const bsAngle = -180 + bsSynergy * 180;
+                const bsRad = (bsAngle * Math.PI) / 180;
+                const bsR = 70;
+                const bsNx = bsGW / 2 + bsR * Math.cos(bsRad);
+                const bsNy = bsGH - 10 + bsR * Math.sin(bsRad);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <CircleDot size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Batch Synergy</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: bsBadge === "Synergistic" ? "var(--color-success-bg)" : bsBadge === "Moderate" ? "rgba(234,179,8,0.12)" : "rgba(239,68,68,0.1)", color: bsColor }}>{bsBadge}</span>
+                    </div>
+                    <svg width={bsGW} height={bsGH} viewBox={`0 0 ${bsGW} ${bsGH}`} style={{ display: "block", margin: "0 auto" }}>
+                      <path d={`M ${bsGW / 2 - bsR} ${bsGH - 10} A ${bsR} ${bsR} 0 0 1 ${bsGW / 2 + bsR} ${bsGH - 10}`} fill="none" stroke="var(--color-border)" strokeWidth="10" strokeLinecap="round" />
+                      <path d={`M ${bsGW / 2 - bsR} ${bsGH - 10} A ${bsR} ${bsR} 0 0 1 ${bsGW / 2 + bsR} ${bsGH - 10}`} fill="none" stroke={bsColor} strokeWidth="10" strokeLinecap="round" strokeDasharray={`${bsSynergy * Math.PI * bsR} ${Math.PI * bsR}`} />
+                      <line x1={bsGW / 2} y1={bsGH - 10} x2={bsNx} y2={bsNy} stroke="var(--color-text)" strokeWidth="2" strokeLinecap="round" />
+                      <circle cx={bsGW / 2} cy={bsGH - 10} r="4" fill="var(--color-text)" />
+                      <text x={bsGW / 2} y={bsGH - 30} textAnchor="middle" fontSize="18" fontWeight="700" fill="var(--color-text)" fontFamily="var(--font-mono)">{(bsSynergy * 100).toFixed(0)}%</text>
+                      <text x={bsGW / 2 - bsR - 2} y={bsGH - 2} textAnchor="end" fontSize="9" fill="var(--color-text-muted)">0%</text>
+                      <text x={bsGW / 2 + bsR + 2} y={bsGH - 2} textAnchor="start" fontSize="9" fill="var(--color-text-muted)">100%</text>
+                    </svg>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {bsBadge === "Synergistic" ? "Suggestions explore orthogonal directions — maximum information gain." : bsBadge === "Moderate" ? "Some directional overlap — reasonable coverage." : "Suggestions point in similar directions — consider diversifying."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -13688,6 +13901,100 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {esBadge === "High Efficiency" ? "Most trials explore unique regions — efficient sampling." : esBadge === "Moderate" ? "Some redundancy — consider increasing exploration." : "Many trials overlap — optimizer may be over-exploiting."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Learning Curve Projection */}
+              {trials.length >= 10 && (() => {
+                const lpKey = Object.keys(trials[0]?.kpis ?? {})[0];
+                if (!lpKey) return null;
+                const lpSorted = [...trials].sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                // Compute best-so-far curve
+                let lpBest = -Infinity;
+                const lpCurve: { iter: number; best: number }[] = [];
+                for (const t of lpSorted) {
+                  const v = t.kpis[lpKey];
+                  if (v != null && v > lpBest) lpBest = v;
+                  if (v != null) lpCurve.push({ iter: t.iteration, best: lpBest });
+                }
+                if (lpCurve.length < 10) return null;
+                // Fit log-linear model: best = a * ln(iter) + b using least squares
+                const lpN = lpCurve.length;
+                let lpSumX = 0, lpSumY = 0, lpSumXX = 0, lpSumXY = 0;
+                for (const pt of lpCurve) {
+                  const x = Math.log(Math.max(1, pt.iter));
+                  lpSumX += x;
+                  lpSumY += pt.best;
+                  lpSumXX += x * x;
+                  lpSumXY += x * pt.best;
+                }
+                const lpDenom = lpN * lpSumXX - lpSumX * lpSumX;
+                const lpA = lpDenom !== 0 ? (lpN * lpSumXY - lpSumX * lpSumY) / lpDenom : 0;
+                const lpB = (lpSumY - lpA * lpSumX) / lpN;
+                // Project forward 50% more iterations
+                const lpMaxIter = lpCurve[lpCurve.length - 1].iter;
+                const lpProjectN = 5;
+                const lpProjected: { iter: number; best: number }[] = [];
+                for (let i = 1; i <= lpProjectN; i++) {
+                  const futIter = lpMaxIter + i * Math.ceil(lpMaxIter * 0.1);
+                  const pred = lpA * Math.log(Math.max(1, futIter)) + lpB;
+                  lpProjected.push({ iter: futIter, best: pred });
+                }
+                // Rate of improvement: compare recent slope to early slope
+                const lpHalf = Math.floor(lpCurve.length / 2);
+                const lpEarlyRate = lpHalf > 0 ? (lpCurve[lpHalf].best - lpCurve[0].best) / lpHalf : 0;
+                const lpLateRate = lpHalf > 0 ? (lpCurve[lpCurve.length - 1].best - lpCurve[lpHalf].best) / (lpCurve.length - lpHalf) : 0;
+                const lpRatio = lpEarlyRate !== 0 ? lpLateRate / lpEarlyRate : 0;
+                const lpBadge = lpRatio > 0.5 ? "Fast Learning" : lpRatio > 0.1 ? "Steady" : "Plateaued";
+                const lpColor = lpBadge === "Fast Learning" ? "var(--color-primary)" : lpBadge === "Steady" ? "#eab308" : "#ef4444";
+                // Draw
+                const lpW = 260, lpH = 80, lpPad = 4;
+                const allPts = [...lpCurve, ...lpProjected];
+                const lpMinIter = lpCurve[0].iter;
+                const lpMaxI = lpProjected.length > 0 ? lpProjected[lpProjected.length - 1].iter : lpMaxIter;
+                const lpMinV = Math.min(...allPts.map(p => p.best));
+                const lpMaxV = Math.max(...allPts.map(p => p.best));
+                const lpRangeI = lpMaxI - lpMinIter || 1;
+                const lpRangeV = lpMaxV - lpMinV || 1;
+                const lpToX = (iter: number) => lpPad + ((iter - lpMinIter) / lpRangeI) * (lpW - 2 * lpPad);
+                const lpToY = (v: number) => lpPad + (1 - (v - lpMinV) / lpRangeV) * (lpH - 2 * lpPad);
+                const lpActualLine = lpCurve.map((p, i) => `${i === 0 ? "M" : "L"}${lpToX(p.iter).toFixed(1)},${lpToY(p.best).toFixed(1)}`).join(" ");
+                const lpProjLine = [lpCurve[lpCurve.length - 1], ...lpProjected].map((p, i) => `${i === 0 ? "M" : "L"}${lpToX(p.iter).toFixed(1)},${lpToY(p.best).toFixed(1)}`).join(" ");
+                // Projection zone fill
+                const lpFillPts = [lpCurve[lpCurve.length - 1], ...lpProjected];
+                const lpFill = lpFillPts.map((p, i) => `${i === 0 ? "M" : "L"}${lpToX(p.iter).toFixed(1)},${lpToY(p.best).toFixed(1)}`).join(" ") + ` L${lpToX(lpProjected[lpProjected.length - 1].iter).toFixed(1)},${lpH - lpPad} L${lpToX(lpCurve[lpCurve.length - 1].iter).toFixed(1)},${lpH - lpPad} Z`;
+                const lpBoundaryX = lpToX(lpMaxIter);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Timer size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Learning Curve Projection</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: lpBadge === "Fast Learning" ? "var(--color-success-bg)" : lpBadge === "Steady" ? "rgba(234,179,8,0.12)" : "rgba(239,68,68,0.1)", color: lpColor }}>{lpBadge}</span>
+                    </div>
+                    <svg width="100%" height={lpH} viewBox={`0 0 ${lpW} ${lpH}`} style={{ display: "block" }}>
+                      {/* Projection zone */}
+                      <path d={lpFill} fill={lpColor} opacity="0.08" />
+                      {/* Boundary line */}
+                      <line x1={lpBoundaryX} y1={lpPad} x2={lpBoundaryX} y2={lpH - lpPad} stroke="var(--color-text-muted)" strokeWidth="0.8" strokeDasharray="3,3" />
+                      {/* Actual curve */}
+                      <path d={lpActualLine} fill="none" stroke="var(--color-primary)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Projected curve */}
+                      <path d={lpProjLine} fill="none" stroke={lpColor} strokeWidth="1.5" strokeDasharray="4,3" strokeLinecap="round" />
+                      {/* Current point */}
+                      <circle cx={lpToX(lpMaxIter)} cy={lpToY(lpCurve[lpCurve.length - 1].best)} r="3" fill="var(--color-primary)" />
+                      {/* Labels */}
+                      <text x={lpBoundaryX - 3} y={12} textAnchor="end" fontSize="8" fill="var(--color-text-muted)">observed</text>
+                      <text x={lpBoundaryX + 3} y={12} textAnchor="start" fontSize="8" fill={lpColor}>projected</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>iter {lpMinIter}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: lpColor }}>slope ratio: {lpRatio.toFixed(2)}</span>
+                      <span>→ iter {lpMaxI}</span>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {lpBadge === "Fast Learning" ? "Still improving quickly — continue running experiments." : lpBadge === "Steady" ? "Learning is slowing — consider strategy adjustments." : "Improvement has plateaued — diminishing returns on additional trials."}
                     </div>
                   </div>
                 );
