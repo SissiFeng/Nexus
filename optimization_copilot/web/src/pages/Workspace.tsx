@@ -4512,6 +4512,63 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Anomaly Sentinel */}
+              {trials.length >= 10 && (() => {
+                const asK = 5;
+                const asObs = trials.map((t: { iteration: number; parameters: Record<string, number>; kpis: Record<string, number> }) => ({
+                  params: Object.values(t.parameters),
+                  kpi: Object.values(t.kpis)[0] ?? 0,
+                  iter: t.iteration,
+                }));
+                // compute k-NN LOO residuals
+                const asResiduals = asObs.map((obs: { params: number[]; kpi: number }, i: number) => {
+                  const dists = asObs.map((other: { params: number[]; kpi: number }, j: number) => ({
+                    j,
+                    d: i === j ? Infinity : Math.sqrt(obs.params.reduce((s: number, v: number, k: number) => s + (v - other.params[k]) ** 2, 0)),
+                  })).sort((a: { d: number }, b: { d: number }) => a.d - b.d).slice(0, asK);
+                  const pred = dists.reduce((s: number, d: { j: number }) => s + asObs[d.j].kpi, 0) / dists.length;
+                  return Math.abs(obs.kpi - pred);
+                });
+                const asMean = asResiduals.reduce((s: number, v: number) => s + v, 0) / asResiduals.length;
+                const asStd = Math.sqrt(asResiduals.reduce((s: number, v: number) => s + (v - asMean) ** 2, 0) / asResiduals.length) || 0.001;
+                const asScores = asResiduals.map((r: number) => r / asStd);
+                const asAnomalyCount = asScores.filter((s: number) => s > 2).length;
+                const asAnomalyPct = asAnomalyCount / asScores.length;
+                const asBadge = asAnomalyPct < 0.05 ? "Clean" : asAnomalyPct < 0.15 ? "Some Outliers" : "Noisy Data";
+                const asBadgeColor = asBadge === "Clean" ? "var(--color-green, #22c55e)" : asBadge === "Some Outliers" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const asW = 280, asH = 48;
+                const asMaxScore = Math.max(...asScores, 3);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Siren size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Anomaly Sentinel</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, color: asBadgeColor, background: `color-mix(in srgb, ${asBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "6px" }}>{asBadge}</span>
+                    </div>
+                    <svg width={asW} height={asH} viewBox={`0 0 ${asW} ${asH}`} style={{ display: "block", margin: "0 auto" }}>
+                      <line x1={0} y1={asH - 4} x2={asW} y2={asH - 4} stroke="var(--color-border)" strokeWidth={0.5} />
+                      {/* 2σ threshold line */}
+                      <line x1={0} y1={asH - 4 - (2 / asMaxScore) * (asH - 12)} x2={asW} y2={asH - 4 - (2 / asMaxScore) * (asH - 12)} stroke="var(--color-red, #ef4444)" strokeWidth={0.5} strokeDasharray="3,3" opacity={0.5} />
+                      <text x={asW - 2} y={asH - 4 - (2 / asMaxScore) * (asH - 12) - 2} fontSize={8} fill="var(--color-red, #ef4444)" textAnchor="end" opacity={0.7}>2σ</text>
+                      {asScores.map((score: number, i: number) => {
+                        const x = (i / (asScores.length - 1)) * (asW - 8) + 4;
+                        const y = asH - 4 - Math.min(score / asMaxScore, 1) * (asH - 12);
+                        const color = score > 2 ? "var(--color-red, #ef4444)" : score > 1.5 ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)";
+                        return <circle key={i} cx={x} cy={y} r={score > 2 ? 3 : 2} fill={color} opacity={0.7} />;
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>trial 1</span>
+                      <span>{asAnomalyCount} anomalies / {asScores.length} total</span>
+                      <span>trial {asScores.length}</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {asBadge === "Clean" ? "No anomalous observations detected — data is consistent." : asBadge === "Some Outliers" ? "A few observations deviate from neighbors — check for equipment issues." : "Many anomalous observations — measurement reliability may be compromised."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -7260,6 +7317,107 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {cfBadge === "Well-Supported" ? "Good data coverage — model predictions are well-supported across parameter ranges." : cfBadge === "Moderate" ? "Some gaps in coverage — predictions in sparse regions may be unreliable." : "Many sparse regions — consider targeted experiments in under-sampled areas."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Interaction Strength */}
+              {trials.length >= 15 && (() => {
+                const piSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (piSpecs.length < 2) return null;
+                const piNames = piSpecs.map((s: { name: string }) => s.name);
+                const piK = 5;
+                const piObs = trials.map(t => ({ params: piNames.map((n: string) => t.parameters[n] ?? 0), kpi: Object.values(t.kpis)[0] ?? 0 }));
+                // compute pairwise interaction strength via variance decomposition
+                const piInteractions: { a: string; b: string; strength: number }[] = [];
+                for (let a = 0; a < piNames.length; a++) {
+                  for (let b = a + 1; b < piNames.length; b++) {
+                    // variance explained by joint (a,b) vs sum of marginals
+                    const piPredJoint = piObs.map((obs, i) => {
+                      const dists = piObs.map((o2, j) => ({
+                        j,
+                        d: i === j ? Infinity : Math.sqrt((obs.params[a] - o2.params[a]) ** 2 + (obs.params[b] - o2.params[b]) ** 2),
+                      })).sort((x, y) => x.d - y.d).slice(0, piK);
+                      return dists.reduce((s, d) => s + piObs[d.j].kpi, 0) / dists.length;
+                    });
+                    const piPredA = piObs.map((obs, i) => {
+                      const dists = piObs.map((o2, j) => ({
+                        j,
+                        d: i === j ? Infinity : Math.abs(obs.params[a] - o2.params[a]),
+                      })).sort((x, y) => x.d - y.d).slice(0, piK);
+                      return dists.reduce((s, d) => s + piObs[d.j].kpi, 0) / dists.length;
+                    });
+                    const piPredB = piObs.map((obs, i) => {
+                      const dists = piObs.map((o2, j) => ({
+                        j,
+                        d: i === j ? Infinity : Math.abs(obs.params[b] - o2.params[b]),
+                      })).sort((x, y) => x.d - y.d).slice(0, piK);
+                      return dists.reduce((s, d) => s + piObs[d.j].kpi, 0) / dists.length;
+                    });
+                    const piMean = piObs.reduce((s, o) => s + o.kpi, 0) / piObs.length;
+                    const piTotalVar = piObs.reduce((s, o) => s + (o.kpi - piMean) ** 2, 0);
+                    if (piTotalVar < 1e-12) { piInteractions.push({ a: piNames[a], b: piNames[b], strength: 0 }); continue; }
+                    const piResJoint = piObs.reduce((s, o, i) => s + (o.kpi - piPredJoint[i]) ** 2, 0);
+                    const piResA = piObs.reduce((s, o, i) => s + (o.kpi - piPredA[i]) ** 2, 0);
+                    const piResB = piObs.reduce((s, o, i) => s + (o.kpi - piPredB[i]) ** 2, 0);
+                    const piVarJoint = 1 - piResJoint / piTotalVar;
+                    const piVarA = 1 - piResA / piTotalVar;
+                    const piVarB = 1 - piResB / piTotalVar;
+                    const piInterStr = Math.max(0, piVarJoint - piVarA - piVarB);
+                    piInteractions.push({ a: piNames[a], b: piNames[b], strength: piInterStr });
+                  }
+                }
+                const piMaxStr = Math.max(...piInteractions.map(ix => ix.strength), 0.01);
+                const piAvgStr = piInteractions.reduce((s, ix) => s + ix.strength, 0) / piInteractions.length;
+                const piBadge = piAvgStr > 0.15 ? "Strong Interactions" : piAvgStr > 0.05 ? "Moderate" : "Independent";
+                const piBadgeColor = piBadge === "Strong Interactions" ? "var(--color-red, #ef4444)" : piBadge === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)";
+                const piCellSize = Math.min(28, 180 / piNames.length);
+                const piLabelW = 52;
+                const piSvgW = piLabelW + piNames.length * piCellSize + 4;
+                const piSvgH = 16 + piNames.length * piCellSize + 4;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <GitMerge size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Parameter Interaction Strength</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, color: piBadgeColor, background: `color-mix(in srgb, ${piBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "6px" }}>{piBadge}</span>
+                    </div>
+                    <svg width={piSvgW} height={piSvgH} viewBox={`0 0 ${piSvgW} ${piSvgH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* Column labels */}
+                      {piNames.map((n: string, i: number) => (
+                        <text key={`col-${i}`} x={piLabelW + i * piCellSize + piCellSize / 2} y={10} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle">{n.length > 6 ? n.slice(0, 5) + "…" : n}</text>
+                      ))}
+                      {/* Row labels + cells */}
+                      {piNames.map((_: string, row: number) => (
+                        <g key={`row-${row}`}>
+                          <text x={piLabelW - 3} y={16 + row * piCellSize + piCellSize / 2 + 3} fontSize={7} fill="var(--color-text-muted)" textAnchor="end">{piNames[row].length > 6 ? piNames[row].slice(0, 5) + "…" : piNames[row]}</text>
+                          {piNames.map((_2: string, col: number) => {
+                            if (col <= row) {
+                              if (col === row) return <rect key={`${row}-${col}`} x={piLabelW + col * piCellSize} y={16 + row * piCellSize} width={piCellSize - 1} height={piCellSize - 1} fill="var(--color-border)" rx={2} opacity={0.3} />;
+                              const piIx = piInteractions.find(ix => (ix.a === piNames[row] && ix.b === piNames[col]) || (ix.a === piNames[col] && ix.b === piNames[row]));
+                              const piStr = piIx?.strength ?? 0;
+                              const piNorm = Math.min(piStr / piMaxStr, 1);
+                              const piColor = piNorm > 0.6 ? "#ef4444" : piNorm > 0.3 ? "#eab308" : "#3b82f6";
+                              return (
+                                <g key={`${row}-${col}`}>
+                                  <rect x={piLabelW + col * piCellSize} y={16 + row * piCellSize} width={piCellSize - 1} height={piCellSize - 1} fill={piColor} rx={2} opacity={0.15 + piNorm * 0.7} />
+                                  {piCellSize >= 20 && <text x={piLabelW + col * piCellSize + (piCellSize - 1) / 2} y={16 + row * piCellSize + (piCellSize - 1) / 2 + 3} fontSize={7} fill={piNorm > 0.5 ? piColor : "var(--color-text-muted)"} textAnchor="middle" fontWeight={piNorm > 0.5 ? 600 : 400}>{(piStr * 100).toFixed(0)}%</text>}
+                                </g>
+                              );
+                            }
+                            return <rect key={`${row}-${col}`} x={piLabelW + col * piCellSize} y={16 + row * piCellSize} width={piCellSize - 1} height={piCellSize - 1} fill="transparent" />;
+                          })}
+                        </g>
+                      ))}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#3b82f6", opacity: 0.4, display: "inline-block" }} />weak</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#eab308", opacity: 0.7, display: "inline-block" }} />moderate</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#ef4444", opacity: 0.85, display: "inline-block" }} />strong</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {piBadge === "Strong Interactions" ? "Significant parameter interactions — joint tuning is important." : piBadge === "Moderate" ? "Some parameter pairs interact — consider tuning them together." : "Parameters act independently — single-parameter optimization is effective."}
                     </div>
                   </div>
                 );
@@ -11184,6 +11342,69 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Exploitation Pressure */}
+              {suggestions?.suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const epSuggs = suggestions.suggestions;
+                const epObs = trials.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }) => ({
+                  params: Object.values(t.parameters),
+                  kpi: Object.values(t.kpis)[0] ?? 0,
+                }));
+                // find best observation
+                const epBestIdx = epObs.reduce((bi: number, o: { params: number[]; kpi: number }, i: number) => o.kpi < epObs[bi].kpi ? i : bi, 0);
+                const epBest = epObs[epBestIdx];
+                const epSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                const epParamNames = epSpecs.map((s: { name: string }) => s.name);
+                const epRanges = epSpecs.map((s: { lower?: number; upper?: number }) => (s.upper ?? 1) - (s.lower ?? 0) || 1);
+                // normalized distance of each suggestion from best
+                const epDists = epSuggs.map((sg: Record<string, number>) => {
+                  const vals = epParamNames.map((n: string) => sg[n] ?? 0);
+                  return Math.sqrt(vals.reduce((s: number, v: number, k: number) => s + ((v - epBest.params[k]) / epRanges[k]) ** 2, 0));
+                });
+                // max possible distance (corner to corner in unit hypercube)
+                const epMaxDist = Math.sqrt(epParamNames.length);
+                const epNormDists = epDists.map((d: number) => Math.min(d / (epMaxDist * 0.5), 1));
+                const epExploitScores = epNormDists.map((d: number) => 1 - d); // closer to best = higher exploitation
+                const epAvgExploit = epExploitScores.reduce((s: number, v: number) => s + v, 0) / epExploitScores.length;
+                const epBadge = epAvgExploit > 0.65 ? "Exploiting" : epAvgExploit > 0.35 ? "Balanced" : "Exploring";
+                const epBadgeColor = epBadge === "Exploiting" ? "var(--color-blue, #3b82f6)" : epBadge === "Balanced" ? "var(--color-green, #22c55e)" : "var(--color-yellow, #eab308)";
+                const epW = 220, epH = 64, epGaugeR = 24;
+                const epAngle = -Math.PI + epAvgExploit * Math.PI;
+                const epNeedleX = epW / 2 + Math.cos(epAngle) * (epGaugeR - 4);
+                const epNeedleY = epH - 12 + Math.sin(epAngle) * (epGaugeR - 4);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Target size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Exploitation Pressure</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, color: epBadgeColor, background: `color-mix(in srgb, ${epBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "6px" }}>{epBadge}</span>
+                    </div>
+                    <svg width={epW} height={epH} viewBox={`0 0 ${epW} ${epH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* Gauge arc */}
+                      <path d={`M ${epW / 2 - epGaugeR} ${epH - 12} A ${epGaugeR} ${epGaugeR} 0 0 1 ${epW / 2 + epGaugeR} ${epH - 12}`} fill="none" stroke="var(--color-border)" strokeWidth={6} strokeLinecap="round" />
+                      {/* Colored arc: explore (yellow) → balanced (green) → exploit (blue) */}
+                      <path d={`M ${epW / 2 - epGaugeR} ${epH - 12} A ${epGaugeR} ${epGaugeR} 0 0 1 ${epW / 2} ${epH - 12 - epGaugeR}`} fill="none" stroke="var(--color-yellow, #eab308)" strokeWidth={6} strokeLinecap="round" opacity={0.6} />
+                      <path d={`M ${epW / 2} ${epH - 12 - epGaugeR} A ${epGaugeR} ${epGaugeR} 0 0 1 ${epW / 2 + epGaugeR} ${epH - 12}`} fill="none" stroke="var(--color-blue, #3b82f6)" strokeWidth={6} strokeLinecap="round" opacity={0.6} />
+                      {/* Needle */}
+                      <line x1={epW / 2} y1={epH - 12} x2={epNeedleX} y2={epNeedleY} stroke="var(--color-text)" strokeWidth={1.5} strokeLinecap="round" />
+                      <circle cx={epW / 2} cy={epH - 12} r={2.5} fill="var(--color-text)" />
+                      <text x={epW / 2} y={epH - 18} fontSize={11} fill="var(--color-text)" textAnchor="middle" fontWeight={600}>{(epAvgExploit * 100).toFixed(0)}%</text>
+                      <text x={epW / 2 - epGaugeR - 6} y={epH - 8} fontSize={7} fill="var(--color-text-muted)" textAnchor="end">Explore</text>
+                      <text x={epW / 2 + epGaugeR + 6} y={epH - 8} fontSize={7} fill="var(--color-text-muted)" textAnchor="start">Exploit</text>
+                      {/* Per-suggestion dots on arc */}
+                      {epExploitScores.map((score: number, i: number) => {
+                        const a = -Math.PI + score * Math.PI;
+                        const sx = epW / 2 + Math.cos(a) * (epGaugeR + 8);
+                        const sy = epH - 12 + Math.sin(a) * (epGaugeR + 8);
+                        return <circle key={i} cx={sx} cy={sy} r={3} fill={score > 0.65 ? "#3b82f6" : score > 0.35 ? "#22c55e" : "#eab308"} opacity={0.8} />;
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {epBadge === "Exploiting" ? "Batch focuses near the current optimum — refining known good regions." : epBadge === "Balanced" ? "Good mix of exploitation and exploration in this batch." : "Batch pushes outward into unexplored territory — broadening the search."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -14295,6 +14516,61 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {hlBadge === "High Leverage" ? "Some experiments disproportionately shape predictions — consider replicating them." : hlBadge === "Mixed" ? "A few influential experiments — model isn't dominated by outliers." : "All experiments contribute uniformly — robust model foundation."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Observation Quality Score */}
+              {trials.length >= 10 && (() => {
+                const oqK = 5;
+                const oqTrials = trials.map(t => ({
+                  params: Object.values(t.parameters),
+                  kpi: Object.values(t.kpis)[0] ?? 0,
+                  iter: t.iteration,
+                }));
+                // compute quality score per trial: k-NN consistency (low residual = high quality)
+                const oqResiduals = oqTrials.map((t, i) => {
+                  const dists = oqTrials.map((o, j) => ({
+                    j,
+                    d: i === j ? Infinity : Math.sqrt(t.params.reduce((s, v, k) => s + (v - o.params[k]) ** 2, 0)),
+                  })).sort((a, b) => a.d - b.d).slice(0, oqK);
+                  const pred = dists.reduce((s, d) => s + oqTrials[d.j].kpi, 0) / dists.length;
+                  return Math.abs(t.kpi - pred);
+                });
+                const oqMean = oqResiduals.reduce((s, v) => s + v, 0) / oqResiduals.length;
+                const oqStd = Math.sqrt(oqResiduals.reduce((s, v) => s + (v - oqMean) ** 2, 0) / oqResiduals.length) || 0.001;
+                // quality = 1 - normalized residual (capped at 0)
+                const oqScores = oqResiduals.map(r => Math.max(0, 1 - r / (oqMean + 2 * oqStd)));
+                const oqAvg = oqScores.reduce((s, v) => s + v, 0) / oqScores.length;
+                const oqLowCount = oqScores.filter(s => s < 0.4).length;
+                const oqBadge = oqAvg > 0.7 ? "High Quality" : oqAvg > 0.5 ? "Mixed" : "Review Needed";
+                const oqBadgeColor = oqBadge === "High Quality" ? "var(--color-green, #22c55e)" : oqBadge === "Mixed" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const oqW = 280, oqH = 44;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Award size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Observation Quality Score</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, color: oqBadgeColor, background: `color-mix(in srgb, ${oqBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "6px" }}>{oqBadge}</span>
+                    </div>
+                    <svg width={oqW} height={oqH} viewBox={`0 0 ${oqW} ${oqH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* quality threshold line at 0.4 */}
+                      <line x1={0} y1={oqH - 4 - 0.4 * (oqH - 12)} x2={oqW} y2={oqH - 4 - 0.4 * (oqH - 12)} stroke="var(--color-red, #ef4444)" strokeWidth={0.5} strokeDasharray="3,3" opacity={0.4} />
+                      {oqScores.map((score, i) => {
+                        const x = (i / (oqScores.length - 1)) * (oqW - 8) + 4;
+                        const y = oqH - 4 - score * (oqH - 12);
+                        const color = score > 0.7 ? "var(--color-green, #22c55e)" : score > 0.4 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return <circle key={i} cx={x} cy={y} r={2} fill={color} opacity={0.7} />;
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>trial 1</span>
+                      <span>avg {(oqAvg * 100).toFixed(0)}% · {oqLowCount} low-quality</span>
+                      <span>trial {oqScores.length}</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {oqBadge === "High Quality" ? "Observations are locally consistent — data quality is high." : oqBadge === "Mixed" ? "Some observations are inconsistent with neighbors — consider reviewing flagged trials." : "Many low-quality observations — data may need cleaning before further optimization."}
                     </div>
                   </div>
                 );
