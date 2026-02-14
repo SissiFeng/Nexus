@@ -84,8 +84,8 @@ class TestValidTransitions:
     def test_paused_can_resume(self):
         assert CampaignStatus.RUNNING in VALID_TRANSITIONS[CampaignStatus.PAUSED]
 
-    def test_archived_is_terminal(self):
-        assert VALID_TRANSITIONS[CampaignStatus.ARCHIVED] == set()
+    def test_archived_can_unarchive(self):
+        assert VALID_TRANSITIONS[CampaignStatus.ARCHIVED] == {CampaignStatus.DRAFT}
 
     def test_all_statuses_have_transitions(self):
         for status in CampaignStatus:
