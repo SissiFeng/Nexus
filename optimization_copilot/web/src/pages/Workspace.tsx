@@ -60,6 +60,10 @@ import {
   BarChart2,
   Clipboard,
   TrendingUp,
+  Grid,
+  Eye,
+  Shuffle,
+  PieChart,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -1527,6 +1531,97 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Convergence Confidence Band */}
+              {convergenceData.length >= 10 && (() => {
+                const W = 460, H = 140, padL = 50, padR = 12, padT = 10, padB = 28;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const bestVals = convergenceData.map(d => d.best);
+                const trialVals = convergenceData.map(d => d.value);
+                const minY = Math.min(...bestVals);
+                const maxY = Math.max(...trialVals, ...bestVals);
+                const yRange = maxY - minY || 1;
+                const scaleX = (i: number) => padL + (i / (convergenceData.length - 1)) * plotW;
+                const scaleY = (v: number) => padT + (1 - (v - minY) / yRange) * plotH;
+
+                // Rolling window confidence band (std dev around best-so-far)
+                const windowSize = Math.max(5, Math.floor(convergenceData.length / 15));
+                const upper: string[] = [];
+                const lower: string[] = [];
+                for (let i = 0; i < convergenceData.length; i++) {
+                  const start = Math.max(0, i - windowSize);
+                  const end = Math.min(convergenceData.length, i + windowSize + 1);
+                  const windowVals = trialVals.slice(start, end);
+                  const mean = windowVals.reduce((a, b) => a + b, 0) / windowVals.length;
+                  const variance = windowVals.reduce((a, b) => a + (b - mean) ** 2, 0) / windowVals.length;
+                  const std = Math.sqrt(variance);
+                  const best = bestVals[i];
+                  upper.push(`${scaleX(i).toFixed(1)},${scaleY(best + std).toFixed(1)}`);
+                  lower.push(`${scaleX(i).toFixed(1)},${scaleY(best - std).toFixed(1)}`);
+                }
+                const bandPath = `M${upper.join(" L")} L${lower.reverse().join(" L")} Z`;
+                const bestPath = bestVals.map((v, i) => `${i === 0 ? "M" : "L"}${scaleX(i).toFixed(1)},${scaleY(v).toFixed(1)}`).join(" ");
+
+                // Confidence narrowing metric
+                const earlyStd = (() => {
+                  const earlyW = trialVals.slice(0, Math.min(windowSize * 3, Math.floor(convergenceData.length / 3)));
+                  const m = earlyW.reduce((a, b) => a + b, 0) / earlyW.length;
+                  return Math.sqrt(earlyW.reduce((a, b) => a + (b - m) ** 2, 0) / earlyW.length);
+                })();
+                const lateStd = (() => {
+                  const lateW = trialVals.slice(Math.max(0, convergenceData.length - windowSize * 3));
+                  const m = lateW.reduce((a, b) => a + b, 0) / lateW.length;
+                  return Math.sqrt(lateW.reduce((a, b) => a + (b - m) ** 2, 0) / lateW.length);
+                })();
+                const narrowing = earlyStd > 0 ? ((earlyStd - lateStd) / earlyStd * 100).toFixed(0) : "0";
+                const isConverging = lateStd < earlyStd;
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Eye size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Convergence Confidence</h2>
+                      <span className={`findings-badge findings-badge-${isConverging ? "success" : "warning"}`} style={{ marginLeft: "auto" }}>
+                        {isConverging ? `${narrowing}% narrower` : "Widening"}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Shaded band shows rolling uncertainty (±1 std dev). Narrowing bands indicate the model is converging.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Grid lines */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                        <line key={f} x1={padL} y1={padT + f * plotH} x2={padL + plotW} y2={padT + f * plotH}
+                          stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                      ))}
+                      {/* Confidence band */}
+                      <path d={bandPath} fill="var(--color-primary)" opacity="0.12" />
+                      {/* Best-so-far line */}
+                      <path d={bestPath} fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" />
+                      {/* Trial scatter */}
+                      {convergenceData.map((d, i) => (
+                        <circle key={i} cx={scaleX(i)} cy={scaleY(d.value)} r="1.5" fill="var(--color-text-muted)" opacity="0.3" />
+                      ))}
+                      {/* Y axis labels */}
+                      {[0, 0.5, 1].map(f => (
+                        <text key={f} x={padL - 4} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                          {(minY + f * yRange).toFixed(3)}
+                        </text>
+                      ))}
+                      {/* X axis */}
+                      <text x={padL} y={H - 4} textAnchor="start" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">0</text>
+                      <text x={padL + plotW} y={H - 4} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">{convergenceData.length}</text>
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">Iteration</text>
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 3, background: "var(--color-primary)", borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />Best So Far</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "var(--color-primary)", opacity: 0.15, borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />±1σ Band</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-muted)", opacity: 0.4, marginRight: 4, verticalAlign: "middle" }} />Trials</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Auto-generated Findings Summary */}
               {trials.length >= 5 && (() => {
                 const findings: Array<{ icon: string; text: string; type: "success" | "info" | "warning" }> = [];
@@ -1612,6 +1707,100 @@ export default function Workspace() {
                           <span className="findings-icon">{iconMap[f.icon] || <Info size={14} />}</span>
                           <span className="findings-text">{f.text}</span>
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Diminishing Returns Detector */}
+              {trials.length >= 15 && (() => {
+                const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const objKey = Object.keys(chrono[0].kpis)[0];
+                const vals = chrono.map(t => Number(t.kpis[objKey]) || 0);
+
+                // Compute cumulative best at each point
+                const cumBest: number[] = [];
+                let runBest = Infinity;
+                for (const v of vals) {
+                  if (v < runBest) runBest = v;
+                  cumBest.push(runBest);
+                }
+
+                // Marginal improvement in windows of different sizes
+                const windows = [10, 25, 50].filter(w => w <= chrono.length);
+                const marginalData: Array<{ window: number; improvements: Array<{ x: number; y: number }> }> = [];
+                for (const w of windows) {
+                  const improvements: Array<{ x: number; y: number }> = [];
+                  for (let i = w; i < cumBest.length; i += Math.max(1, Math.floor(w / 3))) {
+                    const improvementInWindow = cumBest[i - w] - cumBest[i]; // positive = improved
+                    improvements.push({ x: i, y: improvementInWindow });
+                  }
+                  marginalData.push({ window: w, improvements });
+                }
+
+                const allY = marginalData.flatMap(d => d.improvements.map(p => p.y));
+                const maxImprovement = Math.max(...allY, 0.001);
+                const totalImprovement = cumBest[0] - cumBest[cumBest.length - 1];
+                const recentImprovement = cumBest.length > 20 ? cumBest[cumBest.length - 20] - cumBest[cumBest.length - 1] : 0;
+                const recentPct = totalImprovement > 0 ? (recentImprovement / totalImprovement * 100).toFixed(0) : "0";
+                const diminishing = totalImprovement > 0 && recentImprovement < totalImprovement * 0.05;
+
+                const W = 460, H = 130, padL = 50, padR = 12, padT = 10, padB = 28;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const scaleX = (x: number) => padL + (x / (chrono.length - 1)) * plotW;
+                const scaleY = (y: number) => padT + (1 - y / maxImprovement) * plotH;
+
+                const colors = ["var(--color-primary)", "var(--color-blue, #3b82f6)", "var(--color-text-muted)"];
+                const dashes = ["", "4,3", "2,2"];
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <PieChart size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Diminishing Returns</h2>
+                      <span className={`findings-badge findings-badge-${diminishing ? "warning" : "success"}`} style={{ marginLeft: "auto" }}>
+                        {diminishing ? "Low marginal gain" : `${recentPct}% recent`}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Marginal improvement per window of trials. Declining curves suggest diminishing returns from additional experiments.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Grid lines */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                        <line key={f} x1={padL} y1={padT + f * plotH} x2={padL + plotW} y2={padT + f * plotH}
+                          stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                      ))}
+                      {/* Lines for each window */}
+                      {marginalData.map((d, di) => {
+                        if (d.improvements.length < 2) return null;
+                        const path = d.improvements.map((p, i) => `${i === 0 ? "M" : "L"}${scaleX(p.x).toFixed(1)},${scaleY(p.y).toFixed(1)}`).join(" ");
+                        return (
+                          <path key={di} d={path} fill="none" stroke={colors[di]} strokeWidth="1.8" strokeLinecap="round"
+                            strokeDasharray={dashes[di]} opacity="0.8" />
+                        );
+                      })}
+                      {/* Zero line */}
+                      <line x1={padL} y1={scaleY(0)} x2={padL + plotW} y2={scaleY(0)} stroke="var(--color-text-muted)" strokeWidth="0.5" opacity="0.3" />
+                      {/* Y axis labels */}
+                      {[0, 0.5, 1].map(f => (
+                        <text key={f} x={padL - 4} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                          {(f * maxImprovement).toFixed(3)}
+                        </text>
+                      ))}
+                      {/* X axis */}
+                      <text x={padL} y={H - 4} textAnchor="start" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">0</text>
+                      <text x={padL + plotW} y={H - 4} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">{chrono.length}</text>
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">Iteration</text>
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      {marginalData.map((d, di) => (
+                        <span key={di} className="efficiency-legend-item">
+                          <span style={{ display: "inline-block", width: 14, height: 2, background: colors[di], borderRadius: 1, marginRight: 4, verticalAlign: "middle" }} />
+                          Last {d.window} trials
+                        </span>
                       ))}
                     </div>
                   </div>
@@ -2423,6 +2612,138 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Surrogate Landscape Heatmap */}
+              {trials.length >= 10 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                if (paramNames.length < 2) return null;
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const xParam = paramNames[0];
+                const yParam = paramNames[1];
+                const xVals = trials.map(t => Number(t.parameters[xParam]) || 0);
+                const yVals = trials.map(t => Number(t.parameters[yParam]) || 0);
+                const objVals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                const xMin = Math.min(...xVals), xMax = Math.max(...xVals);
+                const yMin = Math.min(...yVals), yMax = Math.max(...yVals);
+                const oMin = Math.min(...objVals), oMax = Math.max(...objVals);
+                const xRange = xMax - xMin || 1;
+                const yRange = yMax - yMin || 1;
+                const oRange = oMax - oMin || 1;
+                const res = 20; // grid resolution
+                const W = 400, H = 340, padL = 52, padR = 16, padT = 12, padB = 38;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const cellW = plotW / res;
+                const cellH = plotH / res;
+
+                // Inverse-distance-weighted interpolation
+                const grid: number[][] = [];
+                const countGrid: number[][] = [];
+                for (let gy = 0; gy < res; gy++) {
+                  grid[gy] = [];
+                  countGrid[gy] = [];
+                  for (let gx = 0; gx < res; gx++) {
+                    const cx = xMin + (gx + 0.5) * xRange / res;
+                    const cy = yMin + (gy + 0.5) * yRange / res;
+                    let wSum = 0, vSum = 0;
+                    for (let i = 0; i < trials.length; i++) {
+                      const dx = (xVals[i] - cx) / xRange;
+                      const dy = (yVals[i] - cy) / yRange;
+                      const dist = Math.sqrt(dx * dx + dy * dy) + 0.01;
+                      const w = 1 / (dist * dist);
+                      wSum += w;
+                      vSum += w * objVals[i];
+                    }
+                    grid[gy][gx] = wSum > 0 ? vSum / wSum : 0;
+                    countGrid[gy][gx] = trials.filter((_t, i) => {
+                      const dx = Math.abs(xVals[i] - cx) / xRange;
+                      const dy = Math.abs(yVals[i] - cy) / yRange;
+                      return dx < 0.5 / res * 3 && dy < 0.5 / res * 3;
+                    }).length;
+                  }
+                }
+
+                // Color: green (best/low) → yellow → red (worst/high) for minimize
+                const cellColor = (val: number) => {
+                  const t = (val - oMin) / oRange;
+                  if (t < 0.33) {
+                    const p = t / 0.33;
+                    return `rgb(${Math.round(34 + p * (234 - 34))}, ${Math.round(197 - p * (197 - 179))}, ${Math.round(94 - p * (94 - 8))})`;
+                  }
+                  const p = (t - 0.33) / 0.67;
+                  return `rgb(${Math.round(234 + p * (239 - 234))}, ${Math.round(179 - p * (179 - 68))}, ${Math.round(8 + p * (68 - 8))})`;
+                };
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Grid size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Surrogate Landscape</h2>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 10px" }}>
+                      Estimated objective surface using inverse-distance interpolation. Green = better regions. White dots = actual trials.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Heatmap cells */}
+                      {grid.map((row, gy) =>
+                        row.map((val, gx) => (
+                          <rect
+                            key={`${gy}-${gx}`}
+                            x={padL + gx * cellW}
+                            y={padT + gy * cellH}
+                            width={cellW + 0.5}
+                            height={cellH + 0.5}
+                            fill={cellColor(val)}
+                            opacity={countGrid[gy][gx] > 0 ? 0.85 : 0.4}
+                          >
+                            <title>{xParam}≈{(xMin + (gx + 0.5) * xRange / res).toFixed(2)}, {yParam}≈{(yMin + (gy + 0.5) * yRange / res).toFixed(2)} → {val.toFixed(4)}</title>
+                          </rect>
+                        ))
+                      )}
+                      {/* Trial points */}
+                      {trials.map((t, i) => {
+                        const px = padL + ((xVals[i] - xMin) / xRange) * plotW;
+                        const py = padT + ((yVals[i] - yMin) / yRange) * plotH;
+                        return (
+                          <circle key={i} cx={px} cy={py} r="2.5" fill="white" stroke="rgba(0,0,0,0.4)" strokeWidth="0.5">
+                            <title>Trial #{t.iteration}: {objKey}={objVals[i].toFixed(4)}</title>
+                          </circle>
+                        );
+                      })}
+                      {/* Axes */}
+                      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      {/* X-axis labels */}
+                      {[0, 0.5, 1].map(f => (
+                        <text key={f} x={padL + f * plotW} y={H - 18} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                          {(xMin + f * xRange).toFixed(2)}
+                        </text>
+                      ))}
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">{xParam}</text>
+                      {/* Y-axis labels */}
+                      {[0, 0.5, 1].map(f => (
+                        <text key={f} x={padL - 4} y={padT + f * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                          {(yMin + f * yRange).toFixed(2)}
+                        </text>
+                      ))}
+                      <text x={12} y={padT + plotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" transform={`rotate(-90, 12, ${padT + plotH / 2})`}>{yParam}</text>
+                      {/* Color legend */}
+                      <defs>
+                        <linearGradient id="hm-legend" x1="0" x2="1" y1="0" y2="0">
+                          <stop offset="0%" stopColor="rgb(34,197,94)" />
+                          <stop offset="33%" stopColor="rgb(234,179,8)" />
+                          <stop offset="100%" stopColor="rgb(239,68,68)" />
+                        </linearGradient>
+                      </defs>
+                      <rect x={padL + plotW + 4} y={padT} width={8} height={plotH} fill="url(#hm-legend)" rx="2" transform={`rotate(180, ${padL + plotW + 8}, ${padT + plotH / 2})`} />
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)", maxWidth: `${W}px`, padding: "2px 0" }}>
+                      <span>Better ({oMin.toFixed(3)})</span>
+                      <span>Worse ({oMax.toFixed(3)})</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Pareto Front — shown when 2+ objectives are configured */}
               {(() => {
                 const objNames = campaign.objective_names ?? [];
@@ -2770,6 +3091,105 @@ export default function Workspace() {
                         {maxV.toFixed(3)}
                       </text>
                     </svg>
+                  </div>
+                );
+              })()}
+
+              {/* Exploration vs Exploitation Timeline */}
+              {trials.length >= 8 && (() => {
+                const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const paramNames = Object.keys(chrono[0].parameters);
+                const objKey = Object.keys(chrono[0].kpis)[0];
+
+                // Classify each trial as explore or exploit
+                const classifications: Array<{ iteration: number; score: number; label: "explore" | "exploit" }> = [];
+                let runningBestIdx = 0;
+                let runningBestVal = Number(chrono[0].kpis[objKey]) || 0;
+
+                for (let i = 0; i < chrono.length; i++) {
+                  const curVal = Number(chrono[i].kpis[objKey]) || 0;
+                  if (curVal < runningBestVal) {
+                    runningBestVal = curVal;
+                    runningBestIdx = i;
+                  }
+                  if (i === 0) {
+                    classifications.push({ iteration: chrono[i].iteration, score: 1, label: "explore" });
+                    continue;
+                  }
+
+                  // Novelty: min normalized distance to all previous trials
+                  let minDist = Infinity;
+                  for (let j = 0; j < i; j++) {
+                    let dist = 0;
+                    for (const p of paramNames) {
+                      const d = (Number(chrono[i].parameters[p]) || 0) - (Number(chrono[j].parameters[p]) || 0);
+                      dist += d * d;
+                    }
+                    minDist = Math.min(minDist, Math.sqrt(dist));
+                  }
+                  // Distance to best-so-far
+                  let bestDist = 0;
+                  for (const p of paramNames) {
+                    const d = (Number(chrono[i].parameters[p]) || 0) - (Number(chrono[runningBestIdx].parameters[p]) || 0);
+                    bestDist += d * d;
+                  }
+                  bestDist = Math.sqrt(bestDist);
+
+                  // Exploration score: high novelty & far from best = explore; low novelty & near best = exploit
+                  const noveltyNorm = Math.min(minDist / (Math.sqrt(paramNames.length) * 0.3 + 0.01), 1);
+                  const bestDistNorm = Math.min(bestDist / (Math.sqrt(paramNames.length) * 0.3 + 0.01), 1);
+                  const score = 0.5 * noveltyNorm + 0.5 * bestDistNorm;
+                  classifications.push({
+                    iteration: chrono[i].iteration,
+                    score,
+                    label: score > 0.45 ? "explore" : "exploit",
+                  });
+                }
+
+                const exploreCount = classifications.filter(c => c.label === "explore").length;
+                const exploitCount = classifications.length - exploreCount;
+                const explorePct = ((exploreCount / classifications.length) * 100).toFixed(0);
+
+                const W = 460, H = 80, padL = 4, padR = 4, padT = 8, padB = 20;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const barW = Math.max(1, plotW / classifications.length - 0.5);
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Shuffle size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Explore vs Exploit</h2>
+                      <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginLeft: "auto", fontFamily: "var(--font-mono)" }}>
+                        {explorePct}% explore · {100 - Number(explorePct)}% exploit
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 6px" }}>
+                      Each bar represents a trial. Blue = exploring new regions, orange = refining near known good results.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {classifications.map((c, i) => {
+                        const x = padL + (i / classifications.length) * plotW;
+                        const barH = padT + (1 - c.score) * plotH;
+                        const color = c.label === "explore" ? "rgba(59,130,246,0.7)" : "rgba(249,115,22,0.65)";
+                        return (
+                          <rect key={i} x={x} y={barH} width={barW} height={padT + plotH - barH} fill={color} rx="1">
+                            <title>Trial #{c.iteration}: {c.label} (score {c.score.toFixed(2)})</title>
+                          </rect>
+                        );
+                      })}
+                      {/* Threshold line */}
+                      <line x1={padL} y1={padT + 0.55 * plotH} x2={padL + plotW} y2={padT + 0.55 * plotH}
+                        stroke="var(--color-text-muted)" strokeWidth="0.5" strokeDasharray="4,3" opacity="0.5" />
+                      {/* X labels */}
+                      <text x={padL} y={H - 4} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">0</text>
+                      <text x={padL + plotW} y={H - 4} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">{classifications.length}</text>
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">Trial</text>
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(59,130,246,0.7)", marginRight: 4, verticalAlign: "middle" }} />Explore ({exploreCount})</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.65)", marginRight: 4, verticalAlign: "middle" }} />Exploit ({exploitCount})</span>
+                    </div>
                   </div>
                 );
               })()}
