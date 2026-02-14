@@ -74,6 +74,19 @@ const DIAGNOSTIC_TOOLTIPS: Record<string, string> = {
   improvement_velocity: "Recent rate of improvement. Near 0 = diminishing returns.",
 };
 
+function MiniRangeBar({ value, lower, upper }: { value: number; lower: number; upper: number }) {
+  const range = upper - lower;
+  if (range <= 0) return null;
+  const pct = Math.max(0, Math.min(100, ((value - lower) / range) * 100));
+  return (
+    <div className="mini-range-bar" title={`${lower} – ${upper}`}>
+      <div className="mini-range-track">
+        <div className="mini-range-fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function MiniSparkline({ values, highlightIdx }: { values: number[]; highlightIdx: number }) {
   if (values.length < 2) return null;
   const w = 48, h = 16, pad = 1;
@@ -1091,6 +1104,14 @@ export default function Workspace() {
                   const paramKeys = Object.keys(trials[0].parameters);
                   const kpiKeys = Object.keys(trials[0].kpis);
 
+                  // Build parameter spec lookup for range bars
+                  const specMap = new Map<string, { lower: number; upper: number }>();
+                  if (campaign.spec?.parameters) {
+                    for (const s of campaign.spec.parameters) {
+                      if (s.lower != null && s.upper != null) specMap.set(s.name, { lower: s.lower, upper: s.upper });
+                    }
+                  }
+
                   // Build chronological KPI arrays for sparklines
                   const chronoTrials = [...trials].sort((a, b) => a.iteration - b.iteration);
                   const SPARK_WINDOW = 10;
@@ -1147,9 +1168,18 @@ export default function Workspace() {
                                     onClick={() => setExpandedTrialId(isExpanded ? null : trial.id)}
                                   >
                                     <td className="history-iter">{trial.iteration}</td>
-                                    {paramKeys.map((p) => (
-                                      <td key={p} className="mono">{typeof trial.parameters[p] === "number" ? (trial.parameters[p] as number).toFixed(3) : String(trial.parameters[p])}</td>
-                                    ))}
+                                    {paramKeys.map((p) => {
+                                      const spec = specMap.get(p);
+                                      const val = trial.parameters[p];
+                                      return (
+                                        <td key={p} className="mono history-param-cell">
+                                          <span>{typeof val === "number" ? val.toFixed(3) : String(val)}</span>
+                                          {spec && typeof val === "number" && (
+                                            <MiniRangeBar value={val} lower={spec.lower} upper={spec.upper} />
+                                          )}
+                                        </td>
+                                      );
+                                    })}
                                     {kpiKeys.map((k) => {
                                       const spark = getSparkData(trial.iteration, k);
                                       return (

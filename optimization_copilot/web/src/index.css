@@ -2722,6 +2722,30 @@ a:hover {
   align-items: center;
 }
 
+.history-param-cell {
+  vertical-align: middle;
+}
+
+.mini-range-bar {
+  margin-top: 3px;
+}
+
+.mini-range-track {
+  width: 100%;
+  height: 3px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mini-range-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 2px;
+  opacity: 0.45;
+  transition: width 0.2s ease;
+}
+
 .history-best-val {
   font-weight: 700;
   color: var(--color-green);
