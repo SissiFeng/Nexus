@@ -79,6 +79,9 @@ import {
   Grid3x3,
   Diamond,
   FlaskRound,
+  Aperture,
+  Orbit,
+  Thermometer,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -2551,6 +2554,106 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Surrogate Fidelity Gauge */}
+              {trials.length >= 10 && (() => {
+                const sfK = 5; // k-NN neighbourhood size
+                const sfTrials = trials.slice(-Math.min(trials.length, 60));
+                const sfSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (sfSpecs.length === 0) return null;
+
+                // Normalize parameters to [0,1]
+                const sfNorm = sfTrials.map(t => sfSpecs.map((s: { name: string; lower?: number; upper?: number }) => {
+                  const lo = s.lower ?? 0, hi = s.upper ?? 1;
+                  return hi > lo ? (Number(t.parameters[s.name]) - lo) / (hi - lo) : 0.5;
+                }));
+                const sfKpi = Object.keys(sfTrials[0]?.kpis || {})[0];
+                if (!sfKpi) return null;
+                const sfYs = sfTrials.map(t => Number(t.kpis[sfKpi]) || 0);
+
+                // For each point, compute LOO prediction variance using k-NN
+                const sfVars: number[] = [];
+                for (let i = 0; i < sfNorm.length; i++) {
+                  const dists = sfNorm.map((pt, j) => ({
+                    d: Math.sqrt(pt.reduce((s, v, k) => s + (v - sfNorm[i][k]) ** 2, 0)),
+                    j,
+                  })).filter(x => x.j !== i).sort((a, b) => a.d - b.d);
+                  const neighbors = dists.slice(0, sfK);
+                  const nMean = neighbors.reduce((s, n) => s + sfYs[n.j], 0) / sfK;
+                  const nVar = neighbors.reduce((s, n) => s + (sfYs[n.j] - nMean) ** 2, 0) / sfK;
+                  sfVars.push(nVar);
+                }
+
+                const sfGlobalVar = (() => {
+                  const m = sfYs.reduce((a, b) => a + b, 0) / sfYs.length;
+                  return sfYs.reduce((s, y) => s + (y - m) ** 2, 0) / sfYs.length;
+                })();
+                const sfAvgLocalVar = sfVars.reduce((a, b) => a + b, 0) / sfVars.length;
+                // Fidelity = 1 - (avg local variance / global variance), clamped [0,1]
+                const sfFidelity = sfGlobalVar > 0 ? Math.max(0, Math.min(1, 1 - sfAvgLocalVar / sfGlobalVar)) : 0.5;
+                const sfPct = sfFidelity * 100;
+
+                // Gauge geometry
+                const sfW = 200, sfH = 115, sfCx = sfW / 2, sfCy = 95, sfR = 72;
+                const sfAngleStart = Math.PI; // 180° arc (left to right)
+                const sfNeedleAngle = sfAngleStart - sfFidelity * Math.PI;
+                const sfNeedleLen = sfR - 8;
+                const sfNx = sfCx + sfNeedleLen * Math.cos(sfNeedleAngle);
+                const sfNy = sfCy - sfNeedleLen * Math.sin(sfNeedleAngle);
+
+                // Arc segment helper
+                const sfArc = (startFrac: number, endFrac: number) => {
+                  const a1 = sfAngleStart - startFrac * Math.PI;
+                  const a2 = sfAngleStart - endFrac * Math.PI;
+                  const x1 = sfCx + sfR * Math.cos(a1), y1 = sfCy - sfR * Math.sin(a1);
+                  const x2 = sfCx + sfR * Math.cos(a2), y2 = sfCy - sfR * Math.sin(a2);
+                  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${sfR},${sfR} 0 0,1 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+                };
+
+                const sfColor = sfPct >= 70 ? "#22c55e" : sfPct >= 40 ? "#f59e0b" : "#ef4444";
+                const sfLabel = sfPct >= 70 ? "High fidelity" : sfPct >= 40 ? "Moderate" : "Low fidelity";
+
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Gauge size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Surrogate Fidelity</h3>
+                      <span className="findings-badge" style={{ background: sfColor + "18", color: sfColor, marginLeft: "auto" }}>
+                        {sfPct.toFixed(0)}% fidelity
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${sfW} ${sfH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* Background arcs: red, yellow, green */}
+                      <path d={sfArc(0, 0.4)} fill="none" stroke="rgba(239,68,68,0.2)" strokeWidth="14" strokeLinecap="round" />
+                      <path d={sfArc(0.4, 0.7)} fill="none" stroke="rgba(245,158,11,0.2)" strokeWidth="14" strokeLinecap="round" />
+                      <path d={sfArc(0.7, 1)} fill="none" stroke="rgba(34,197,94,0.2)" strokeWidth="14" strokeLinecap="round" />
+                      {/* Active fill up to current fidelity */}
+                      <path d={sfArc(0, sfFidelity)} fill="none" stroke={sfColor} strokeWidth="14" strokeLinecap="round" opacity={0.7} />
+                      {/* Tick marks */}
+                      {[0, 0.4, 0.7, 1].map((f, i) => {
+                        const a = sfAngleStart - f * Math.PI;
+                        const x1 = sfCx + (sfR + 10) * Math.cos(a), y1 = sfCy - (sfR + 10) * Math.sin(a);
+                        const x2 = sfCx + (sfR + 15) * Math.cos(a), y2 = sfCy - (sfR + 15) * Math.sin(a);
+                        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--color-text-muted)" strokeWidth="1" opacity={0.5} />;
+                      })}
+                      {/* Labels at thresholds */}
+                      <text x={sfCx - sfR - 12} y={sfCy + 10} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle">0%</text>
+                      <text x={sfCx} y={sfCy - sfR - 8} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle">50%</text>
+                      <text x={sfCx + sfR + 12} y={sfCy + 10} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle">100%</text>
+                      {/* Needle */}
+                      <line x1={sfCx} y1={sfCy} x2={sfNx} y2={sfNy} stroke={sfColor} strokeWidth="2.5" strokeLinecap="round" />
+                      <circle cx={sfCx} cy={sfCy} r="4" fill={sfColor} />
+                      {/* Center value */}
+                      <text x={sfCx} y={sfCy - 18} textAnchor="middle" fontSize="18" fontWeight="700" fill={sfColor} fontFamily="var(--font-mono)">{sfPct.toFixed(0)}%</text>
+                      <text x={sfCx} y={sfCy - 6} textAnchor="middle" fontSize="7.5" fill="var(--color-text-muted)">{sfLabel}</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                      <span>σ²_local: {sfAvgLocalVar.toFixed(5)}</span>
+                      <span>σ²_global: {sfGlobalVar.toFixed(5)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -3379,6 +3482,97 @@ export default function Workspace() {
                         <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(0,255,180)" }} /> Low
                       </span>
                       <span style={{ marginLeft: "auto" }}>LOO cross-validation on {edK}-NN</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Response Surface Curvature */}
+              {trials.length >= 12 && (() => {
+                const rcSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rcSpecs.length === 0) return null;
+                const rcKpi = Object.keys(trials[0]?.kpis || {})[0];
+                if (!rcKpi) return null;
+
+                // For each parameter, estimate curvature using binned 2nd-order finite differences
+                const rcData = rcSpecs.slice(0, 8).map((s: { name: string; lower?: number; upper?: number }) => {
+                  const lo = s.lower ?? 0, hi = s.upper ?? 1;
+                  const range = hi - lo || 1;
+                  const nBins = 5;
+                  const binWidth = range / nBins;
+                  // Bin trials by parameter value, compute mean kpi per bin
+                  const bins: { sum: number; count: number }[] = Array.from({ length: nBins }, () => ({ sum: 0, count: 0 }));
+                  for (const t of trials) {
+                    const v = Number(t.parameters[s.name]) || 0;
+                    const bi = Math.min(nBins - 1, Math.max(0, Math.floor((v - lo) / binWidth)));
+                    bins[bi].sum += Number(t.kpis[rcKpi]) || 0;
+                    bins[bi].count++;
+                  }
+                  const binMeans = bins.map(b => b.count > 0 ? b.sum / b.count : NaN);
+                  // Compute average absolute 2nd derivative (curvature proxy)
+                  let curvSum = 0, curvCount = 0;
+                  for (let i = 1; i < nBins - 1; i++) {
+                    if (!isNaN(binMeans[i - 1]) && !isNaN(binMeans[i]) && !isNaN(binMeans[i + 1])) {
+                      const d2 = Math.abs(binMeans[i + 1] - 2 * binMeans[i] + binMeans[i - 1]);
+                      curvSum += d2;
+                      curvCount++;
+                    }
+                  }
+                  const curvature = curvCount > 0 ? curvSum / curvCount : 0;
+                  return { name: s.name, curvature, binMeans };
+                });
+
+                const rcMax = Math.max(...rcData.map(d => d.curvature), 0.001);
+                const rcW = 260, rcH = 22 * rcData.length + 28;
+                const rcPadL = 80, rcPadR = 50, rcPadT = 4;
+                const rcBarH = 14;
+                const rcPlotW = rcW - rcPadL - rcPadR;
+
+                const rcHighCurv = rcData.filter(d => d.curvature / rcMax > 0.6).length;
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Aperture size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Response Surface Curvature</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Estimated 2nd-derivative magnitude per parameter. High curvature = nonlinear response.
+                        </p>
+                      </div>
+                      {rcHighCurv > 0 && (
+                        <span className="findings-badge" style={{ marginLeft: "auto", color: "#8b5cf6", borderColor: "rgba(139,92,246,0.3)" }}>
+                          {rcHighCurv} nonlinear
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={rcW} height={rcH} viewBox={`0 0 ${rcW} ${rcH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {rcData.map((d, i) => {
+                          const y = rcPadT + i * 22;
+                          const barW = (d.curvature / rcMax) * rcPlotW;
+                          const color = d.curvature / rcMax > 0.6 ? "#8b5cf6" : d.curvature / rcMax > 0.3 ? "#3b82f6" : "var(--color-text-muted)";
+                          return (
+                            <g key={i}>
+                              <text x={rcPadL - 6} y={y + rcBarH / 2 + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fontWeight={d.curvature / rcMax > 0.6 ? 600 : 400} fill={color}>
+                                {d.name.length > 10 ? d.name.slice(0, 9) + "…" : d.name}
+                              </text>
+                              <rect x={rcPadL} y={y} width={rcPlotW} height={rcBarH} rx={3} fill="var(--color-border)" opacity={0.3} />
+                              <rect x={rcPadL} y={y} width={Math.max(2, barW)} height={rcBarH} rx={3} fill={color} opacity={0.6} />
+                              <text x={rcPadL + Math.max(2, barW) + 4} y={y + rcBarH / 2 + 3} fontSize="8" fill={color} fontFamily="var(--font-mono)" fontWeight={500}>
+                                {d.curvature.toFixed(4)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                        {/* X axis label */}
+                        <text x={rcPadL + rcPlotW / 2} y={rcH - 2} textAnchor="middle" fontSize="7" fill="var(--color-text-muted)">|d²f/dx²| (binned finite difference)</text>
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "#8b5cf6", marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.6 }} />Nonlinear</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "#3b82f6", marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.6 }} />Moderate</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "var(--color-text-muted)", marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.6 }} />Linear</span>
                     </div>
                   </div>
                 );
@@ -5369,6 +5563,89 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Boundary Proximity Radar */}
+              {suggestions && suggestions.suggestions.length > 0 && (() => {
+                const bpSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (bpSpecs.length < 3) return null;
+                const bpParams = bpSpecs.slice(0, 8);
+                const bpN = bpParams.length;
+                const bpSugs = suggestions.suggestions.slice(0, 5);
+
+                // For each suggestion, compute normalized boundary proximity per param
+                // proximity = how close to nearest bound (0=center, 1=at boundary)
+                const bpData = bpSugs.map((sug: Record<string, number>) => {
+                  return bpParams.map((s: { name: string; lower?: number; upper?: number }) => {
+                    const lo = s.lower ?? 0, hi = s.upper ?? 1;
+                    const norm = hi > lo ? (Number(sug[s.name] ?? 0) - lo) / (hi - lo) : 0.5;
+                    return Math.abs(norm - 0.5) * 2; // 0=center, 1=boundary
+                  });
+                });
+
+                const bpW = 200, bpH = 200, bpCx = bpW / 2, bpCy = bpH / 2, bpR = 72;
+                const bpColors = ["rgba(59,130,246,0.6)", "rgba(34,197,94,0.6)", "rgba(234,179,8,0.6)", "rgba(239,68,68,0.5)", "rgba(168,85,247,0.5)"];
+
+                // Polygon points helper
+                const bpPoly = (values: number[]) => {
+                  return values.map((v, i) => {
+                    const angle = (2 * Math.PI * i) / bpN - Math.PI / 2;
+                    const r = v * bpR;
+                    return `${(bpCx + r * Math.cos(angle)).toFixed(1)},${(bpCy + r * Math.sin(angle)).toFixed(1)}`;
+                  }).join(" ");
+                };
+
+                const bpAvgProx = bpData.flat().reduce((a: number, b: number) => a + b, 0) / (bpData.flat().length || 1);
+                const bpLabel = bpAvgProx > 0.6 ? "Boundary-seeking" : bpAvgProx > 0.3 ? "Balanced" : "Interior-focused";
+
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Orbit size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Boundary Proximity</h3>
+                      <span className="findings-badge" style={{ marginLeft: "auto", color: bpAvgProx > 0.6 ? "#f59e0b" : "#22c55e", borderColor: bpAvgProx > 0.6 ? "rgba(245,158,11,0.3)" : "rgba(34,197,94,0.3)" }}>
+                        {bpLabel}
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${bpW} ${bpH}`} style={{ display: "block" }}>
+                      {/* Grid circles */}
+                      {[0.25, 0.5, 0.75, 1].map(f => (
+                        <circle key={f} cx={bpCx} cy={bpCy} r={f * bpR} fill="none" stroke="var(--color-border)" strokeWidth="0.5" opacity={0.5} />
+                      ))}
+                      {/* Axis lines and labels */}
+                      {bpParams.map((s: { name: string }, i: number) => {
+                        const angle = (2 * Math.PI * i) / bpN - Math.PI / 2;
+                        const lx = bpCx + (bpR + 16) * Math.cos(angle);
+                        const ly = bpCy + (bpR + 16) * Math.sin(angle);
+                        return (
+                          <g key={i}>
+                            <line x1={bpCx} y1={bpCy} x2={bpCx + bpR * Math.cos(angle)} y2={bpCy + bpR * Math.sin(angle)} stroke="var(--color-border)" strokeWidth="0.5" opacity={0.4} />
+                            <text x={lx} y={ly + 3} textAnchor="middle" fontSize="6.5" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                              {s.name.length > 6 ? s.name.slice(0, 5) + "…" : s.name}
+                            </text>
+                          </g>
+                        );
+                      })}
+                      {/* Suggestion polygons */}
+                      {bpData.map((vals: number[], si: number) => (
+                        <polygon key={si} points={bpPoly(vals)} fill={bpColors[si % bpColors.length]} fillOpacity={0.12} stroke={bpColors[si % bpColors.length]} strokeWidth="1.5" />
+                      ))}
+                      {/* Center dot */}
+                      <circle cx={bpCx} cy={bpCy} r="2" fill="var(--color-text-muted)" opacity={0.4} />
+                      {/* Scale labels */}
+                      <text x={bpCx + 3} y={bpCy - bpR + 3} fontSize="5.5" fill="var(--color-text-muted)">edge</text>
+                      <text x={bpCx + 3} y={bpCy - 3} fontSize="5.5" fill="var(--color-text-muted)">center</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: "10px", marginTop: "2px", flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
+                      {bpSugs.map((_: Record<string, number>, i: number) => (
+                        <span key={i} className="efficiency-legend-item">
+                          <span style={{ display: "inline-block", width: 10, height: 3, background: bpColors[i % bpColors.length], marginRight: 3, verticalAlign: "middle", borderRadius: 1 }} />
+                          #{i + 1}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -6395,6 +6672,153 @@ export default function Workspace() {
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 2 }}>
                       <span>{scSpecs.length} dims × {scG} grid cells</span>
                       {scStalled && <span style={{ color: "#f59e0b", fontWeight: 500 }}>Coverage stalled — consider forcing exploration</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Learning Velocity Timeline */}
+              {trials.length >= 12 && (() => {
+                const lvSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const lvKpi = Object.keys(lvSorted[0]?.kpis || {})[0];
+                if (!lvKpi) return null;
+                const lvN = lvSorted.length;
+                const lvWin = Math.max(3, Math.floor(lvN / 12));
+
+                // Compute rolling best and rolling variance for windows
+                const lvWindows: { iter: number; improvement: number; varReduction: number }[] = [];
+                let lvRunBest = Number(lvSorted[0].kpis[lvKpi]) || 0;
+                // Determine if minimizing (assume minimize if first values are more negative)
+                const lvFirstAvg = lvSorted.slice(0, 5).reduce((s, t) => s + (Number(t.kpis[lvKpi]) || 0), 0) / 5;
+                const lvLastAvg = lvSorted.slice(-5).reduce((s, t) => s + (Number(t.kpis[lvKpi]) || 0), 0) / 5;
+                const lvMinimize = lvLastAvg <= lvFirstAvg;
+
+                for (let i = lvWin; i <= lvN; i += Math.max(1, Math.floor(lvWin / 2))) {
+                  const winSlice = lvSorted.slice(i - lvWin, i);
+                  const winKpis = winSlice.map(t => Number(t.kpis[lvKpi]) || 0);
+
+                  // Improvement: how much best improved in this window
+                  const winBest = lvMinimize ? Math.min(...winKpis) : Math.max(...winKpis);
+                  const prevBest = lvRunBest;
+                  if (lvMinimize ? winBest < lvRunBest : winBest > lvRunBest) {
+                    lvRunBest = winBest;
+                  }
+                  const improvement = Math.abs(lvRunBest - prevBest);
+
+                  // Variance reduction: compare window variance to previous window
+                  const winMean = winKpis.reduce((a, b) => a + b, 0) / winKpis.length;
+                  const winVar = winKpis.reduce((s, v) => s + (v - winMean) ** 2, 0) / winKpis.length;
+                  const prevSlice = lvSorted.slice(Math.max(0, i - 2 * lvWin), i - lvWin);
+                  let varReduction = 0;
+                  if (prevSlice.length > 2) {
+                    const prevKpis = prevSlice.map(t => Number(t.kpis[lvKpi]) || 0);
+                    const prevMean = prevKpis.reduce((a, b) => a + b, 0) / prevKpis.length;
+                    const prevVar = prevKpis.reduce((s, v) => s + (v - prevMean) ** 2, 0) / prevKpis.length;
+                    varReduction = prevVar > 0 ? Math.max(0, (prevVar - winVar) / prevVar) : 0;
+                  }
+
+                  lvWindows.push({ iter: winSlice[winSlice.length - 1].iteration, improvement, varReduction });
+                }
+
+                if (lvWindows.length < 3) return null;
+
+                const lvMaxImp = Math.max(...lvWindows.map(w => w.improvement), 0.0001);
+                const lvW = 440, lvH = 110, lvPadL = 46, lvPadR = 46, lvPadT = 10, lvPadB = 24;
+                const lvPlotW = lvW - lvPadL - lvPadR;
+                const lvPlotH = lvH - lvPadT - lvPadB;
+
+                // Phase detection
+                const lvRecentImps = lvWindows.slice(-3).map(w => w.improvement);
+                const lvRecentAvg = lvRecentImps.reduce((a, b) => a + b, 0) / lvRecentImps.length;
+                const lvOverallAvg = lvWindows.map(w => w.improvement).reduce((a, b) => a + b, 0) / lvWindows.length;
+                const lvPhase = lvRecentAvg > lvOverallAvg * 1.5 ? "Accelerating" : lvRecentAvg > lvOverallAvg * 0.3 ? "Steady" : "Plateau";
+                const lvPhaseColor = lvPhase === "Accelerating" ? "#22c55e" : lvPhase === "Steady" ? "#3b82f6" : "#f59e0b";
+
+                // Plot points
+                const lvImpPts = lvWindows.map((w, i) => ({
+                  x: lvPadL + (i / (lvWindows.length - 1)) * lvPlotW,
+                  y: lvPadT + (1 - w.improvement / lvMaxImp) * lvPlotH,
+                }));
+                const lvVarPts = lvWindows.map((w, i) => ({
+                  x: lvPadL + (i / (lvWindows.length - 1)) * lvPlotW,
+                  y: lvPadT + (1 - w.varReduction) * lvPlotH,
+                }));
+
+                const lvImpPath = lvImpPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const lvVarPath = lvVarPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+
+                // Background phase regions
+                const lvThird = Math.floor(lvWindows.length / 3);
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Thermometer size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Learning Velocity</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Rate of improvement and variance reduction per trial window.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto", color: lvPhaseColor, borderColor: lvPhaseColor + "40" }}>
+                        {lvPhase}
+                      </span>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={lvW} height={lvH} viewBox={`0 0 ${lvW} ${lvH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Phase background regions */}
+                        {lvThird > 0 && (
+                          <>
+                            <rect x={lvPadL} y={lvPadT} width={(lvThird / (lvWindows.length - 1)) * lvPlotW} height={lvPlotH} fill="#22c55e" opacity={0.04} />
+                            <rect x={lvPadL + (lvThird / (lvWindows.length - 1)) * lvPlotW} y={lvPadT} width={((lvThird) / (lvWindows.length - 1)) * lvPlotW} height={lvPlotH} fill="#3b82f6" opacity={0.04} />
+                            <rect x={lvPadL + (2 * lvThird / (lvWindows.length - 1)) * lvPlotW} y={lvPadT} width={((lvWindows.length - 1 - 2 * lvThird) / (lvWindows.length - 1)) * lvPlotW} height={lvPlotH} fill="#f59e0b" opacity={0.04} />
+                          </>
+                        )}
+                        {/* Grid lines */}
+                        {[0.25, 0.5, 0.75].map(f => (
+                          <line key={f} x1={lvPadL} y1={lvPadT + (1 - f) * lvPlotH} x2={lvW - lvPadR} y2={lvPadT + (1 - f) * lvPlotH} stroke="var(--color-border)" strokeWidth="0.5" />
+                        ))}
+                        {/* Zero line */}
+                        <line x1={lvPadL} y1={lvPadT + lvPlotH} x2={lvW - lvPadR} y2={lvPadT + lvPlotH} stroke="var(--color-border)" strokeWidth="0.8" />
+                        {/* Improvement line */}
+                        <path d={lvImpPath} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        {lvImpPts.map((p, i) => (
+                          <circle key={`imp${i}`} cx={p.x} cy={p.y} r="2.5" fill="#3b82f6" />
+                        ))}
+                        {/* Variance reduction line (dashed) */}
+                        <path d={lvVarPath} fill="none" stroke="#8b5cf6" strokeWidth="1.5" strokeDasharray="4 2" strokeLinecap="round" />
+                        {/* Y axis labels */}
+                        <text x={lvPadL - 4} y={lvPadT + 3} textAnchor="end" fontSize="6.5" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">max</text>
+                        <text x={lvPadL - 4} y={lvPadT + lvPlotH + 3} textAnchor="end" fontSize="6.5" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">0</text>
+                        {/* Right Y axis labels */}
+                        <text x={lvW - lvPadR + 4} y={lvPadT + 3} fontSize="6.5" fill="#8b5cf6" fontFamily="var(--font-mono)">100%</text>
+                        <text x={lvW - lvPadR + 4} y={lvPadT + lvPlotH + 3} fontSize="6.5" fill="#8b5cf6" fontFamily="var(--font-mono)">0%</text>
+                        {/* X axis */}
+                        <text x={lvPadL} y={lvH - 2} fontSize="7" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">iter {lvWindows[0].iter}</text>
+                        <text x={lvW - lvPadR} y={lvH - 2} fontSize="7" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" textAnchor="end">iter {lvWindows[lvWindows.length - 1].iter}</text>
+                        <text x={lvPadL + lvPlotW / 2} y={lvH - 2} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle">Window →</text>
+                        {/* Peak annotation */}
+                        {(() => {
+                          const peakIdx = lvWindows.reduce((best, w, i) => w.improvement > lvWindows[best].improvement ? i : best, 0);
+                          if (lvWindows[peakIdx].improvement > 0) {
+                            const px = lvImpPts[peakIdx].x;
+                            const py = lvImpPts[peakIdx].y;
+                            return (
+                              <text x={px} y={py - 6} textAnchor="middle" fontSize="6.5" fill="#3b82f6" fontWeight="600">
+                                Peak t={lvWindows[peakIdx].iter}
+                              </text>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 3, background: "#3b82f6", marginRight: 4, verticalAlign: "middle", borderRadius: 1 }} />Improvement rate</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 0, borderTop: "2px dashed #8b5cf6", marginRight: 4, verticalAlign: "middle" }} />Var reduction</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                        {lvWin}-trial windows
+                      </span>
                     </div>
                   </div>
                 );
