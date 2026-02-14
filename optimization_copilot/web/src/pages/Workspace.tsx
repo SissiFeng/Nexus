@@ -97,6 +97,7 @@ export default function Workspace() {
   const [historyPage, setHistoryPage] = useState(0);
   const [historyFilter, setHistoryFilter] = useState("");
   const [expandedTrialId, setExpandedTrialId] = useState<string | null>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const HISTORY_PAGE_SIZE = 25;
 
   const handleCopyBest = useCallback((params: Record<string, number>) => {
@@ -126,6 +127,15 @@ export default function Workspace() {
       // Don't intercept when typing in inputs
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+        setShowShortcuts((s) => !s);
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowShortcuts(false);
+        return;
+      }
       const tab = tabKeys[e.key];
       if (tab) { setActiveTab(tab); e.preventDefault(); }
     };
@@ -155,8 +165,34 @@ export default function Workspace() {
 
   if (loading) {
     return (
-      <div className="page">
-        <div className="loading">Loading workspace...</div>
+      <div className="workspace-skeleton">
+        <div className="skel-breadcrumb"><div className="skel-line" style={{ width: "180px" }} /></div>
+        <div className="skel-header">
+          <div className="skel-line" style={{ width: "280px", height: "24px" }} />
+          <div className="skel-line" style={{ width: "220px", height: "14px", marginTop: "8px" }} />
+        </div>
+        <div className="skel-tabs">
+          {[1,2,3,4,5,6].map((i) => <div key={i} className="skel-tab" />)}
+        </div>
+        <div className="skel-content">
+          <div className="skel-stats">
+            {[1,2,3,4].map((i) => <div key={i} className="skel-stat-card" />)}
+          </div>
+          <div className="skel-chart" />
+          <div className="skel-chart" style={{ height: "120px" }} />
+        </div>
+        <style>{`
+          .workspace-skeleton { padding: 0; background: var(--color-bg); min-height: calc(100vh - 56px); animation: fadeIn 0.2s ease; }
+          .skel-breadcrumb { padding: 8px 24px; background: var(--color-surface); border-bottom: 1px solid var(--color-border-subtle); }
+          .skel-header { padding: 24px 24px 16px; background: var(--color-surface); border-bottom: 1px solid var(--color-border); }
+          .skel-tabs { display: flex; gap: 4px; padding: 12px 24px; background: var(--color-surface); border-bottom: 2px solid var(--color-border); }
+          .skel-tab { width: 100px; height: 20px; background: var(--color-bg); border-radius: 6px; animation: pulse 1.5s ease-in-out infinite; }
+          .skel-content { padding: 24px; }
+          .skel-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+          .skel-stat-card { height: 80px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; animation: pulse 1.5s ease-in-out infinite; }
+          .skel-chart { height: 240px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 16px; animation: pulse 1.5s ease-in-out infinite; }
+          .skel-line { height: 14px; background: var(--color-bg); border-radius: 6px; animation: pulse 1.5s ease-in-out infinite; }
+        `}</style>
       </div>
     );
   }
@@ -1262,6 +1298,35 @@ export default function Workspace() {
         )}
       </div>
 
+      {/* Keyboard Shortcut Help Modal */}
+      {showShortcuts && (
+        <div className="shortcut-overlay" onClick={() => setShowShortcuts(false)}>
+          <div className="shortcut-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="shortcut-modal-header">
+              <h3>Keyboard Shortcuts</h3>
+              <button className="shortcut-close" onClick={() => setShowShortcuts(false)}>
+                <span>&times;</span>
+              </button>
+            </div>
+            <div className="shortcut-group">
+              <div className="shortcut-group-title">Navigation</div>
+              <div className="shortcut-item"><kbd>1</kbd> Overview</div>
+              <div className="shortcut-item"><kbd>2</kbd> Explore</div>
+              <div className="shortcut-item"><kbd>3</kbd> Suggestions</div>
+              <div className="shortcut-item"><kbd>4</kbd> Insights</div>
+              <div className="shortcut-item"><kbd>5</kbd> History</div>
+              <div className="shortcut-item"><kbd>6</kbd> Export</div>
+            </div>
+            <div className="shortcut-group">
+              <div className="shortcut-group-title">Actions</div>
+              <div className="shortcut-item"><kbd>?</kbd> Toggle this help</div>
+              <div className="shortcut-item"><kbd>Esc</kbd> Close modal / dialog</div>
+            </div>
+            <div className="shortcut-hint">Press <kbd>?</kbd> to dismiss</div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .workspace-container {
           display: flex;
@@ -1350,6 +1415,107 @@ export default function Workspace() {
           gap: 12px;
           align-items: center;
           font-size: 0.85rem;
+        }
+
+        .shortcut-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.4);
+          z-index: 9000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          animation: fadeIn 0.15s ease;
+        }
+
+        .shortcut-modal {
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: 16px;
+          padding: 24px 28px;
+          min-width: 320px;
+          max-width: 400px;
+          box-shadow: var(--shadow-lg);
+        }
+
+        .shortcut-modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 20px;
+        }
+
+        .shortcut-modal-header h3 {
+          font-size: 1rem;
+          font-weight: 700;
+          margin: 0;
+        }
+
+        .shortcut-close {
+          background: none;
+          border: none;
+          font-size: 1.3rem;
+          cursor: pointer;
+          color: var(--color-text-muted);
+          line-height: 1;
+          padding: 4px;
+        }
+
+        .shortcut-group {
+          margin-bottom: 16px;
+        }
+
+        .shortcut-group-title {
+          font-size: 0.72rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--color-text-muted);
+          margin-bottom: 8px;
+        }
+
+        .shortcut-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 5px 0;
+          font-size: 0.85rem;
+          color: var(--color-text);
+        }
+
+        .shortcut-item kbd {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 28px;
+          height: 24px;
+          padding: 0 6px;
+          background: var(--color-bg);
+          border: 1px solid var(--color-border);
+          border-radius: 5px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          font-family: var(--font-mono);
+          color: var(--color-text-muted);
+        }
+
+        .shortcut-hint {
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+          text-align: center;
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px solid var(--color-border-subtle);
+        }
+
+        .shortcut-hint kbd {
+          display: inline;
+          padding: 1px 5px;
+          background: var(--color-bg);
+          border: 1px solid var(--color-border);
+          border-radius: 3px;
+          font-size: 0.7rem;
+          font-family: var(--font-mono);
         }
 
         .workspace-refresh-indicator {
