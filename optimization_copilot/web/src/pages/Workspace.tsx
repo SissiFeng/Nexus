@@ -41,6 +41,7 @@ import {
   Trophy,
   Rocket,
   Target,
+  Star,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -137,7 +138,47 @@ export default function Workspace() {
   const [expandedTrialId, setExpandedTrialId] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [dismissedWarnings, setDismissedWarnings] = useState<Set<string>>(new Set());
+  const [bookmarks, setBookmarks] = useState<Set<string>>(() => {
+    if (!id) return new Set<string>();
+    try { const s = localStorage.getItem(`opt-bm-${id}`); return s ? new Set(JSON.parse(s) as string[]) : new Set<string>(); }
+    catch { return new Set<string>(); }
+  });
+  const [trialNotes, setTrialNotes] = useState<Record<string, string>>(() => {
+    if (!id) return {};
+    try { const s = localStorage.getItem(`opt-notes-${id}`); return s ? JSON.parse(s) : {}; }
+    catch { return {}; }
+  });
+  const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
   const HISTORY_PAGE_SIZE = 25;
+
+  // Persist bookmarks & notes to localStorage
+  useEffect(() => {
+    if (!id) return;
+    localStorage.setItem(`opt-bm-${id}`, JSON.stringify([...bookmarks]));
+  }, [id, bookmarks]);
+  useEffect(() => {
+    if (!id) return;
+    localStorage.setItem(`opt-notes-${id}`, JSON.stringify(trialNotes));
+  }, [id, trialNotes]);
+
+  const toggleBookmark = useCallback((trialId: string) => {
+    setBookmarks(prev => {
+      const next = new Set(prev);
+      if (next.has(trialId)) next.delete(trialId);
+      else next.add(trialId);
+      return next;
+    });
+  }, []);
+
+  const setTrialNote = useCallback((trialId: string, note: string) => {
+    setTrialNotes(prev => {
+      if (!note.trim()) {
+        const { [trialId]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [trialId]: note };
+    });
+  }, []);
 
   const handleCopyBest = useCallback((params: Record<string, number>) => {
     navigator.clipboard.writeText(JSON.stringify(params, null, 2)).then(() => {
@@ -156,7 +197,7 @@ export default function Workspace() {
     }
   }, [historySortCol]);
 
-  // Keyboard shortcuts for tab navigation
+  // Keyboard shortcuts for tab navigation + power user actions
   useEffect(() => {
     const tabKeys: Record<string, typeof activeTab> = {
       "1": "overview", "2": "explore", "3": "suggestions",
@@ -173,10 +214,39 @@ export default function Workspace() {
       }
       if (e.key === "Escape") {
         setShowShortcuts(false);
+        setExpandedTrialId(null);
         return;
       }
       const tab = tabKeys[e.key];
-      if (tab) { setActiveTab(tab); e.preventDefault(); }
+      if (tab) { setActiveTab(tab); e.preventDefault(); return; }
+
+      // Power user shortcuts
+      if (e.key === "b") {
+        // Jump to best trial on history tab
+        setActiveTab("history");
+        setTimeout(() => {
+          const btn = document.querySelector('.btn-accent') as HTMLButtonElement;
+          if (btn) btn.click();
+        }, 50);
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "f" || e.key === "/") {
+        // Focus filter input
+        const el = document.querySelector('.history-search-input') as HTMLInputElement;
+        if (el) { el.focus(); e.preventDefault(); }
+        return;
+      }
+      if (e.key === "g") {
+        // Generate suggestions
+        setActiveTab("suggestions");
+        setTimeout(() => {
+          const btn = document.querySelector('.suggestions-generate-btn') as HTMLButtonElement;
+          if (btn && !btn.disabled) btn.click();
+        }, 50);
+        e.preventDefault();
+        return;
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -472,6 +542,27 @@ export default function Workspace() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     toast(`History exported (${trials.length} trials)`);
+  };
+
+  const handleExportHistoryJSON = () => {
+    if (trials.length === 0) return;
+    const data = trials.map((t) => ({
+      iteration: t.iteration,
+      parameters: t.parameters,
+      kpis: t.kpis,
+      bookmarked: bookmarks.has(t.id),
+      note: trialNotes[t.id] || undefined,
+    }));
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `history-${id.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`History exported as JSON (${trials.length} trials)`);
   };
 
   return (
@@ -1304,12 +1395,28 @@ export default function Workspace() {
                         <Trophy size={13} /> Jump to Best
                       </button>
                     )}
+                    {bookmarks.size > 0 && (
+                      <button
+                        className={`btn btn-sm ${showBookmarkedOnly ? "btn-bookmark-active" : "btn-secondary"}`}
+                        onClick={() => { setShowBookmarkedOnly(p => !p); setHistoryPage(0); }}
+                        title={showBookmarkedOnly ? "Show all trials" : "Show bookmarked only"}
+                      >
+                        <Star size={13} fill={showBookmarkedOnly ? "currentColor" : "none"} /> {bookmarks.size}
+                      </button>
+                    )}
                     <button
                       className="btn btn-sm btn-secondary"
                       onClick={handleExportHistoryCSV}
                       title="Download all trials as CSV"
                     >
                       <Download size={13} /> CSV
+                    </button>
+                    <button
+                      className="btn btn-sm btn-secondary"
+                      onClick={handleExportHistoryJSON}
+                      title="Download all trials as JSON"
+                    >
+                      <FileJson size={13} /> JSON
                     </button>
                     <span className="history-sort-hint">Click headers to sort</span>
                   </div>
@@ -1318,8 +1425,11 @@ export default function Workspace() {
                   // Apply filter
                   const filterLower = historyFilter.toLowerCase();
                   let filtered = trials;
+                  if (showBookmarkedOnly) {
+                    filtered = filtered.filter((t) => bookmarks.has(t.id));
+                  }
                   if (filterLower) {
-                    filtered = trials.filter((t) => {
+                    filtered = filtered.filter((t) => {
                       const iterStr = String(t.iteration);
                       const paramStr = Object.entries(t.parameters).map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`).join(" ");
                       const kpiStr = Object.entries(t.kpis).map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`).join(" ");
@@ -1386,6 +1496,7 @@ export default function Workspace() {
                         <table className="history-table">
                           <thead>
                             <tr>
+                              <th style={{ width: "36px", textAlign: "center", padding: "8px 4px" }}><Star size={13} /></th>
                               <th className="history-th-sortable" onClick={() => handleHistorySort("__iter__")}>
                                 # {historySortCol === "__iter__" && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
                                 {historySortCol !== "__iter__" && <ArrowUpDown size={11} className="history-sort-idle" />}
@@ -1413,9 +1524,16 @@ export default function Workspace() {
                               return (
                                 <Fragment key={trial.id}>
                                   <tr
-                                    className={`history-row-clickable ${isBest ? "history-row-best" : ""} ${isExpanded ? "history-row-expanded" : ""}`}
+                                    className={`history-row-clickable ${isBest ? "history-row-best" : ""} ${isExpanded ? "history-row-expanded" : ""} ${bookmarks.has(trial.id) ? "history-row-bookmarked" : ""}`}
                                     onClick={() => setExpandedTrialId(isExpanded ? null : trial.id)}
                                   >
+                                    <td className="history-bookmark-cell" onClick={(e) => { e.stopPropagation(); toggleBookmark(trial.id); }}>
+                                      <Star
+                                        size={14}
+                                        className={`bookmark-star ${bookmarks.has(trial.id) ? "bookmarked" : ""}`}
+                                        fill={bookmarks.has(trial.id) ? "currentColor" : "none"}
+                                      />
+                                    </td>
                                     <td className="history-iter">{trial.iteration}</td>
                                     {paramKeys.map((p) => {
                                       const spec = specMap.get(p);
@@ -1444,7 +1562,7 @@ export default function Workspace() {
                                   </tr>
                                   {isExpanded && (
                                     <tr className="history-detail-row">
-                                      <td colSpan={1 + paramKeys.length + kpiKeys.length}>
+                                      <td colSpan={2 + paramKeys.length + kpiKeys.length}>
                                         <div className="history-detail">
                                           <div className="history-detail-section">
                                             <span className="history-detail-label">Iteration</span>
@@ -1479,6 +1597,17 @@ export default function Workspace() {
                                               </span>
                                             </div>
                                           )}
+                                          <div className="history-detail-note">
+                                            <span className="history-detail-label">Note</span>
+                                            <input
+                                              type="text"
+                                              className="history-note-input"
+                                              placeholder="Add a note about this trial..."
+                                              value={trialNotes[trial.id] || ""}
+                                              onChange={(e) => setTrialNote(trial.id, e.target.value)}
+                                              onClick={(e) => e.stopPropagation()}
+                                            />
+                                          </div>
                                         </div>
                                       </td>
                                     </tr>
@@ -1690,8 +1819,11 @@ export default function Workspace() {
             </div>
             <div className="shortcut-group">
               <div className="shortcut-group-title">Actions</div>
+              <div className="shortcut-item"><kbd>b</kbd> Jump to best trial</div>
+              <div className="shortcut-item"><kbd>g</kbd> Generate suggestions</div>
+              <div className="shortcut-item"><kbd>f</kbd> Focus filter input</div>
               <div className="shortcut-item"><kbd>?</kbd> Toggle this help</div>
-              <div className="shortcut-item"><kbd>Esc</kbd> Close modal / dialog</div>
+              <div className="shortcut-item"><kbd>Esc</kbd> Close modal / collapse</div>
             </div>
             <div className="shortcut-hint">Press <kbd>?</kbd> to dismiss</div>
           </div>
@@ -2087,7 +2219,92 @@ export default function Workspace() {
         }
 
         .tab-panel {
-          animation: fadeIn 0.2s ease;
+          animation: fadeSlideUp 0.25s ease;
+        }
+
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Staggered card reveals */
+        .suggestions-grid > * {
+          animation: fadeSlideUp 0.3s ease both;
+        }
+        .suggestions-grid > *:nth-child(2) { animation-delay: 50ms; }
+        .suggestions-grid > *:nth-child(3) { animation-delay: 100ms; }
+        .suggestions-grid > *:nth-child(4) { animation-delay: 150ms; }
+        .suggestions-grid > *:nth-child(5) { animation-delay: 200ms; }
+        .suggestions-grid > *:nth-child(n+6) { animation-delay: 250ms; }
+
+        .stats-row > * {
+          animation: fadeSlideUp 0.25s ease both;
+        }
+        .stats-row > *:nth-child(2) { animation-delay: 40ms; }
+        .stats-row > *:nth-child(3) { animation-delay: 80ms; }
+        .stats-row > *:nth-child(4) { animation-delay: 120ms; }
+
+        @media (prefers-reduced-motion: reduce) {
+          .tab-panel, .suggestions-grid > *, .stats-row > * {
+            animation: none;
+          }
+        }
+
+        /* Bookmark styles */
+        .history-bookmark-cell {
+          text-align: center;
+          padding: 8px 4px !important;
+          cursor: pointer;
+          width: 36px;
+        }
+        .bookmark-star {
+          color: var(--color-text-muted);
+          opacity: 0.25;
+          transition: all 0.15s;
+        }
+        .bookmark-star:hover {
+          opacity: 0.7;
+          color: #f59e0b;
+        }
+        .bookmark-star.bookmarked {
+          color: #f59e0b;
+          opacity: 1;
+        }
+        .history-row-bookmarked {
+          border-left: 3px solid #f59e0b !important;
+        }
+        .btn-bookmark-active {
+          background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+          color: white !important;
+          border-color: #d97706 !important;
+          font-weight: 600;
+        }
+        .history-note-input {
+          flex: 1;
+          padding: 4px 8px;
+          border: 1px solid var(--color-border);
+          border-radius: 6px;
+          font-size: 0.82rem;
+          font-family: inherit;
+          background: var(--color-surface);
+          color: var(--color-text);
+          width: 100%;
+          max-width: 400px;
+          transition: border-color 0.15s;
+        }
+        .history-note-input:focus {
+          outline: none;
+          border-color: var(--color-primary);
+          box-shadow: 0 0 0 2px rgba(79, 110, 247, 0.1);
+        }
+        .history-detail-note {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          grid-column: 1 / -1;
+          padding-top: 8px;
+          border-top: 1px solid var(--color-border-subtle);
+          margin-top: 4px;
         }
 
         .workspace-chat {
