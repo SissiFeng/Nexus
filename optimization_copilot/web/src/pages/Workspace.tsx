@@ -119,6 +119,10 @@ import {
   Banknote,
   Network,
   ArrowRightLeft,
+  Cpu,
+  Anchor,
+  AlertOctagon,
+  Calculator,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3749,6 +3753,131 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Generalization Gap Meter — k-fold CV prediction error gap */}
+              {(() => {
+                const ggObs = campaign.observations || [];
+                if (ggObs.length < 8) return null;
+                const ggSorted = [...ggObs].sort((a, b) => a.iteration - b.iteration);
+                const ggObjKey = Object.keys(ggSorted[0].kpi_values)[0];
+                if (!ggObjKey) return null;
+                const ggSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (ggSpecs.length === 0) return null;
+                // Build feature matrix and target vector
+                const ggX = ggSorted.map(o => ggSpecs.map((s: { name: string }) => Number(o.parameters[s.name]) || 0));
+                const ggY = ggSorted.map(o => Number(o.kpi_values[ggObjKey]) || 0);
+                const ggN = ggX.length;
+                // k-fold cross-validation (k=5 or fewer)
+                const ggK = Math.min(5, ggN);
+                const ggFoldSize = Math.floor(ggN / ggK);
+                const ggFoldErrors: number[] = [];
+                const ggTrainErrors: number[] = [];
+                for (let f = 0; f < ggK; f++) {
+                  const ggTestStart = f * ggFoldSize;
+                  const ggTestEnd = f === ggK - 1 ? ggN : (f + 1) * ggFoldSize;
+                  const ggTrainX: number[][] = [];
+                  const ggTrainY: number[] = [];
+                  const ggTestX: number[][] = [];
+                  const ggTestY: number[] = [];
+                  for (let i = 0; i < ggN; i++) {
+                    if (i >= ggTestStart && i < ggTestEnd) {
+                      ggTestX.push(ggX[i]);
+                      ggTestY.push(ggY[i]);
+                    } else {
+                      ggTrainX.push(ggX[i]);
+                      ggTrainY.push(ggY[i]);
+                    }
+                  }
+                  if (ggTrainX.length < 2 || ggTestX.length < 1) continue;
+                  // Simple k-NN regression (k=3) for lightweight CV
+                  const ggKnn = 3;
+                  const ggPredTest = ggTestX.map(tx => {
+                    const dists = ggTrainX.map((trx, idx) => ({
+                      d: Math.sqrt(trx.reduce((s, v, j) => s + (v - tx[j]) ** 2, 0)),
+                      y: ggTrainY[idx],
+                    })).sort((a, b) => a.d - b.d);
+                    const neighbors = dists.slice(0, Math.min(ggKnn, dists.length));
+                    return neighbors.reduce((s, n) => s + n.y, 0) / neighbors.length;
+                  });
+                  const ggPredTrain = ggTrainX.map(tx => {
+                    const dists = ggTrainX.map((trx, idx) => ({
+                      d: Math.sqrt(trx.reduce((s, v, j) => s + (v - tx[j]) ** 2, 0)),
+                      y: ggTrainY[idx],
+                    })).sort((a, b) => a.d - b.d);
+                    const neighbors = dists.slice(1, Math.min(ggKnn + 1, dists.length)); // skip self
+                    return neighbors.length > 0 ? neighbors.reduce((s, n) => s + n.y, 0) / neighbors.length : ggTrainY[0];
+                  });
+                  const ggTestErr = Math.sqrt(ggTestY.reduce((s, y, i) => s + (y - ggPredTest[i]) ** 2, 0) / ggTestY.length);
+                  const ggTrainErr = Math.sqrt(ggTrainY.reduce((s, y, i) => s + (y - ggPredTrain[i]) ** 2, 0) / ggTrainY.length);
+                  ggFoldErrors.push(ggTestErr);
+                  ggTrainErrors.push(ggTrainErr);
+                }
+                if (ggFoldErrors.length < 2) return null;
+                const ggAvgTest = ggFoldErrors.reduce((s, v) => s + v, 0) / ggFoldErrors.length;
+                const ggAvgTrain = ggTrainErrors.reduce((s, v) => s + v, 0) / ggTrainErrors.length;
+                const ggGap = ggAvgTrain > 0 ? ((ggAvgTest - ggAvgTrain) / ggAvgTrain) * 100 : 0;
+                const ggBadge = ggGap < 5 ? "Well-Calibrated" : ggGap < 15 ? "Moderate" : "Unreliable";
+                const ggBadgeColor = ggGap < 5 ? "var(--color-green, #22c55e)" : ggGap < 15 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Gauge visualization
+                const ggW = 280, ggH = 100;
+                const ggCx = ggW / 2, ggCy = 85, ggR = 65;
+                const ggAngle = Math.min(Math.max(ggGap / 30, 0), 1) * Math.PI; // 0-30% mapped to 0-180deg
+                const ggNeedleX = ggCx - ggR * 0.8 * Math.cos(ggAngle);
+                const ggNeedleY = ggCy - ggR * 0.8 * Math.sin(ggAngle);
+                // Arc segments: 0-5% green, 5-15% yellow, 15-30% red
+                const ggArc = (startPct: number, endPct: number) => {
+                  const a1 = Math.PI - (startPct / 30) * Math.PI;
+                  const a2 = Math.PI - (endPct / 30) * Math.PI;
+                  const x1 = ggCx + ggR * Math.cos(a1);
+                  const y1 = ggCy - ggR * Math.sin(a1);
+                  const x2 = ggCx + ggR * Math.cos(a2);
+                  const y2 = ggCy - ggR * Math.sin(a2);
+                  return `M ${x1} ${y1} A ${ggR} ${ggR} 0 0 0 ${x2} ${y2}`;
+                };
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Cpu size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>Generalization Gap Meter</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: ggBadgeColor + "18", color: ggBadgeColor }}>{ggBadge}</span>
+                    </div>
+                    <svg width={ggW} height={ggH} viewBox={`0 0 ${ggW} ${ggH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* Gauge arcs */}
+                      <path d={ggArc(0, 5)} fill="none" stroke="var(--color-green, #22c55e)" strokeWidth="10" strokeLinecap="round" opacity={0.3} />
+                      <path d={ggArc(5, 15)} fill="none" stroke="var(--color-yellow, #eab308)" strokeWidth="10" strokeLinecap="round" opacity={0.3} />
+                      <path d={ggArc(15, 30)} fill="none" stroke="var(--color-red, #ef4444)" strokeWidth="10" strokeLinecap="round" opacity={0.3} />
+                      {/* Active arc */}
+                      <path d={ggArc(0, Math.min(ggGap, 30))} fill="none" stroke={ggBadgeColor} strokeWidth="10" strokeLinecap="round" opacity={0.8} />
+                      {/* Needle */}
+                      <line x1={ggCx} y1={ggCy} x2={ggNeedleX} y2={ggNeedleY} stroke={ggBadgeColor} strokeWidth="2.5" strokeLinecap="round" />
+                      <circle cx={ggCx} cy={ggCy} r="4" fill={ggBadgeColor} />
+                      {/* Labels */}
+                      <text x={ggCx} y={ggCy - ggR - 8} textAnchor="middle" style={{ fontSize: "1.3rem", fontWeight: 700, fontFamily: "var(--font-mono)", fill: ggBadgeColor }}>{ggGap.toFixed(1)}%</text>
+                      <text x={ggCx - ggR + 5} y={ggCy + 5} textAnchor="start" style={{ fontSize: "0.55rem", fill: "var(--color-green, #22c55e)" }}>0%</text>
+                      <text x={ggCx + ggR - 5} y={ggCy + 5} textAnchor="end" style={{ fontSize: "0.55rem", fill: "var(--color-red, #ef4444)" }}>30%</text>
+                    </svg>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginTop: "8px" }}>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>Train RMSE</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{ggAvgTrain.toFixed(4)}</div>
+                      </div>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>Test RMSE</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{ggAvgTest.toFixed(4)}</div>
+                      </div>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>{ggK}-Fold CV</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{ggFoldErrors.length} folds</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "8px", textAlign: "center" }}>
+                      {ggBadge === "Well-Calibrated" ? "Model generalizes well — predictions are reliable for unseen experiments." :
+                       ggBadge === "Moderate" ? "Some overfitting detected — consider more diverse training data." :
+                       "High generalization gap — model may not transfer to new experimental regions."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -5717,6 +5846,123 @@ export default function Workspace() {
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "0.75rem" }}>
                       <span style={{ color: "var(--color-text-muted)" }}>Avg gain: <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)" }}>{kgAvgAll.toFixed(4)}</span></span>
                       <span style={{ color: kgBadgeColor, fontWeight: 600 }}>Recent: {kgAvgRecent.toFixed(4)} ({kgRatio > 1 ? "+" : ""}{((kgRatio - 1) * 100).toFixed(0)}%)</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Robustness Heatmap — parameter stability across bootstrap resamples */}
+              {trials.length >= 10 && (() => {
+                const rsSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rsSpecs.length < 2) return null;
+                const rsSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const rsObjKey = Object.keys(rsSorted[0].kpis)[0];
+                if (!rsObjKey) return null;
+                const rsN = rsSorted.length;
+                const rsParams = rsSpecs.slice(0, 6).map((s: { name: string }) => s.name); // max 6
+                // Bootstrap resampling (20 bootstrap samples)
+                const rsNBoot = 20;
+                const rsTopK = Math.max(3, Math.floor(rsN * 0.25)); // top 25%
+                // For each bootstrap: find top-K by KPI, compute mean of each param
+                const rsBootMeans: number[][] = []; // [bootstrap][param]
+                let rsSeed = 42;
+                const rsRng = () => { rsSeed = (rsSeed * 1103515245 + 12345) & 0x7fffffff; return rsSeed / 0x7fffffff; };
+                for (let b = 0; b < rsNBoot; b++) {
+                  const rsSample = Array.from({ length: rsN }, () => rsSorted[Math.floor(rsRng() * rsN)]);
+                  rsSample.sort((a, b2) => (Number(b2.kpis[rsObjKey]) || 0) - (Number(a.kpis[rsObjKey]) || 0));
+                  const rsTop = rsSample.slice(0, rsTopK);
+                  const rsMeans = rsParams.map(p => {
+                    const vals = rsTop.map(t => Number(t.parameters[p]) || 0);
+                    return vals.reduce((s, v) => s + v, 0) / vals.length;
+                  });
+                  rsBootMeans.push(rsMeans);
+                }
+                // Compute coefficient of variation for each param across bootstraps
+                const rsCVs = rsParams.map((_p, pi) => {
+                  const vals = rsBootMeans.map(bm => bm[pi]);
+                  const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+                  const std = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length);
+                  return mean !== 0 ? Math.abs(std / mean) : 0;
+                });
+                // Stability score: 1 - normalized CV (lower CV = more stable)
+                const rsMaxCV = Math.max(...rsCVs, 0.01);
+                const rsStability = rsCVs.map(cv => 1 - Math.min(cv / rsMaxCV, 1));
+                // Compute per-bootstrap stability for heatmap rows
+                const rsHeatData: number[][] = []; // [boot_group][param]
+                const rsGroupSize = Math.ceil(rsNBoot / 5);
+                for (let g = 0; g < 5; g++) {
+                  const start = g * rsGroupSize;
+                  const end = Math.min((g + 1) * rsGroupSize, rsNBoot);
+                  const rsGroupMeans = rsParams.map((_p, pi) => {
+                    const vals = rsBootMeans.slice(start, end).map(bm => bm[pi]);
+                    const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+                    const std = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length);
+                    return mean !== 0 ? 1 - Math.min(Math.abs(std / mean) / rsMaxCV, 1) : 0.5;
+                  });
+                  rsHeatData.push(rsGroupMeans);
+                }
+                const rsAvgStability = rsStability.reduce((s, v) => s + v, 0) / rsStability.length;
+                const rsBadge = rsAvgStability > 0.7 ? "Robust" : rsAvgStability > 0.4 ? "Mixed" : "Fragile";
+                const rsBadgeColor = rsAvgStability > 0.7 ? "var(--color-green, #22c55e)" : rsAvgStability > 0.4 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Heatmap dimensions
+                const rsCols = rsParams.length;
+                const rsRows = rsHeatData.length;
+                const rsCellW = Math.min(40, 220 / rsCols);
+                const rsCellH = 22;
+                const rsLabelW = 70;
+                const rsW = rsLabelW + rsCols * rsCellW + 10;
+                const rsHdrH = 40;
+                const rsTotalH = rsHdrH + rsRows * rsCellH + 5;
+                const rsColor = (v: number) => {
+                  if (v > 0.7) return "var(--color-green, #22c55e)";
+                  if (v > 0.4) return "var(--color-yellow, #eab308)";
+                  return "var(--color-red, #ef4444)";
+                };
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Anchor size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>Robustness Heatmap</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: rsBadgeColor + "18", color: rsBadgeColor }}>{rsBadge}</span>
+                    </div>
+                    <svg width={rsW} height={rsTotalH} viewBox={`0 0 ${rsW} ${rsTotalH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* Column headers */}
+                      {rsParams.map((p, ci) => (
+                        <text key={ci} x={rsLabelW + ci * rsCellW + rsCellW / 2} y={rsHdrH - 5} textAnchor="middle" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                          {p.length > 6 ? p.slice(0, 5) + "…" : p}
+                        </text>
+                      ))}
+                      {/* Heatmap rows */}
+                      {rsHeatData.map((row, ri) => (
+                        <g key={ri}>
+                          <text x={rsLabelW - 4} y={rsHdrH + ri * rsCellH + rsCellH / 2 + 4} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>Boot {ri + 1}</text>
+                          {row.map((v, ci) => (
+                            <g key={ci}>
+                              <rect x={rsLabelW + ci * rsCellW} y={rsHdrH + ri * rsCellH} width={rsCellW - 1} height={rsCellH - 1} rx={3} fill={rsColor(v)} opacity={0.2 + v * 0.6} />
+                              <text x={rsLabelW + ci * rsCellW + rsCellW / 2} y={rsHdrH + ri * rsCellH + rsCellH / 2 + 3.5} textAnchor="middle" style={{ fontSize: "0.5rem", fontFamily: "var(--font-mono)", fontWeight: 600, fill: v > 0.5 ? rsColor(v) : "var(--color-text-muted)" }}>
+                                {(v * 100).toFixed(0)}
+                              </text>
+                            </g>
+                          ))}
+                        </g>
+                      ))}
+                    </svg>
+                    {/* Bottom stability bar */}
+                    <div style={{ display: "flex", gap: "4px", marginTop: "10px", alignItems: "center" }}>
+                      <span style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", width: "65px", flexShrink: 0 }}>Stability:</span>
+                      {rsParams.map((_p, i) => (
+                        <div key={i} style={{ flex: 1, textAlign: "center" }}>
+                          <div style={{ height: "6px", borderRadius: "3px", background: "var(--color-border)", overflow: "hidden" }}>
+                            <div style={{ width: `${rsStability[i] * 100}%`, height: "100%", borderRadius: "3px", background: rsColor(rsStability[i]), transition: "width 0.3s ease" }} />
+                          </div>
+                          <div style={{ fontSize: "0.55rem", fontFamily: "var(--font-mono)", color: rsColor(rsStability[i]), marginTop: "2px" }}>{(rsStability[i] * 100).toFixed(0)}%</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "8px", textAlign: "center" }}>
+                      {rsBadge === "Robust" ? "Top-performing regions are stable across resamples — high confidence in optimal parameters." :
+                       rsBadge === "Mixed" ? "Some parameters show instability — consider focusing exploration on fragile dimensions." :
+                       "Parameter rankings shift significantly across resamples — more data needed for reliable conclusions."}
                     </div>
                   </div>
                 );
@@ -8902,6 +9148,117 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Out-of-Support Detection — Mahalanobis distance flagging extrapolation risk */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const osSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (osSpecs.length < 2) return null;
+                const osParamNames = osSpecs.map((s: { name: string }) => s.name);
+                const osSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // Compute mean and covariance of observed parameter values
+                const osN = osSorted.length;
+                const osD = osParamNames.length;
+                const osMeans = osParamNames.map(p => {
+                  const vals = osSorted.map(t => Number(t.parameters[p]) || 0);
+                  return vals.reduce((s, v) => s + v, 0) / osN;
+                });
+                // Covariance matrix
+                const osCov: number[][] = Array.from({ length: osD }, () => Array(osD).fill(0));
+                for (let i = 0; i < osD; i++) {
+                  for (let j = 0; j < osD; j++) {
+                    let cov = 0;
+                    for (let k = 0; k < osN; k++) {
+                      const vi = (Number(osSorted[k].parameters[osParamNames[i]]) || 0) - osMeans[i];
+                      const vj = (Number(osSorted[k].parameters[osParamNames[j]]) || 0) - osMeans[j];
+                      cov += vi * vj;
+                    }
+                    osCov[i][j] = cov / Math.max(osN - 1, 1);
+                  }
+                }
+                // Add regularization for numerical stability
+                for (let i = 0; i < osD; i++) osCov[i][i] += 1e-6;
+                // Simple inverse via Gauss-Jordan for small matrices (≤6)
+                const osInv: number[][] = osCov.map(row => [...row]);
+                const osI: number[][] = Array.from({ length: osD }, (_, i) => Array.from({ length: osD }, (__, j) => i === j ? 1 : 0));
+                for (let i = 0; i < osD; i++) {
+                  let maxRow = i;
+                  for (let k = i + 1; k < osD; k++) if (Math.abs(osInv[k][i]) > Math.abs(osInv[maxRow][i])) maxRow = k;
+                  [osInv[i], osInv[maxRow]] = [osInv[maxRow], osInv[i]];
+                  [osI[i], osI[maxRow]] = [osI[maxRow], osI[i]];
+                  const pivot = osInv[i][i];
+                  if (Math.abs(pivot) < 1e-12) continue;
+                  for (let j = 0; j < osD; j++) { osInv[i][j] /= pivot; osI[i][j] /= pivot; }
+                  for (let k = 0; k < osD; k++) {
+                    if (k === i) continue;
+                    const factor = osInv[k][i];
+                    for (let j = 0; j < osD; j++) { osInv[k][j] -= factor * osInv[i][j]; osI[k][j] -= factor * osI[i][j]; }
+                  }
+                }
+                // Mahalanobis distance for each suggestion
+                const osSuggs = suggestions.suggestions;
+                const osDistances = osSuggs.map(s => {
+                  const dx = osParamNames.map((p, i) => (Number(s[p]) || 0) - osMeans[i]);
+                  let dist = 0;
+                  for (let i = 0; i < osD; i++) for (let j = 0; j < osD; j++) dist += dx[i] * osI[i][j] * dx[j];
+                  return Math.sqrt(Math.max(dist, 0));
+                });
+                // Threshold: chi-squared approximation (95% percentile for osD degrees of freedom)
+                const osThreshold95 = Math.sqrt(osD + 2 * Math.sqrt(2 * osD)); // rough chi2 approx
+                const osThreshold99 = Math.sqrt(osD + 3 * Math.sqrt(2 * osD));
+                const osMaxDist = Math.max(...osDistances, osThreshold99);
+                const osExtrapolating = osDistances.filter(d => d > osThreshold99).length;
+                const osBorderline = osDistances.filter(d => d > osThreshold95 && d <= osThreshold99).length;
+                const osGrounded = osDistances.filter(d => d <= osThreshold95).length;
+                const osExtraPct = osSuggs.length > 0 ? osExtrapolating / osSuggs.length : 0;
+                const osBadge = osExtraPct < 0.1 ? "Grounded" : osExtraPct < 0.4 ? "Borderline" : "Extrapolating";
+                const osBadgeColor = osExtraPct < 0.1 ? "var(--color-green, #22c55e)" : osExtraPct < 0.4 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Dot plot
+                const osPlotW = 280, osPlotH = 80, osPadL = 30, osPadR = 10, osPadT = 15, osPadB = 20;
+                const osPlotArea = osPlotW - osPadL - osPadR;
+                const osPlotHH = osPlotH - osPadT - osPadB;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <AlertOctagon size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>Out-of-Support Detection</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: osBadgeColor + "18", color: osBadgeColor }}>{osBadge}</span>
+                    </div>
+                    <svg width={osPlotW} height={osPlotH} viewBox={`0 0 ${osPlotW} ${osPlotH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* Background zones */}
+                      <rect x={osPadL} y={osPadT} width={Math.min(osThreshold95 / osMaxDist, 1) * osPlotArea} height={osPlotHH} fill="var(--color-green, #22c55e)" opacity={0.06} />
+                      <rect x={osPadL + (osThreshold95 / osMaxDist) * osPlotArea} y={osPadT} width={Math.max(0, (osThreshold99 - osThreshold95) / osMaxDist) * osPlotArea} height={osPlotHH} fill="var(--color-yellow, #eab308)" opacity={0.06} />
+                      <rect x={osPadL + (osThreshold99 / osMaxDist) * osPlotArea} y={osPadT} width={Math.max(0, osPlotArea - (osThreshold99 / osMaxDist) * osPlotArea)} height={osPlotHH} fill="var(--color-red, #ef4444)" opacity={0.06} />
+                      {/* Threshold lines */}
+                      <line x1={osPadL + (osThreshold95 / osMaxDist) * osPlotArea} y1={osPadT} x2={osPadL + (osThreshold95 / osMaxDist) * osPlotArea} y2={osPlotH - osPadB} stroke="var(--color-yellow, #eab308)" strokeWidth="1" strokeDasharray="4,3" opacity={0.6} />
+                      <line x1={osPadL + (osThreshold99 / osMaxDist) * osPlotArea} y1={osPadT} x2={osPadL + (osThreshold99 / osMaxDist) * osPlotArea} y2={osPlotH - osPadB} stroke="var(--color-red, #ef4444)" strokeWidth="1" strokeDasharray="4,3" opacity={0.6} />
+                      {/* Dot strip (jittered y for visibility) */}
+                      {osDistances.map((d, i) => {
+                        const x = osPadL + (d / osMaxDist) * osPlotArea;
+                        const jitter = ((i * 7 + 13) % 5) / 5;
+                        const y = osPadT + osPadT + jitter * (osPlotHH - 2 * osPadT);
+                        const color = d > osThreshold99 ? "var(--color-red, #ef4444)" : d > osThreshold95 ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)";
+                        return <circle key={i} cx={x} cy={y} r={4} fill={color} opacity={0.7} stroke="white" strokeWidth="0.5" />;
+                      })}
+                      {/* Labels */}
+                      <text x={osPadL} y={osPlotH - 3} style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>0</text>
+                      <text x={osPlotW - osPadR} y={osPlotH - 3} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>{osMaxDist.toFixed(1)}</text>
+                      <text x={(osPadL + osPlotW - osPadR) / 2} y={osPlotH - 3} textAnchor="middle" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>Mahalanobis Distance</text>
+                      <text x={osPadL + 4} y={osPadT - 3} style={{ fontSize: "0.45rem", fill: "var(--color-green, #22c55e)" }}>Safe</text>
+                      <text x={osPadL + (osThreshold99 / osMaxDist) * osPlotArea + 4} y={osPadT - 3} style={{ fontSize: "0.45rem", fill: "var(--color-red, #ef4444)" }}>Extrapolating</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "center", gap: "16px", marginTop: "8px", fontSize: "0.75rem" }}>
+                      <span style={{ color: "var(--color-green, #22c55e)" }}><strong>{osGrounded}</strong> grounded</span>
+                      <span style={{ color: "var(--color-yellow, #eab308)" }}><strong>{osBorderline}</strong> borderline</span>
+                      <span style={{ color: "var(--color-red, #ef4444)" }}><strong>{osExtrapolating}</strong> extrapolating</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "6px", textAlign: "center" }}>
+                      {osBadge === "Grounded" ? "Suggestions stay within observed data support — predictions are interpolative." :
+                       osBadge === "Borderline" ? "Some suggestions near data boundary — verify predictions before committing." :
+                       "Many suggestions extrapolate beyond observed data — high prediction uncertainty expected."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -11231,6 +11588,117 @@ export default function Workspace() {
                       {slBadge === "Learning" ? "Later trials in batches outperform — sequential learning is effective." :
                        slBadge === "Neutral" ? "No significant order effect — batch trials are independent." :
                        "Later trials underperform — consider randomizing batch order."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Regret vs Bound — cumulative regret vs theoretical O(√T·logT) bound */}
+              {trials.length >= 6 && (() => {
+                const rbSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const rbObjKey = Object.keys(rbSorted[0].kpis)[0];
+                if (!rbObjKey) return null;
+                const rbDir = campaign.objective_directions?.[rbObjKey] === "minimize" ? -1 : 1;
+                const rbValues = rbSorted.map(t => (Number(t.kpis[rbObjKey]) || 0) * rbDir); // higher = better
+                const rbN = rbValues.length;
+                // Compute cumulative regret: sum of (best_so_far - current) at each step
+                let rbBestSoFar = -Infinity;
+                const rbInstRegret: number[] = [];
+                for (let i = 0; i < rbN; i++) {
+                  if (rbValues[i] > rbBestSoFar) rbBestSoFar = rbValues[i];
+                  rbInstRegret.push(Math.max(0, rbBestSoFar - rbValues[i]));
+                }
+                const rbCumRegret: number[] = [];
+                let rbSum = 0;
+                for (let i = 0; i < rbN; i++) {
+                  rbSum += rbInstRegret[i];
+                  rbCumRegret.push(rbSum);
+                }
+                // Theoretical bound: C * √T * log(T), calibrated to match at T=N
+                const rbBound: number[] = [];
+                const rbLogN = Math.log(rbN + 1);
+                const rbSqrtN = Math.sqrt(rbN);
+                const rbC = rbCumRegret[rbN - 1] > 0 ? rbCumRegret[rbN - 1] / (rbSqrtN * rbLogN) : 1;
+                for (let i = 0; i < rbN; i++) {
+                  const t = i + 1;
+                  rbBound.push(rbC * Math.sqrt(t) * Math.log(t + 1));
+                }
+                // Compute regret ratio: actual / bound at each point
+                const rbRatios = rbCumRegret.map((r, i) => rbBound[i] > 0 ? r / rbBound[i] : 0);
+                const rbAvgRatio = rbRatios.length > 0 ? rbRatios.reduce((s, v) => s + v, 0) / rbRatios.length : 0;
+                const rbBadge = rbAvgRatio < 0.6 ? "Near-Optimal" : rbAvgRatio < 1.0 ? "Acceptable" : "Inefficient";
+                const rbBadgeColor = rbAvgRatio < 0.6 ? "var(--color-green, #22c55e)" : rbAvgRatio < 1.0 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Chart dimensions
+                const rbW = 300, rbH = 120, rbPadL = 35, rbPadR = 10, rbPadT = 15, rbPadB = 22;
+                const rbPlotW = rbW - rbPadL - rbPadR;
+                const rbPlotH = rbH - rbPadT - rbPadB;
+                const rbMaxY = Math.max(...rbCumRegret, ...rbBound, 1);
+                const rbPts = rbCumRegret.map((r, i) => ({
+                  x: rbPadL + (i / (rbN - 1)) * rbPlotW,
+                  y: rbPadT + (1 - r / rbMaxY) * rbPlotH,
+                }));
+                const rbBoundPts = rbBound.map((b, i) => ({
+                  x: rbPadL + (i / (rbN - 1)) * rbPlotW,
+                  y: rbPadT + (1 - b / rbMaxY) * rbPlotH,
+                }));
+                const rbLine = rbPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const rbBoundLine = rbBoundPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                // Area between bound and regret (fill region)
+                const rbAreaPath = rbBoundPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") +
+                  rbPts.slice().reverse().map(p => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join("") + " Z";
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Calculator size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>Regret vs Bound</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: rbBadgeColor + "18", color: rbBadgeColor }}>{rbBadge}</span>
+                    </div>
+                    <svg width={rbW} height={rbH} viewBox={`0 0 ${rbW} ${rbH}`} style={{ display: "block", margin: "0 auto" }}>
+                      <defs>
+                        <linearGradient id="rbGapGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={rbBadgeColor} stopOpacity="0.15" />
+                          <stop offset="100%" stopColor={rbBadgeColor} stopOpacity="0.02" />
+                        </linearGradient>
+                      </defs>
+                      {/* Grid lines */}
+                      {[0.25, 0.5, 0.75].map(v => (
+                        <line key={v} x1={rbPadL} y1={rbPadT + (1 - v) * rbPlotH} x2={rbW - rbPadR} y2={rbPadT + (1 - v) * rbPlotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                      ))}
+                      {/* Area between */}
+                      <path d={rbAreaPath} fill="url(#rbGapGrad)" />
+                      {/* Bound curve (dashed) */}
+                      <path d={rbBoundLine} fill="none" stroke="var(--color-text-muted)" strokeWidth="1.5" strokeDasharray="5,3" opacity={0.5} />
+                      {/* Actual regret curve */}
+                      <path d={rbLine} fill="none" stroke={rbBadgeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Endpoints */}
+                      <circle cx={rbPts[rbPts.length - 1].x} cy={rbPts[rbPts.length - 1].y} r="3.5" fill={rbBadgeColor} />
+                      <circle cx={rbBoundPts[rbBoundPts.length - 1].x} cy={rbBoundPts[rbBoundPts.length - 1].y} r="2.5" fill="var(--color-text-muted)" opacity={0.5} />
+                      {/* Y-axis labels */}
+                      <text x={rbPadL - 3} y={rbPadT + 4} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>{rbMaxY.toFixed(1)}</text>
+                      <text x={rbPadL - 3} y={rbH - rbPadB + 4} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>0</text>
+                      {/* X-axis labels */}
+                      <text x={rbPadL} y={rbH - 3} textAnchor="start" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>#1</text>
+                      <text x={rbW - rbPadR} y={rbH - 3} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>#{rbN}</text>
+                      <text x={(rbPadL + rbW - rbPadR) / 2} y={rbH - 3} textAnchor="middle" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>Trial</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "center", gap: "16px", marginTop: "6px", fontSize: "0.72rem" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span style={{ width: "14px", height: "2px", background: rbBadgeColor, borderRadius: "1px", display: "inline-block" }}></span>
+                        <span style={{ color: "var(--color-text-muted)" }}>Actual regret</span>
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span style={{ width: "14px", height: "2px", background: "var(--color-text-muted)", borderRadius: "1px", display: "inline-block", borderTop: "1px dashed var(--color-text-muted)" }}></span>
+                        <span style={{ color: "var(--color-text-muted)" }}>O(√T·logT) bound</span>
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "0.75rem" }}>
+                      <span style={{ color: "var(--color-text-muted)" }}>Total regret: <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)" }}>{rbCumRegret[rbN - 1].toFixed(3)}</span></span>
+                      <span style={{ color: rbBadgeColor, fontWeight: 600 }}>Ratio: {rbAvgRatio.toFixed(2)}x bound</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {rbBadge === "Near-Optimal" ? "Optimization outperforms theoretical bound — excellent exploration-exploitation balance." :
+                       rbBadge === "Acceptable" ? "Regret tracks close to bound — reasonable optimization efficiency." :
+                       "Regret exceeds theoretical bound — consider more aggressive exploitation or model tuning."}
                     </div>
                   </div>
                 );
