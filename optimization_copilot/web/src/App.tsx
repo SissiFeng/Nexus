@@ -16,7 +16,7 @@ function App() {
     <div className="app">
       <nav className="nav-bar">
         <div className="nav-brand">
-          <Link to="/">Optimization Copilot</Link>
+          <Link to="/"><span className="nav-brand-icon">//</span> opt.copilot</Link>
         </div>
         <div className="nav-links">
           <Link to="/" className="nav-link">
