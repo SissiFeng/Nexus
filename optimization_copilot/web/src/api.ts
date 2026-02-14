@@ -97,7 +97,9 @@ export interface StoreSummary {
 /* ── API Functions ── */
 
 export function fetchCampaigns(): Promise<CampaignSummary[]> {
-  return request<CampaignSummary[]>("/campaigns");
+  return request<{ campaigns: CampaignSummary[]; total: number }>("/campaigns").then(
+    (r) => r.campaigns
+  );
 }
 
 export function fetchCampaign(campaignId: string): Promise<Campaign> {
@@ -306,4 +308,173 @@ export function runFanova(X: number[][], y: number[], varNames?: string[]): Prom
     method: "POST",
     body: JSON.stringify({ X, y, var_names: varNames }),
   });
+}
+
+/* ── File Upload & Campaign Creation ── */
+
+export interface ColumnMapping {
+  parameters: Array<{ name: string; type: "continuous" | "categorical"; lower?: number; upper?: number }>;
+  objectives: Array<{ name: string; direction: "minimize" | "maximize" }>;
+  metadata: string[];
+  ignored: string[];
+}
+
+export interface UploadResponse {
+  columns: string[];
+  row_count: number;
+  sample_rows: Array<Record<string, string>>;
+  detected_types: Record<string, "numeric" | "categorical">;
+}
+
+export interface CreateFromUploadRequest {
+  name: string;
+  description: string;
+  data: Array<Record<string, string>>;
+  mapping: ColumnMapping;
+  batch_size: number;
+  exploration_weight: number;
+}
+
+export function createCampaignFromUpload(req: CreateFromUploadRequest): Promise<Campaign> {
+  return request<Campaign>("/campaigns/from-upload", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+/* ── Chat ── */
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "system" | "agent" | "suggestion";
+  content: string;
+  timestamp: number;
+  metadata?: {
+    confidence?: number;
+    hypothesis?: string;
+    recommendations?: string[];
+    suggestions?: Array<Record<string, number>>;
+    diagnostics?: Record<string, number>;
+  };
+}
+
+export interface ChatResponse {
+  reply: string;
+  role: "agent" | "suggestion" | "system";
+  metadata?: ChatMessage["metadata"];
+}
+
+export function sendChatMessage(campaignId: string, message: string): Promise<ChatResponse> {
+  return request<ChatResponse>(`/chat/${campaignId}`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/* ── Diagnostics & Suggestions ── */
+
+export interface DiagnosticsData {
+  convergence_trend: number;
+  improvement_velocity: number;
+  best_kpi_value: number;
+  exploration_coverage: number;
+  failure_rate: number;
+  noise_estimate: number;
+  plateau_length: number;
+  signal_to_noise_ratio: number;
+}
+
+export interface ParameterImportanceData {
+  importances: Array<{ name: string; importance: number }>;
+}
+
+export interface SuggestionData {
+  suggestions: Array<Record<string, number>>;
+  predicted_values?: number[];
+  predicted_uncertainties?: number[];
+  backend_used: string;
+  phase: string;
+}
+
+export function fetchDiagnostics(campaignId: string): Promise<DiagnosticsData> {
+  return request<DiagnosticsData>(`/campaigns/${campaignId}/diagnostics`);
+}
+
+export function fetchImportance(campaignId: string): Promise<ParameterImportanceData> {
+  return request<ParameterImportanceData>(`/campaigns/${campaignId}/importance`);
+}
+
+export function fetchSuggestions(campaignId: string, n?: number): Promise<SuggestionData> {
+  const qs = n ? `?n=${n}` : "";
+  return request<SuggestionData>(`/campaigns/${campaignId}/suggestions${qs}`);
+}
+
+export function fetchExport(campaignId: string, format: "csv" | "json" | "xlsx"): Promise<Blob> {
+  const url = `${BASE_URL}/campaigns/${campaignId}/export/${format}`;
+  return fetch(url).then((r) => {
+    if (!r.ok) throw new ApiError("Export failed", r.status);
+    return r.blob();
+  });
+}
+
+export function sendSteeringDirective(
+  campaignId: string,
+  directive: { action: string; region_bounds?: Record<string, [number, number]>; reason?: string }
+): Promise<{ status: string }> {
+  return request<{ status: string }>(`/campaigns/${campaignId}/steer`, {
+    method: "POST",
+    body: JSON.stringify(directive),
+  });
+}
+
+/* ── Insights ── */
+
+export interface InsightSummary {
+  title: string;
+  body: string;
+  category: "discovery" | "warning" | "recommendation" | "trend";
+  importance: number;
+}
+
+export interface CorrelationInsight {
+  parameter: string;
+  objective: string;
+  correlation: number;
+  strength: "strong" | "moderate" | "weak";
+  direction: "positive" | "negative";
+}
+
+export interface OptimalRegion {
+  parameter: string;
+  best_range: [number, number];
+  overall_range: [number, number];
+  mean_objective_in_region: number;
+  mean_objective_outside: number;
+  improvement_pct: number;
+}
+
+export interface TopCondition {
+  rank: number;
+  parameters: Record<string, unknown>;
+  objective_value: number;
+  objective_name: string;
+}
+
+export interface InsightsData {
+  campaign_id: string;
+  n_observations: number;
+  n_parameters: number;
+  n_objectives: number;
+  top_conditions: TopCondition[];
+  correlations: CorrelationInsight[];
+  interactions: Array<{ param_a: string; param_b: string; interaction_strength: number; description: string }>;
+  optimal_regions: OptimalRegion[];
+  failure_patterns: Array<{ description: string; parameter: string; risky_range: [number, number]; failure_rate_in_range: number; overall_failure_rate: number }>;
+  trends: Array<{ description: string; metric: string; value: number }>;
+  summaries: InsightSummary[];
+}
+
+export function fetchInsights(campaignId: string, topN?: number): Promise<InsightsData> {
+  const qs = topN ? `?top_n=${topN}` : "";
+  return request<InsightsData>(`/campaigns/${campaignId}/insights${qs}`);
 }

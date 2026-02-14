@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   fetchCampaigns,
   searchCampaigns,
@@ -18,6 +18,7 @@ function truncateId(id: string): string {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,18 +64,26 @@ export default function Dashboard() {
     <div className="page">
       <div className="page-header">
         <h1>Campaigns</h1>
-        <form className="search-form" onSubmit={handleSearch}>
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search campaigns..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <button type="submit" className="btn btn-secondary">
-            Search
+        <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+          <form className="search-form" onSubmit={handleSearch}>
+            <input
+              type="text"
+              className="search-input"
+              placeholder="Search campaigns..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <button type="submit" className="btn btn-secondary">
+              Search
+            </button>
+          </form>
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate("/new-campaign")}
+          >
+            + New Campaign
           </button>
-        </form>
+        </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -102,12 +111,12 @@ export default function Dashboard() {
               {campaigns.map((c) => (
                 <tr key={c.campaign_id}>
                   <td className="mono">
-                    <Link to={`/campaigns/${c.campaign_id}`}>
+                    <Link to={`/workspace/${c.campaign_id}`}>
                       {truncateId(c.campaign_id)}
                     </Link>
                   </td>
                   <td>
-                    <Link to={`/campaigns/${c.campaign_id}`}>{c.name}</Link>
+                    <Link to={`/workspace/${c.campaign_id}`}>{c.name}</Link>
                   </td>
                   <td>
                     <StatusBadge status={c.status} />

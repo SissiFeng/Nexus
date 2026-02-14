@@ -5,6 +5,8 @@ import Compare from "./pages/Compare";
 import Reports from "./pages/Reports";
 import LoopView from "./pages/LoopView";
 import AnalysisView from "./pages/AnalysisView";
+import NewCampaign from "./pages/NewCampaign";
+import Workspace from "./pages/Workspace";
 
 function App() {
   return (
@@ -16,6 +18,9 @@ function App() {
         <div className="nav-links">
           <Link to="/" className="nav-link">
             Dashboard
+          </Link>
+          <Link to="/new-campaign" className="nav-link">
+            New Campaign
           </Link>
           <Link to="/loop" className="nav-link">
             Loop
@@ -31,6 +36,8 @@ function App() {
       <main className="main-content">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/new-campaign" element={<NewCampaign />} />
+          <Route path="/workspace/:id" element={<Workspace />} />
           <Route path="/campaigns/:id" element={<CampaignDetail />} />
           <Route path="/loop" element={<LoopView />} />
           <Route path="/analysis" element={<AnalysisView />} />
