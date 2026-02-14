@@ -447,16 +447,17 @@ def create_campaign_from_upload(req: CreateFromUploadRequest) -> dict[str, Any]:
 
     for p in req.mapping.parameters:
         if p.type == "continuous" and p.lower is not None and p.upper is not None:
-            if p.lower >= p.upper:
+            if p.lower > p.upper:
                 raise HTTPException(
                     status_code=422,
                     detail=f"Parameter '{p.name}' has invalid bounds: lower ({p.lower}) must be less than upper ({p.upper})",
                 )
 
-    if len(req.data) < 3:
-        raise HTTPException(
-            status_code=422,
-            detail="At least 3 observations are required to create a campaign",
+    warnings: list[str] = []
+
+    if len(req.data) < 3 and len(req.data) > 0:
+        warnings.append(
+            f"Only {len(req.data)} observations uploaded — at least 3 recommended for meaningful analysis."
         )
 
     # Check for missing objective values
@@ -481,7 +482,6 @@ def create_campaign_from_upload(req: CreateFromUploadRequest) -> dict[str, Any]:
             detail=f"More than 50% of objective values are missing or non-numeric ({missing_count}/{total_obj_cells}). Please provide more complete data.",
         )
 
-    warnings: list[str] = []
     if 0.1 <= missing_pct <= 0.5:
         warnings.append(
             f"{missing_count}/{total_obj_cells} objective values ({missing_pct:.0%}) are missing or non-numeric. Results may be affected."
@@ -813,22 +813,6 @@ def chat(campaign_id: str, req: ChatRequest) -> ChatResponse:
 
     # Route based on intent
 
-    # Help intent
-    if any(kw in message for kw in ["help", "how", "what can", "tutorial"]):
-        return ChatResponse(
-            reply=(
-                "I can help you with your optimization campaign. Try asking me:\n"
-                "- 'Discover insights from data' -- Find patterns, correlations, and optimal regions\n"
-                "- 'Suggest next experiments' -- Get AI-recommended parameter values\n"
-                "- 'Show diagnostics' -- View campaign health metrics\n"
-                "- 'Which parameter matters most?' -- See parameter importance ranking\n"
-                "- 'Why is it stuck?' -- Understand optimization status\n"
-                "- 'Focus on specific region' -- Steer the search direction\n"
-                "- 'Export results' -- Download your data"
-            ),
-            role="system",
-        )
-
     if any(kw in message for kw in ["suggest", "next", "recommend", "what should"]):
         suggestions = _generate_suggestions(snapshot, n=5)
         formatted = []
@@ -891,6 +875,22 @@ def chat(campaign_id: str, req: ChatRequest) -> ChatResponse:
     if any(kw in message for kw in ["export", "download", "save"]):
         return ChatResponse(
             reply="You can export campaign data using the Export tab in the workspace. Supported formats: CSV, JSON, and Excel.",
+            role="system",
+        )
+
+    # Help intent — placed after specific intents to avoid keyword conflicts
+    if any(kw in message for kw in ["help", "what can", "tutorial", "how do i", "how to"]):
+        return ChatResponse(
+            reply=(
+                "I can help you with your optimization campaign. Try asking me:\n"
+                "- 'Discover insights from data' -- Find patterns, correlations, and optimal regions\n"
+                "- 'Suggest next experiments' -- Get AI-recommended parameter values\n"
+                "- 'Show diagnostics' -- View campaign health metrics\n"
+                "- 'Which parameter matters most?' -- See parameter importance ranking\n"
+                "- 'Why is it stuck?' -- Understand optimization status\n"
+                "- 'Focus on specific region' -- Steer the search direction\n"
+                "- 'Export results' -- Download your data"
+            ),
             role="system",
         )
 
