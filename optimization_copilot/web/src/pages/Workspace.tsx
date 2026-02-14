@@ -37,6 +37,10 @@ import {
   Hash,
   Home,
   RefreshCw,
+  Flag,
+  Trophy,
+  Rocket,
+  Target,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -665,6 +669,43 @@ export default function Workspace() {
                   </div>
                 </div>
               )}
+
+              {/* Milestone Timeline */}
+              {trials.length > 0 && (() => {
+                const milestones: Array<{ icon: React.ReactNode; label: string; detail: string; iteration: number; color: string }> = [];
+                milestones.push({ icon: <Rocket size={14} />, label: "Campaign Started", detail: `${campaign.phases[0]?.name ?? "init"} phase`, iteration: 0, color: "var(--color-gray)" });
+                if (trials.length >= 1) {
+                  const firstTrial = trials.reduce((min, t) => t.iteration < min.iteration ? t : min, trials[0]);
+                  milestones.push({ icon: <FlaskConical size={14} />, label: "First Trial", detail: `Iteration ${firstTrial.iteration}`, iteration: firstTrial.iteration, color: "var(--color-blue)" });
+                }
+                if (bestResult) {
+                  milestones.push({ icon: <Trophy size={14} />, label: "Best Result", detail: `Iter ${bestResult.iteration} — ${Object.values(bestResult.kpis)[0]?.toFixed(4) ?? ""}`, iteration: bestResult.iteration, color: "var(--color-green)" });
+                }
+                if (diagnostics && diagnostics.plateau_length > 15) {
+                  const plateauStart = campaign.iteration - diagnostics.plateau_length;
+                  milestones.push({ icon: <Flag size={14} />, label: "Plateau Detected", detail: `Since iteration ${plateauStart}`, iteration: plateauStart, color: "var(--color-yellow)" });
+                }
+                if (campaign.status === "completed") {
+                  milestones.push({ icon: <Target size={14} />, label: "Completed", detail: `${campaign.iteration} iterations`, iteration: campaign.iteration, color: "var(--color-green)" });
+                } else {
+                  milestones.push({ icon: <Target size={14} />, label: "Current", detail: `Iteration ${campaign.iteration}`, iteration: campaign.iteration, color: "var(--color-primary)" });
+                }
+                milestones.sort((a, b) => a.iteration - b.iteration);
+                return (
+                  <div className="milestone-timeline">
+                    <div className="milestone-line" />
+                    {milestones.map((m, i) => (
+                      <div key={i} className="milestone-item">
+                        <div className="milestone-dot" style={{ background: m.color, borderColor: m.color }}>{m.icon}</div>
+                        <div className="milestone-content">
+                          <div className="milestone-label">{m.label}</div>
+                          <div className="milestone-detail">{m.detail}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               <div className="card">
                 <h2>Convergence</h2>
