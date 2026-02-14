@@ -4130,6 +4130,73 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Budget Efficiency Curve (Batch 28) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 10) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const beObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (beObs.length < 10) return null;
+                // build best-so-far
+                const beBest: number[] = [];
+                let beRun = -Infinity;
+                beObs.forEach((o: { kpi_values: Record<string, number> }) => {
+                  const v = o.kpi_values[kpiKey];
+                  if (v > beRun) beRun = v;
+                  beBest.push(beRun);
+                });
+                // compute marginal improvement in sliding windows of 5
+                const beWin = 5;
+                const beEfficiency: number[] = [];
+                for (let i = beWin; i < beBest.length; i++) {
+                  const gain = beBest[i] - beBest[i - beWin];
+                  beEfficiency.push(gain / beWin);
+                }
+                if (beEfficiency.length < 3) return null;
+                // trend: compare last third to first third
+                const beThird = Math.max(1, Math.floor(beEfficiency.length / 3));
+                const beEarlyAvg = beEfficiency.slice(0, beThird).reduce((s, v) => s + v, 0) / beThird;
+                const beLateAvg = beEfficiency.slice(-beThird).reduce((s, v) => s + v, 0) / beThird;
+                const beRatio = beEarlyAvg !== 0 ? beLateAvg / beEarlyAvg : beLateAvg > 0 ? 2 : 0;
+                const beBadge = beRatio > 1.2 ? "Improving" : beRatio > 0.5 ? "Steady" : "Diminishing";
+                const beBadgeColor = beBadge === "Improving" ? "var(--color-green, #22c55e)" : beBadge === "Steady" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // area chart
+                const beW = 260, beH = 70;
+                const bePad = { l: 5, r: 5, t: 6, b: 14 };
+                const bePlotW = beW - bePad.l - bePad.r;
+                const bePlotH = beH - bePad.t - bePad.b;
+                const beMin = Math.min(...beEfficiency);
+                const beMax = Math.max(...beEfficiency);
+                const beRange = beMax - beMin || 1;
+                const bePoints = beEfficiency.map((v, i) => ({
+                  x: bePad.l + (i / (beEfficiency.length - 1)) * bePlotW,
+                  y: bePad.t + (1 - (v - beMin) / beRange) * bePlotH,
+                }));
+                const beLine = bePoints.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const beArea = beLine + ` L${bePoints[bePoints.length - 1].x.toFixed(1)},${bePad.t + bePlotH} L${bePoints[0].x.toFixed(1)},${bePad.t + bePlotH} Z`;
+                // zero line
+                const beZeroY = beMin < 0 ? bePad.t + (1 - (0 - beMin) / beRange) * bePlotH : bePad.t + bePlotH;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Coins size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Budget Efficiency Curve</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: beBadgeColor, color: "#fff" }}>{beBadge}</span>
+                    </div>
+                    <svg width={beW} height={beH} viewBox={`0 0 ${beW} ${beH}`} style={{ display: "block", width: "100%" }}>
+                      <path d={beArea} fill={beBadgeColor} opacity="0.15" />
+                      <path d={beLine} fill="none" stroke={beBadgeColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <line x1={bePad.l} y1={beZeroY} x2={beW - bePad.r} y2={beZeroY} stroke="var(--color-text-muted, #94a3b8)" strokeWidth="0.5" strokeDasharray="3,3" />
+                      <text x={bePad.l} y={beH - 1} fontSize="8" fill="var(--color-text-muted, #64748b)">trial {beWin + 1}</text>
+                      <text x={beW - bePad.r} y={beH - 1} textAnchor="end" fontSize="8" fill="var(--color-text-muted, #64748b)">trial {beObs.length}</text>
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      Marginal improvement per trial — {beBadge === "Improving" ? "optimizer is becoming more efficient." : beBadge === "Steady" ? "consistent improvement rate." : "returns are diminishing, consider stopping or changing strategy."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -6516,6 +6583,72 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
                       {emMonoCount}/{emResults.length} parameters show monotonic effects — {emBadge === "Monotonic" ? "simple response surface." : emBadge === "Mixed" ? "some non-linear patterns." : "highly non-linear landscape."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Response Roughness (Batch 28) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 8) return null;
+                const rrSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (rrSpecs.length === 0) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const rrObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (rrObs.length < 8) return null;
+                // compute per-parameter roughness: average |diff| of kpi between consecutive obs sorted by parameter
+                const rrKpiRange = (() => {
+                  const vals = rrObs.map((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey]);
+                  return Math.max(...vals) - Math.min(...vals) || 1;
+                })();
+                const rrResults: { name: string; roughness: number }[] = [];
+                rrSpecs.forEach((spec: { name: string }) => {
+                  const sorted = [...rrObs].sort((a: { parameters: Record<string, number> }, b: { parameters: Record<string, number> }) =>
+                    (a.parameters[spec.name] || 0) - (b.parameters[spec.name] || 0)
+                  );
+                  let sumDiff = 0;
+                  for (let i = 1; i < sorted.length; i++) {
+                    sumDiff += Math.abs(sorted[i].kpi_values[kpiKey] - sorted[i - 1].kpi_values[kpiKey]);
+                  }
+                  const avgDiff = sumDiff / (sorted.length - 1);
+                  // normalize by kpi range
+                  rrResults.push({ name: spec.name, roughness: avgDiff / rrKpiRange });
+                });
+                rrResults.sort((a, b) => b.roughness - a.roughness);
+                const rrAvg = rrResults.reduce((s, r) => s + r.roughness, 0) / rrResults.length;
+                const rrBadge = rrAvg < 0.15 ? "Smooth" : rrAvg < 0.35 ? "Moderate" : "Rough";
+                const rrBadgeColor = rrBadge === "Smooth" ? "var(--color-green, #22c55e)" : rrBadge === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const rrBarW = 200, rrBarH = rrResults.length * 28 + 4;
+                const rrMaxLabel = Math.min(Math.max(...rrResults.map(r => r.name.length)) * 7 + 10, 90);
+                const rrChartW = rrBarW - rrMaxLabel - 35;
+                const rrMaxVal = Math.max(...rrResults.map(r => r.roughness), 0.01);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Waves size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Response Roughness</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: rrBadgeColor, color: "#fff" }}>{rrBadge}</span>
+                    </div>
+                    <svg width={rrBarW} height={rrBarH} viewBox={`0 0 ${rrBarW} ${rrBarH}`} style={{ display: "block", width: "100%" }}>
+                      {rrResults.map((r, i) => {
+                        const y = i * 28 + 2;
+                        const barLen = (r.roughness / rrMaxVal) * rrChartW;
+                        const color = r.roughness < 0.15 ? "var(--color-green, #22c55e)" : r.roughness < 0.35 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return (
+                          <g key={r.name}>
+                            <text x={rrMaxLabel - 4} y={y + 16} textAnchor="end" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">{r.name.length > 12 ? r.name.slice(0, 11) + "…" : r.name}</text>
+                            <rect x={rrMaxLabel} y={y + 4} width={rrChartW} height="16" rx="3" fill="var(--color-border, #e2e8f0)" />
+                            <rect x={rrMaxLabel} y={y + 4} width={Math.max(barLen, 2)} height="16" rx="3" fill={color} opacity="0.8" />
+                            <text x={rrMaxLabel + rrChartW + 3} y={y + 16} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted, #64748b)">{(r.roughness * 100).toFixed(0)}%</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      {rrBadge === "Smooth" ? "Response surface is smooth — surrogate models should fit well." : rrBadge === "Moderate" ? "Some roughness — consider noise-tolerant models." : "High roughness — the response is noisy or highly non-linear."}
                     </div>
                   </div>
                 );
@@ -10043,6 +10176,68 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Suggestion Consensus (Batch 28) ── */}
+              {(() => {
+                if (!suggestions?.suggestions?.length || suggestions.suggestions.length < 2) return null;
+                const scSpecs = (campaign?.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (scSpecs.length === 0) return null;
+                // for each parameter, compute spread of suggested values relative to full range
+                const scData: { name: string; spread: number; center: number }[] = [];
+                scSpecs.forEach((spec: { name: string; lower?: number; upper?: number }) => {
+                  const range = (spec.upper || 1) - (spec.lower || 0);
+                  if (range <= 0) return;
+                  const vals = suggestions.suggestions.map((s: Record<string, number>) => s[spec.name]).filter((v: number) => v != null);
+                  if (vals.length < 2) return;
+                  const min = Math.min(...vals);
+                  const max = Math.max(...vals);
+                  const spread = (max - min) / range;
+                  const center = ((min + max) / 2 - (spec.lower || 0)) / range;
+                  scData.push({ name: spec.name, spread, center });
+                });
+                if (scData.length === 0) return null;
+                const scAvgSpread = scData.reduce((s, d) => s + d.spread, 0) / scData.length;
+                const scBadge = scAvgSpread < 0.2 ? "Converging" : scAvgSpread < 0.5 ? "Mixed" : "Diverging";
+                const scBadgeColor = scBadge === "Converging" ? "var(--color-green, #22c55e)" : scBadge === "Mixed" ? "var(--color-yellow, #eab308)" : "var(--color-blue, #3b82f6)";
+                const scBarW = 220, scRowH = 24;
+                const scH = scData.length * scRowH + 4;
+                const scLabelW = Math.min(Math.max(...scData.map(d => d.name.length)) * 7 + 10, 85);
+                const scChartW = scBarW - scLabelW - 8;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <GitMerge size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Suggestion Consensus</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: scBadgeColor, color: "#fff" }}>{scBadge}</span>
+                    </div>
+                    <svg width={scBarW} height={scH} viewBox={`0 0 ${scBarW} ${scH}`} style={{ display: "block", width: "100%" }}>
+                      {scData.map((d, i) => {
+                        const y = i * scRowH + 2;
+                        const barX = scLabelW + d.center * scChartW - (d.spread * scChartW) / 2;
+                        const barWidth = Math.max(d.spread * scChartW, 3);
+                        const centerX = scLabelW + d.center * scChartW;
+                        const color = d.spread < 0.2 ? "var(--color-green, #22c55e)" : d.spread < 0.5 ? "var(--color-yellow, #eab308)" : "var(--color-blue, #3b82f6)";
+                        return (
+                          <g key={d.name}>
+                            <text x={scLabelW - 4} y={y + 14} textAnchor="end" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">{d.name.length > 11 ? d.name.slice(0, 10) + "…" : d.name}</text>
+                            {/* full range background */}
+                            <rect x={scLabelW} y={y + 4} width={scChartW} height="14" rx="3" fill="var(--color-border, #e2e8f0)" />
+                            {/* spread bar */}
+                            <rect x={Math.max(scLabelW, barX)} y={y + 4} width={Math.min(barWidth, scChartW)} height="14" rx="3" fill={color} opacity="0.7" />
+                            {/* center dot */}
+                            <circle cx={Math.max(scLabelW + 2, Math.min(centerX, scLabelW + scChartW - 2))} cy={y + 11} r="3" fill={color} />
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      {scBadge === "Converging" ? "Suggestions agree on parameter values — optimizer is confident." : scBadge === "Mixed" ? "Some parameters are well-determined, others still being explored." : "Wide parameter spread — optimizer is still searching broadly."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -12734,6 +12929,106 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       CUSUM detected {rcNumChanges} regime change{rcNumChanges !== 1 ? "s" : ""} — {rcBadge === "Stable" ? "consistent optimization dynamics throughout." : rcBadge === "Shifting" ? "optimization strategy adapted during the campaign." : "frequent shifts in optimization landscape."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Search Focus Drift (Batch 28) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 12) return null;
+                const sfSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (sfSpecs.length === 0) return null;
+                const sfObs = campaign.observations;
+                // divide observations into windows
+                const sfWinSize = Math.max(4, Math.floor(sfObs.length / 8));
+                const sfWindows: { parameters: Record<string, number> }[][] = [];
+                for (let i = 0; i + sfWinSize <= sfObs.length; i += Math.max(1, Math.floor(sfWinSize / 2))) {
+                  sfWindows.push(sfObs.slice(i, i + sfWinSize));
+                }
+                if (sfWindows.length < 3) return null;
+                // compute centroid per window in normalized space
+                const sfCentroids = sfWindows.map(win => {
+                  const centroid: Record<string, number> = {};
+                  sfSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper || 1) - (s.lower || 0);
+                    const avg = win.reduce((sum: number, o: { parameters: Record<string, number> }) => sum + ((o.parameters[s.name] || 0) - (s.lower || 0)) / (range || 1), 0) / win.length;
+                    centroid[s.name] = avg;
+                  });
+                  return centroid;
+                });
+                // compute distance from each centroid to the first centroid (drift from start)
+                const sfDists = sfCentroids.map(c => {
+                  let sum = 0;
+                  sfSpecs.forEach((s: { name: string }) => {
+                    sum += (c[s.name] - sfCentroids[0][s.name]) ** 2;
+                  });
+                  return Math.sqrt(sum / sfSpecs.length);
+                });
+                // also compute variance within each window (spread = how focused)
+                const sfSpreads = sfWindows.map(win => {
+                  let totalVar = 0;
+                  sfSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper || 1) - (s.lower || 0);
+                    const vals = win.map((o: { parameters: Record<string, number> }) => ((o.parameters[s.name] || 0) - (s.lower || 0)) / (range || 1));
+                    const mean = vals.reduce((a: number, b: number) => a + b, 0) / vals.length;
+                    totalVar += vals.reduce((a: number, v: number) => a + (v - mean) ** 2, 0) / vals.length;
+                  });
+                  return Math.sqrt(totalVar / sfSpecs.length);
+                });
+                // trend: is spread decreasing (focusing) or increasing (wandering)?
+                const sfThird = Math.max(1, Math.floor(sfSpreads.length / 3));
+                const sfEarlySpread = sfSpreads.slice(0, sfThird).reduce((s, v) => s + v, 0) / sfThird;
+                const sfLateSpread = sfSpreads.slice(-sfThird).reduce((s, v) => s + v, 0) / sfThird;
+                const sfSpreadRatio = sfEarlySpread > 0 ? sfLateSpread / sfEarlySpread : 1;
+                const sfBadge = sfSpreadRatio < 0.7 ? "Focusing" : sfSpreadRatio < 1.3 ? "Stable" : "Wandering";
+                const sfBadgeColor = sfBadge === "Focusing" ? "var(--color-green, #22c55e)" : sfBadge === "Stable" ? "var(--color-blue, #3b82f6)" : "var(--color-yellow, #eab308)";
+                // chart: dual-axis — drift line + spread area
+                const sfW = 260, sfH = 75;
+                const sfPad = { l: 5, r: 5, t: 6, b: 14 };
+                const sfPlotW = sfW - sfPad.l - sfPad.r;
+                const sfPlotH = sfH - sfPad.t - sfPad.b;
+                const sfMaxDist = Math.max(...sfDists, 0.01);
+                const sfMaxSpread = Math.max(...sfSpreads, 0.01);
+                // spread area
+                const sfSpreadPts = sfSpreads.map((v, i) => ({
+                  x: sfPad.l + (i / (sfSpreads.length - 1)) * sfPlotW,
+                  y: sfPad.t + (1 - v / sfMaxSpread) * sfPlotH,
+                }));
+                const sfSpreadArea = sfSpreadPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")
+                  + ` L${sfSpreadPts[sfSpreadPts.length - 1].x.toFixed(1)},${sfPad.t + sfPlotH} L${sfSpreadPts[0].x.toFixed(1)},${sfPad.t + sfPlotH} Z`;
+                // drift line
+                const sfDriftPts = sfDists.map((v, i) => ({
+                  x: sfPad.l + (i / (sfDists.length - 1)) * sfPlotW,
+                  y: sfPad.t + (1 - v / sfMaxDist) * sfPlotH,
+                }));
+                const sfDriftLine = sfDriftPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Compass size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Search Focus Drift</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: sfBadgeColor, color: "#fff" }}>{sfBadge}</span>
+                    </div>
+                    <svg width={sfW} height={sfH} viewBox={`0 0 ${sfW} ${sfH}`} style={{ display: "block", width: "100%" }}>
+                      {/* spread area */}
+                      <path d={sfSpreadArea} fill="var(--color-yellow, #eab308)" opacity="0.12" />
+                      <path d={sfSpreadPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")} fill="none" stroke="var(--color-yellow, #eab308)" strokeWidth="1" opacity="0.5" />
+                      {/* drift line */}
+                      <path d={sfDriftLine} fill="none" stroke="var(--color-primary, #6366f1)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* legend */}
+                      <line x1={sfW - 100} y1={sfPad.t + 2} x2={sfW - 88} y2={sfPad.t + 2} stroke="var(--color-primary, #6366f1)" strokeWidth="1.5" />
+                      <text x={sfW - 85} y={sfPad.t + 5} fontSize="8" fill="var(--color-text-muted, #64748b)">drift</text>
+                      <rect x={sfW - 55} y={sfPad.t - 2} width="10" height="8" fill="var(--color-yellow, #eab308)" opacity="0.3" />
+                      <text x={sfW - 42} y={sfPad.t + 5} fontSize="8" fill="var(--color-text-muted, #64748b)">spread</text>
+                      {/* axis labels */}
+                      <text x={sfPad.l} y={sfH - 1} fontSize="8" fill="var(--color-text-muted, #64748b)">early</text>
+                      <text x={sfW - sfPad.r} y={sfH - 1} textAnchor="end" fontSize="8" fill="var(--color-text-muted, #64748b)">recent</text>
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {sfBadge === "Focusing" ? "Search is narrowing — optimizer is converging on a region." : sfBadge === "Stable" ? "Search region is consistent — steady exploration and exploitation." : "Search region is expanding — optimizer may be stuck or exploring new areas."}
                     </div>
                   </div>
                 );
