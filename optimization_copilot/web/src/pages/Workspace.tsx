@@ -4197,6 +4197,100 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Stopping Readiness (Batch 29) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 10) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const stObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (stObs.length < 10) return null;
+                // 1. Plateau score: how many recent iterations without improvement
+                const stBest: number[] = [];
+                let stRun = -Infinity;
+                stObs.forEach((o: { kpi_values: Record<string, number> }) => {
+                  const v = o.kpi_values[kpiKey];
+                  if (v > stRun) stRun = v;
+                  stBest.push(stRun);
+                });
+                let stPlateauLen = 0;
+                for (let i = stBest.length - 1; i > 0; i--) {
+                  if (stBest[i] === stBest[i - 1]) stPlateauLen++;
+                  else break;
+                }
+                const stPlateauScore = Math.min(1, stPlateauLen / (stObs.length * 0.3)); // 1 = long plateau
+                // 2. Coverage score: fraction of parameter range explored
+                const stSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                let stCoverageScore = 0;
+                if (stSpecs.length > 0) {
+                  const stCovRatios = stSpecs.map((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper || 1) - (s.lower || 0);
+                    if (range <= 0) return 1;
+                    const vals = stObs.map((o: { parameters: Record<string, number> }) => o.parameters[s.name]).filter((v: number) => v != null);
+                    if (vals.length === 0) return 0;
+                    return (Math.max(...vals) - Math.min(...vals)) / range;
+                  });
+                  stCoverageScore = stCovRatios.reduce((s: number, v: number) => s + v, 0) / stCovRatios.length;
+                }
+                // 3. Deceleration score: how much improvement has slowed
+                const stThird = Math.max(1, Math.floor(stObs.length / 3));
+                const stEarlyGain = stBest[stThird] - stBest[0];
+                const stTotalGain = stBest[stBest.length - 1] - stBest[0];
+                const stDecelScore = stTotalGain > 0 ? Math.min(1, stEarlyGain / stTotalGain) : 0.5; // high = most gains came early
+                // composite
+                const stReadiness = stPlateauScore * 0.35 + stCoverageScore * 0.3 + stDecelScore * 0.35;
+                const stBadge = stReadiness > 0.7 ? "Ready to Stop" : stReadiness > 0.45 ? "Nearly There" : "Keep Going";
+                const stBadgeColor = stBadge === "Ready to Stop" ? "var(--color-green, #22c55e)" : stBadge === "Nearly There" ? "var(--color-yellow, #eab308)" : "var(--color-blue, #3b82f6)";
+                // gauge arc (semicircle)
+                const stW = 200, stH = 115;
+                const stCx = stW / 2, stCy = 100, stR = 75;
+                const stValAngle = Math.PI - stReadiness * Math.PI;
+                const stArc = (startA: number, endA: number) => {
+                  const x1 = stCx + stR * Math.cos(startA), y1 = stCy - stR * Math.sin(startA);
+                  const x2 = stCx + stR * Math.cos(endA), y2 = stCy - stR * Math.sin(endA);
+                  const lg = Math.abs(startA - endA) > Math.PI ? 1 : 0;
+                  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${stR},${stR} 0 ${lg} 0 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+                };
+                const stNx = stCx + (stR - 12) * Math.cos(stValAngle);
+                const stNy = stCy - (stR - 12) * Math.sin(stValAngle);
+                // sub-scores for mini bars
+                const stScores = [
+                  { label: "Plateau", value: stPlateauScore },
+                  { label: "Coverage", value: stCoverageScore },
+                  { label: "Deceleration", value: stDecelScore },
+                ];
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Flag size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Stopping Readiness</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: stBadgeColor, color: "#fff" }}>{stBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <svg width={stW} height={stH} viewBox={`0 0 ${stW} ${stH}`}>
+                        <path d={stArc(Math.PI, 0)} fill="none" stroke="var(--color-border, #e2e8f0)" strokeWidth="12" strokeLinecap="round" />
+                        <path d={stArc(Math.PI, stValAngle)} fill="none" stroke={stBadgeColor} strokeWidth="12" strokeLinecap="round" opacity="0.85" />
+                        <line x1={stCx} y1={stCy} x2={stNx} y2={stNy} stroke="var(--color-text, #1e293b)" strokeWidth="2" strokeLinecap="round" />
+                        <circle cx={stCx} cy={stCy} r="3.5" fill="var(--color-text, #1e293b)" />
+                        <text x={stCx} y={stCy - 22} textAnchor="middle" fontSize="20" fontWeight="700" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">{(stReadiness * 100).toFixed(0)}%</text>
+                        <text x={stCx} y={stCy - 7} textAnchor="middle" fontSize="9" fill="var(--color-text-muted, #64748b)">readiness</text>
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginTop: "4px" }}>
+                      {stScores.map(s => (
+                        <div key={s.label} style={{ textAlign: "center" }}>
+                          <div style={{ width: "50px", height: "4px", background: "var(--color-border, #e2e8f0)", borderRadius: "2px", overflow: "hidden" }}>
+                            <div style={{ width: `${s.value * 100}%`, height: "100%", background: stBadgeColor, borderRadius: "2px" }} />
+                          </div>
+                          <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "2px" }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -6649,6 +6743,78 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
                       {rrBadge === "Smooth" ? "Response surface is smooth — surrogate models should fit well." : rrBadge === "Moderate" ? "Some roughness — consider noise-tolerant models." : "High roughness — the response is noisy or highly non-linear."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Parameter Efficiency Rank (Batch 29) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 8) return null;
+                const peSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (peSpecs.length === 0) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const peObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (peObs.length < 8) return null;
+                // for each parameter, compute "efficiency" = |correlation with kpi| / fraction_of_range_explored
+                const peResults: { name: string; efficiency: number; corr: number; coverage: number }[] = [];
+                const peKpiVals = peObs.map((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey]);
+                const peKpiMean = peKpiVals.reduce((s: number, v: number) => s + v, 0) / peKpiVals.length;
+                const peKpiStd = Math.sqrt(peKpiVals.reduce((s: number, v: number) => s + (v - peKpiMean) ** 2, 0) / peKpiVals.length) || 1;
+                peSpecs.forEach((spec: { name: string; lower?: number; upper?: number }) => {
+                  const range = (spec.upper || 1) - (spec.lower || 0);
+                  if (range <= 0) return;
+                  const pVals = peObs.map((o: { parameters: Record<string, number> }) => o.parameters[spec.name]);
+                  const pMean = pVals.reduce((s: number, v: number) => s + v, 0) / pVals.length;
+                  const pStd = Math.sqrt(pVals.reduce((s: number, v: number) => s + (v - pMean) ** 2, 0) / pVals.length) || 1;
+                  // Pearson correlation
+                  let peSum = 0;
+                  for (let i = 0; i < peObs.length; i++) {
+                    peSum += (pVals[i] - pMean) * (peKpiVals[i] - peKpiMean);
+                  }
+                  const corr = peSum / (peObs.length * pStd * peKpiStd);
+                  // coverage
+                  const coverage = (Math.max(...pVals) - Math.min(...pVals)) / range;
+                  // efficiency: high |correlation| per unit coverage (more info per range used)
+                  const efficiency = coverage > 0.05 ? Math.abs(corr) / coverage : 0;
+                  peResults.push({ name: spec.name, efficiency, corr, coverage });
+                });
+                peResults.sort((a, b) => b.efficiency - a.efficiency);
+                const peMaxEff = Math.max(...peResults.map(r => r.efficiency), 0.01);
+                const peTopEff = peResults[0]?.efficiency || 0;
+                const peSecondEff = peResults[1]?.efficiency || 0;
+                const peBadge = peTopEff > peSecondEff * 2 ? "Clear Leaders" : peResults.filter(r => r.efficiency > peMaxEff * 0.5).length >= peResults.length * 0.7 ? "Even" : "No Signal";
+                const peBadgeColor = peBadge === "Clear Leaders" ? "var(--color-green, #22c55e)" : peBadge === "Even" ? "var(--color-blue, #3b82f6)" : "var(--color-text-muted, #94a3b8)";
+                const peBarW = 200, peBarH = peResults.length * 28 + 4;
+                const peLabelW = Math.min(Math.max(...peResults.map(r => r.name.length)) * 7 + 10, 90);
+                const peChartW = peBarW - peLabelW - 35;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Award size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Parameter Efficiency Rank</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: peBadgeColor, color: "#fff" }}>{peBadge}</span>
+                    </div>
+                    <svg width={peBarW} height={peBarH} viewBox={`0 0 ${peBarW} ${peBarH}`} style={{ display: "block", width: "100%" }}>
+                      {peResults.map((r, i) => {
+                        const y = i * 28 + 2;
+                        const barLen = (r.efficiency / peMaxEff) * peChartW;
+                        const color = i === 0 ? "var(--color-green, #22c55e)" : i < 3 ? "var(--color-primary, #6366f1)" : "var(--color-text-muted, #94a3b8)";
+                        return (
+                          <g key={r.name}>
+                            <text x={peLabelW - 4} y={y + 16} textAnchor="end" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">{r.name.length > 12 ? r.name.slice(0, 11) + "…" : r.name}</text>
+                            <rect x={peLabelW} y={y + 4} width={peChartW} height="16" rx="3" fill="var(--color-border, #e2e8f0)" />
+                            <rect x={peLabelW} y={y + 4} width={Math.max(barLen, 2)} height="16" rx="3" fill={color} opacity="0.8" />
+                            <text x={peLabelW + peChartW + 3} y={y + 16} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted, #64748b)">{r.efficiency.toFixed(2)}</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      KPI correlation per unit range explored — higher = more informative parameter.
                     </div>
                   </div>
                 );
@@ -10238,6 +10404,105 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Gradient Alignment (Batch 29) ── */}
+              {(() => {
+                if (!suggestions?.suggestions?.length || !campaign?.observations?.length || campaign.observations.length < 5) return null;
+                const gaSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (gaSpecs.length === 0) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const gaObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (gaObs.length < 5) return null;
+                // find best observation
+                let gaBestIdx = 0;
+                gaObs.forEach((o: { kpi_values: Record<string, number> }, i: number) => {
+                  if (o.kpi_values[kpiKey] > gaObs[gaBestIdx].kpi_values[kpiKey]) gaBestIdx = i;
+                });
+                const gaBestObs = gaObs[gaBestIdx];
+                // estimate gradient at best point using k=5 nearest neighbors finite differences
+                const gaDists = gaObs.map((o: { parameters: Record<string, number>; kpi_values: Record<string, number> }, i: number) => {
+                  if (i === gaBestIdx) return { i, d: Infinity };
+                  let sum = 0;
+                  gaSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper || 1) - (s.lower || 0);
+                    sum += ((o.parameters[s.name] - gaBestObs.parameters[s.name]) / (range || 1)) ** 2;
+                  });
+                  return { i, d: Math.sqrt(sum) };
+                }).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                const gaK = Math.min(5, gaObs.length - 1);
+                const gaNeighbors = gaDists.slice(0, gaK);
+                // finite difference gradient per parameter
+                const gaGrad: Record<string, number> = {};
+                gaSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                  const range = (s.upper || 1) - (s.lower || 0);
+                  let num = 0, den = 0;
+                  gaNeighbors.forEach((n: { i: number }) => {
+                    const o = gaObs[n.i];
+                    const dp = (o.parameters[s.name] - gaBestObs.parameters[s.name]) / (range || 1);
+                    const dy = o.kpi_values[kpiKey] - gaBestObs.kpi_values[kpiKey];
+                    num += dp * dy;
+                    den += dp * dp;
+                  });
+                  gaGrad[s.name] = den > 1e-10 ? num / den : 0;
+                });
+                // normalize gradient
+                const gaGradNorm = Math.sqrt(gaSpecs.reduce((s: number, spec: { name: string }) => s + gaGrad[spec.name] ** 2, 0)) || 1;
+                // for each suggestion, compute alignment = dot product of (sug - best) direction with gradient
+                const gaData = suggestions.suggestions.map((sug: Record<string, number>, idx: number) => {
+                  let dot = 0, sugNorm = 0;
+                  gaSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper || 1) - (s.lower || 0);
+                    const dir = (sug[s.name] - gaBestObs.parameters[s.name]) / (range || 1);
+                    dot += dir * (gaGrad[s.name] / gaGradNorm);
+                    sugNorm += dir * dir;
+                  });
+                  sugNorm = Math.sqrt(sugNorm) || 1;
+                  const alignment = dot / sugNorm; // cosine similarity, range [-1, 1]
+                  return { idx: idx + 1, alignment };
+                });
+                const gaAvgAlign = gaData.reduce((s: number, d: { alignment: number }) => s + d.alignment, 0) / gaData.length;
+                const gaBadge = gaAvgAlign > 0.3 ? "Aligned" : gaAvgAlign > -0.1 ? "Mixed" : "Counter-Gradient";
+                const gaBadgeColor = gaBadge === "Aligned" ? "var(--color-green, #22c55e)" : gaBadge === "Mixed" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const gaW = 220, gaBarH = 18, gaGap = 6;
+                const gaH = gaData.length * (gaBarH + gaGap) + 8;
+                const gaMidX = gaW / 2;
+                const gaMaxBar = (gaW - 50) / 2;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <ArrowRight size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Gradient Alignment</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: gaBadgeColor, color: "#fff" }}>{gaBadge}</span>
+                    </div>
+                    <svg width={gaW} height={gaH} viewBox={`0 0 ${gaW} ${gaH}`} style={{ display: "block", width: "100%" }}>
+                      {/* center line */}
+                      <line x1={gaMidX} y1={0} x2={gaMidX} y2={gaH - 4} stroke="var(--color-border, #e2e8f0)" strokeWidth="1" />
+                      {gaData.map((d: { idx: number; alignment: number }, i: number) => {
+                        const y = i * (gaBarH + gaGap) + 4;
+                        const barLen = Math.abs(d.alignment) * gaMaxBar;
+                        const barX = d.alignment >= 0 ? gaMidX : gaMidX - barLen;
+                        const color = d.alignment > 0.3 ? "var(--color-green, #22c55e)" : d.alignment > -0.1 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return (
+                          <g key={d.idx}>
+                            <text x="2" y={y + 13} fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">#{d.idx}</text>
+                            <rect x={barX} y={y} width={Math.max(barLen, 2)} height={gaBarH} rx="3" fill={color} opacity="0.7" />
+                            <text x={d.alignment >= 0 ? gaMidX + barLen + 4 : gaMidX - barLen - 4} y={y + 13} textAnchor={d.alignment >= 0 ? "start" : "end"} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted, #64748b)">{d.alignment >= 0 ? "+" : ""}{d.alignment.toFixed(2)}</text>
+                          </g>
+                        );
+                      })}
+                      {/* axis labels */}
+                      <text x={gaMidX - gaMaxBar} y={gaH - 1} textAnchor="middle" fontSize="7" fill="var(--color-text-muted, #64748b)">← away</text>
+                      <text x={gaMidX + gaMaxBar} y={gaH - 1} textAnchor="middle" fontSize="7" fill="var(--color-text-muted, #64748b)">toward →</text>
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      {gaBadge === "Aligned" ? "Suggestions move toward the estimated optimum direction." : gaBadge === "Mixed" ? "Some suggestions explore, others exploit the gradient." : "Suggestions move away from the gradient — exploring alternative regions."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -13029,6 +13294,84 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {sfBadge === "Focusing" ? "Search is narrowing — optimizer is converging on a region." : sfBadge === "Stable" ? "Search region is consistent — steady exploration and exploitation." : "Search region is expanding — optimizer may be stuck or exploring new areas."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Prediction Surprise (Batch 29) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 10) return null;
+                const psSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (psSpecs.length === 0) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const psObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (psObs.length < 10) return null;
+                // for each observation, compute k-NN prediction (k=3) using all OTHER observations, then residual
+                const psK = 3;
+                const psResiduals: number[] = [];
+                for (let i = 0; i < psObs.length; i++) {
+                  const dists: { d: number; kpi: number }[] = [];
+                  for (let j = 0; j < psObs.length; j++) {
+                    if (j === i) continue;
+                    let sum = 0;
+                    psSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                      const range = (s.upper || 1) - (s.lower || 0);
+                      sum += ((psObs[i].parameters[s.name] - psObs[j].parameters[s.name]) / (range || 1)) ** 2;
+                    });
+                    dists.push({ d: Math.sqrt(sum), kpi: psObs[j].kpi_values[kpiKey] });
+                  }
+                  dists.sort((a, b) => a.d - b.d);
+                  const neighbors = dists.slice(0, psK);
+                  const predicted = neighbors.reduce((s, n) => s + n.kpi, 0) / neighbors.length;
+                  psResiduals.push(psObs[i].kpi_values[kpiKey] - predicted);
+                }
+                // normalize residuals by std
+                const psMean = psResiduals.reduce((s, v) => s + v, 0) / psResiduals.length;
+                const psStd = Math.sqrt(psResiduals.reduce((s, v) => s + (v - psMean) ** 2, 0) / psResiduals.length) || 1;
+                const psNormalized = psResiduals.map(r => (r - psMean) / psStd);
+                const psSurpriseCount = psNormalized.filter(z => Math.abs(z) > 2).length;
+                const psSurpriseRate = psSurpriseCount / psNormalized.length;
+                const psBadge = psSurpriseRate < 0.1 ? "Predictable" : psSurpriseRate < 0.25 ? "Some Surprises" : "Unpredictable";
+                const psBadgeColor = psBadge === "Predictable" ? "var(--color-green, #22c55e)" : psBadge === "Some Surprises" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // dot timeline
+                const psW = 260, psH = 55;
+                const psPad = { l: 5, r: 5, t: 8, b: 14 };
+                const psPlotW = psW - psPad.l - psPad.r;
+                const psPlotH = psH - psPad.t - psPad.b;
+                const psMaxZ = Math.max(...psNormalized.map(Math.abs), 2);
+                const psZeroY = psPad.t + psPlotH / 2;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <AlertOctagon size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Prediction Surprise</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: psBadgeColor, color: "#fff" }}>{psBadge}</span>
+                    </div>
+                    <svg width={psW} height={psH} viewBox={`0 0 ${psW} ${psH}`} style={{ display: "block", width: "100%" }}>
+                      {/* zero line */}
+                      <line x1={psPad.l} y1={psZeroY} x2={psW - psPad.r} y2={psZeroY} stroke="var(--color-border, #e2e8f0)" strokeWidth="0.5" />
+                      {/* ±2σ bands */}
+                      <rect x={psPad.l} y={psZeroY - (2 / psMaxZ) * (psPlotH / 2)} width={psPlotW} height={(4 / psMaxZ) * (psPlotH / 2)} fill="var(--color-green, #22c55e)" opacity="0.06" rx="2" />
+                      {/* dots */}
+                      {psNormalized.map((z, i) => {
+                        const x = psPad.l + (i / (psNormalized.length - 1)) * psPlotW;
+                        const y = psZeroY - (z / psMaxZ) * (psPlotH / 2);
+                        const absZ = Math.abs(z);
+                        const color = absZ > 2 ? "var(--color-red, #ef4444)" : absZ > 1.5 ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)";
+                        const r = absZ > 2 ? 3.5 : 2.5;
+                        return <circle key={i} cx={x} cy={y} r={r} fill={color} opacity={absZ > 2 ? 0.9 : 0.6} />;
+                      })}
+                      {/* labels */}
+                      <text x={psPad.l} y={psH - 1} fontSize="8" fill="var(--color-text-muted, #64748b)">1</text>
+                      <text x={psW - psPad.r} y={psH - 1} textAnchor="end" fontSize="8" fill="var(--color-text-muted, #64748b)">{psObs.length}</text>
+                      <text x={psW - psPad.r + 1} y={psZeroY + 3} fontSize="7" fill="var(--color-text-muted, #64748b)">0σ</text>
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {psSurpriseCount} of {psObs.length} trials exceeded 2σ surprise — {psBadge === "Predictable" ? "model fits the data well." : psBadge === "Some Surprises" ? "a few unexpected results worth investigating." : "many observations defy local predictions."}
                     </div>
                   </div>
                 );
