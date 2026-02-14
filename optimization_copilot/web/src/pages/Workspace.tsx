@@ -4431,6 +4431,87 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Cross-Validation Gap */}
+              {trials.length >= 20 && (() => {
+                const cvKey = Object.keys(trials[0]?.kpis ?? {})[0];
+                if (!cvKey) return null;
+                const cvSorted = [...trials].sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                const cvK = 5;
+                const cvW = 15;
+                const cvTrainErr: number[] = [];
+                const cvTestErr: number[] = [];
+                for (let i = cvW; i <= cvSorted.length - cvK; i += Math.max(1, Math.floor(cvK / 2))) {
+                  const train = cvSorted.slice(Math.max(0, i - cvW), i);
+                  const test = cvSorted.slice(i, i + cvK);
+                  // k-NN prediction: for each test point, find k=3 nearest in train
+                  const params = Object.keys(cvSorted[0].parameters);
+                  let trainMSE = 0, testMSE = 0;
+                  // Train error: LOO within train set
+                  for (let ti = 0; ti < train.length; ti++) {
+                    const dists = train.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }, j: number) => {
+                      if (j === ti) return { d: Infinity, v: 0 };
+                      let d2 = 0;
+                      for (const p of params) d2 += ((train[ti].parameters[p] ?? 0) - (t.parameters[p] ?? 0)) ** 2;
+                      return { d: Math.sqrt(d2), v: t.kpis[cvKey] };
+                    }).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                    const pred = dists.slice(0, 3).reduce((s: number, d: { v: number }) => s + d.v, 0) / 3;
+                    trainMSE += (pred - train[ti].kpis[cvKey]) ** 2;
+                  }
+                  trainMSE /= train.length;
+                  // Test error: predict test from train
+                  for (const tp of test) {
+                    const dists = train.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }) => {
+                      let d2 = 0;
+                      for (const p of params) d2 += ((tp.parameters[p] ?? 0) - (t.parameters[p] ?? 0)) ** 2;
+                      return { d: Math.sqrt(d2), v: t.kpis[cvKey] };
+                    }).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                    const pred = dists.slice(0, 3).reduce((s: number, d: { v: number }) => s + d.v, 0) / 3;
+                    testMSE += (pred - tp.kpis[cvKey]) ** 2;
+                  }
+                  testMSE /= test.length;
+                  cvTrainErr.push(Math.sqrt(trainMSE));
+                  cvTestErr.push(Math.sqrt(testMSE));
+                }
+                if (cvTrainErr.length < 3) return null;
+                const cvGap = cvTestErr.map((t, i) => t - cvTrainErr[i]);
+                const cvRecentGap = cvGap.slice(-3).reduce((a, b) => a + b, 0) / 3;
+                const cvEarlyGap = cvGap.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
+                const cvTrend = cvRecentGap - cvEarlyGap;
+                const cvBadge = cvTrend < 0.002 && cvRecentGap < 0.01 ? "Model Healthy" : cvTrend < 0.005 ? "Overfitting Risk" : "Model Unstable";
+                const cvColor = cvBadge === "Model Healthy" ? "var(--color-primary)" : cvBadge === "Overfitting Risk" ? "#eab308" : "#ef4444";
+                const cvSW = 220, cvSH = 52, cvPd = 3;
+                const allVals = [...cvTrainErr, ...cvTestErr];
+                const cvMin = Math.min(...allVals), cvMax = Math.max(...allVals);
+                const cvRng = cvMax - cvMin || 1;
+                const cvToX = (i: number) => cvPd + (i / (cvTrainErr.length - 1)) * (cvSW - 2 * cvPd);
+                const cvToY = (v: number) => cvPd + (1 - (v - cvMin) / cvRng) * (cvSH - 2 * cvPd);
+                const cvTrainLine = cvTrainErr.map((v, i) => `${i === 0 ? "M" : "L"}${cvToX(i).toFixed(1)},${cvToY(v).toFixed(1)}`).join(" ");
+                const cvTestLine = cvTestErr.map((v, i) => `${i === 0 ? "M" : "L"}${cvToX(i).toFixed(1)},${cvToY(v).toFixed(1)}`).join(" ");
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Activity size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Cross-Validation Gap</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: cvBadge === "Model Healthy" ? "var(--color-success-bg)" : cvBadge === "Overfitting Risk" ? "rgba(234,179,8,0.12)" : "rgba(239,68,68,0.1)", color: cvColor }}>{cvBadge}</span>
+                    </div>
+                    <svg width="100%" height={cvSH} viewBox={`0 0 ${cvSW} ${cvSH}`} style={{ display: "block" }}>
+                      <path d={cvTrainLine} fill="none" stroke="var(--color-primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d={cvTestLine} fill="none" stroke={cvColor} strokeWidth="1.5" strokeDasharray="4,2" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx={cvToX(cvTrainErr.length - 1)} cy={cvToY(cvTrainErr[cvTrainErr.length - 1])} r="2.5" fill="var(--color-primary)" />
+                      <circle cx={cvToX(cvTestErr.length - 1)} cy={cvToY(cvTestErr[cvTestErr.length - 1])} r="2.5" fill={cvColor} />
+                    </svg>
+                    <div style={{ display: "flex", gap: "12px", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span><span style={{ display: "inline-block", width: "12px", height: "2px", background: "var(--color-primary)", verticalAlign: "middle", marginRight: "4px" }}></span>train</span>
+                      <span><span style={{ display: "inline-block", width: "12px", height: "2px", background: cvColor, verticalAlign: "middle", marginRight: "4px", borderTop: "1px dashed " + cvColor }}></span>test</span>
+                      <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)" }}>gap: {cvRecentGap.toFixed(4)}</span>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {cvBadge === "Model Healthy" ? "Train/test errors track closely — model generalizes well." : cvBadge === "Overfitting Risk" ? "Test error diverging from train — model may be overfitting recent data." : "Large train/test gap — model predictions may be unreliable."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -7107,6 +7188,78 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
                       {nfBadge === "Clean" ? "Low measurement noise — optimization can resolve fine differences." : nfBadge === "Moderate" ? "Moderate noise — consider replicates for noisy parameters." : "High noise floor — improvements near noise level may be statistical artifacts."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Confidence Footprint */}
+              {trials.length >= 10 && (() => {
+                const cfParams = (campaign.spec?.parameters ?? []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (cfParams.length === 0) return null;
+                const cfBins = 8;
+                const cfResults: { name: string; density: number[]; maxDensity: number }[] = [];
+                let cfGlobalMax = 0;
+                for (const param of cfParams) {
+                  const lo = param.lower ?? 0, hi = param.upper ?? 1, range = hi - lo || 1;
+                  const bins = new Array(cfBins).fill(0);
+                  for (const t of trials) {
+                    const v = t.parameters[param.name];
+                    if (v == null) continue;
+                    const idx = Math.min(cfBins - 1, Math.floor(((v - lo) / range) * cfBins));
+                    bins[idx]++;
+                  }
+                  const mx = Math.max(...bins);
+                  cfGlobalMax = Math.max(cfGlobalMax, mx);
+                  cfResults.push({ name: param.name, density: bins, maxDensity: mx });
+                }
+                // Compute sparse fraction
+                const totalBins = cfResults.length * cfBins;
+                const sparseBins = cfResults.reduce((sum, r) => sum + r.density.filter(d => d <= 1).length, 0);
+                const sparseRatio = sparseBins / totalBins;
+                const cfBadge = sparseRatio < 0.25 ? "Well-Supported" : sparseRatio < 0.5 ? "Moderate" : "Sparse";
+                const cfColor = cfBadge === "Well-Supported" ? "var(--color-primary)" : cfBadge === "Moderate" ? "#eab308" : "#ef4444";
+                const cfBarH = 14, cfGap = 3, cfLabelW = 55, cfBarW = 140;
+                const cfSvgH = cfResults.length * (cfBarH + cfGap) - cfGap + 4;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Shield size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Confidence Footprint</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: cfBadge === "Well-Supported" ? "var(--color-success-bg)" : cfBadge === "Moderate" ? "rgba(234,179,8,0.12)" : "rgba(239,68,68,0.1)", color: cfColor }}>{cfBadge}</span>
+                    </div>
+                    <svg width="100%" height={cfSvgH} viewBox={`0 0 ${cfLabelW + cfBarW + 10} ${cfSvgH}`} style={{ display: "block", overflow: "visible" }}>
+                      {cfResults.map((r, pi) => {
+                        const y = pi * (cfBarH + cfGap) + 2;
+                        const binW = cfBarW / cfBins;
+                        return (
+                          <g key={r.name}>
+                            <text x={cfLabelW - 4} y={y + cfBarH / 2 + 4} fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" textAnchor="end">{r.name.length > 7 ? r.name.slice(0, 6) + "…" : r.name}</text>
+                            {r.density.map((d, bi) => {
+                              const opacity = cfGlobalMax > 0 ? Math.max(0.08, d / cfGlobalMax) : 0.08;
+                              const col = d <= 1 ? "#ef4444" : d <= 3 ? "#eab308" : "var(--color-primary)";
+                              return (
+                                <rect key={bi} x={cfLabelW + bi * binW} y={y} width={binW - 1} height={cfBarH} rx="2" fill={col} opacity={opacity * 0.9 + 0.1} />
+                              );
+                            })}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "4px", paddingLeft: cfLabelW }}>
+                      <span>low</span>
+                      <span>high</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "10px", fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      <span><span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "2px", background: "var(--color-primary)", opacity: 0.8, verticalAlign: "middle", marginRight: "3px" }}></span>dense</span>
+                      <span><span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "2px", background: "#eab308", opacity: 0.6, verticalAlign: "middle", marginRight: "3px" }}></span>moderate</span>
+                      <span><span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "2px", background: "#ef4444", opacity: 0.3, verticalAlign: "middle", marginRight: "3px" }}></span>sparse</span>
+                      <span style={{ marginLeft: "auto" }}>{sparseBins}/{totalBins} sparse bins</span>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {cfBadge === "Well-Supported" ? "Good data coverage — model predictions are well-supported across parameter ranges." : cfBadge === "Moderate" ? "Some gaps in coverage — predictions in sparse regions may be unreliable." : "Many sparse regions — consider targeted experiments in under-sampled areas."}
                     </div>
                   </div>
                 );
@@ -10961,6 +11114,76 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Batch ROI */}
+              {suggestions && suggestions.suggestions.length >= 2 && trials.length >= 10 && (() => {
+                const brKey = Object.keys(trials[0]?.kpis ?? {})[0];
+                if (!brKey) return null;
+                const brParams = Object.keys(trials[0].parameters);
+                const brSorted = [...trials].sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                // Evaluate historical batch windows: for each window of 5 trials, compare predicted improvement (k-NN) vs actual
+                const brWin = 5, brK = 3;
+                const brWindows: { predicted: number; actual: number }[] = [];
+                for (let i = brWin; i <= brSorted.length - brWin; i += brWin) {
+                  const history = brSorted.slice(0, i);
+                  const batch = brSorted.slice(i, i + brWin);
+                  const bestBefore = Math.max(...history.map((t: { kpis: Record<string, number> }) => t.kpis[brKey] ?? -Infinity));
+                  // Predicted: k-NN estimate of batch improvement
+                  let predImprove = 0;
+                  for (const bp of batch) {
+                    const dists = history.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }) => {
+                      let d2 = 0;
+                      for (const p of brParams) d2 += ((bp.parameters[p] ?? 0) - (t.parameters[p] ?? 0)) ** 2;
+                      return { d: Math.sqrt(d2), v: t.kpis[brKey] };
+                    }).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                    const pred = dists.slice(0, brK).reduce((s: number, d: { v: number }) => s + d.v, 0) / brK;
+                    predImprove += Math.max(0, pred - bestBefore);
+                  }
+                  // Actual improvement
+                  const bestAfter = Math.max(bestBefore, ...batch.map((t: { kpis: Record<string, number> }) => t.kpis[brKey] ?? -Infinity));
+                  const actualImprove = bestAfter - bestBefore;
+                  brWindows.push({ predicted: predImprove / brWin, actual: actualImprove });
+                }
+                if (brWindows.length < 2) return null;
+                // Compute ROI: actual / predicted per window
+                const brRois = brWindows.map(w => w.predicted > 0.0001 ? w.actual / w.predicted : w.actual > 0 ? 2.0 : 1.0);
+                const brAvgRoi = brRois.reduce((a, b) => a + b, 0) / brRois.length;
+                const brBadge = brAvgRoi >= 0.8 && brAvgRoi <= 1.3 ? "Well-Calibrated" : brAvgRoi > 1.3 ? "Over-Conservative" : "Over-Confident";
+                const brColor = brBadge === "Well-Calibrated" ? "var(--color-primary)" : brBadge === "Over-Conservative" ? "var(--color-blue)" : "#ef4444";
+                // Draw bar chart of ROI per window
+                const brBarW = 220, brBarH = 50, brPd = 3;
+                const brMaxRoi = Math.max(2, ...brRois);
+                const barW2 = (brBarW - 2 * brPd) / brRois.length - 2;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Gauge size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>Batch ROI</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: brBadge === "Well-Calibrated" ? "var(--color-success-bg)" : brBadge === "Over-Conservative" ? "rgba(59,130,246,0.12)" : "rgba(239,68,68,0.1)", color: brColor }}>{brBadge}</span>
+                    </div>
+                    <svg width="100%" height={brBarH} viewBox={`0 0 ${brBarW} ${brBarH}`} style={{ display: "block" }}>
+                      {/* 1.0 line = perfect calibration */}
+                      <line x1={brPd} y1={brBarH - brPd - (1.0 / brMaxRoi) * (brBarH - 2 * brPd)} x2={brBarW - brPd} y2={brBarH - brPd - (1.0 / brMaxRoi) * (brBarH - 2 * brPd)} stroke="var(--color-text-muted)" strokeWidth="0.8" strokeDasharray="3,3" />
+                      {brRois.map((roi, i) => {
+                        const x = brPd + i * ((brBarW - 2 * brPd) / brRois.length) + 1;
+                        const h = Math.max(1, (Math.min(roi, brMaxRoi) / brMaxRoi) * (brBarH - 2 * brPd));
+                        const y = brBarH - brPd - h;
+                        const col = roi >= 0.8 && roi <= 1.3 ? "var(--color-primary)" : roi > 1.3 ? "var(--color-blue)" : "#ef4444";
+                        return <rect key={i} x={x} y={y} width={barW2} height={h} rx="2" fill={col} opacity="0.7" />;
+                      })}
+                      <text x={brBarW - brPd - 2} y={brBarH - brPd - (1.0 / brMaxRoi) * (brBarH - 2 * brPd) - 2} textAnchor="end" fontSize="8" fill="var(--color-text-muted)">1.0×</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>early batches</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: brColor }}>avg ROI: {brAvgRoi.toFixed(2)}×</span>
+                      <span>recent</span>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {brBadge === "Well-Calibrated" ? "Predicted and actual batch improvements match well — acquisition strategy is effective." : brBadge === "Over-Conservative" ? "Actual gains exceed predictions — model may be underestimating potential." : "Predictions overestimate gains — consider widening exploration."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -13995,6 +14218,83 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {lpBadge === "Fast Learning" ? "Still improving quickly — continue running experiments." : lpBadge === "Steady" ? "Learning is slowing — consider strategy adjustments." : "Improvement has plateaued — diminishing returns on additional trials."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* High-Leverage Experiments */}
+              {trials.length >= 15 && (() => {
+                const hlKey = Object.keys(trials[0]?.kpis ?? {})[0];
+                if (!hlKey) return null;
+                const hlParams = Object.keys(trials[0].parameters);
+                const hlSorted = [...trials].sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                const hlK = 3;
+                // For each trial, compute LOO influence: how much does removing it change predictions on neighbors
+                const hlInfluences: { iter: number; influence: number }[] = [];
+                for (let i = 0; i < hlSorted.length; i++) {
+                  const others = hlSorted.filter((_: unknown, j: number) => j !== i);
+                  // Find 5 nearest neighbors of trial i
+                  const nbrs = hlSorted.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }, j: number) => {
+                    if (j === i) return { d: Infinity, idx: j };
+                    let d2 = 0;
+                    for (const p of hlParams) d2 += ((hlSorted[i].parameters[p] ?? 0) - (t.parameters[p] ?? 0)) ** 2;
+                    return { d: Math.sqrt(d2), idx: j };
+                  }).sort((a: { d: number }, b: { d: number }) => a.d - b.d).slice(0, 5);
+                  // For each neighbor: prediction with trial i vs without
+                  let totalDiff = 0;
+                  for (const nb of nbrs) {
+                    // With trial i: k-NN from all others
+                    const allDists = hlSorted.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }, j: number) => {
+                      if (j === nb.idx) return { d: Infinity, v: 0 };
+                      let d2 = 0;
+                      for (const p of hlParams) d2 += ((hlSorted[nb.idx].parameters[p] ?? 0) - (t.parameters[p] ?? 0)) ** 2;
+                      return { d: Math.sqrt(d2), v: t.kpis[hlKey] };
+                    }).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                    const predWith = allDists.slice(0, hlK).reduce((s: number, d: { v: number }) => s + d.v, 0) / hlK;
+                    // Without trial i
+                    const woiDists = others.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }, j: number) => {
+                      const origIdx = j >= i ? j + 1 : j;
+                      if (origIdx === nb.idx) return { d: Infinity, v: 0 };
+                      let d2 = 0;
+                      for (const p of hlParams) d2 += ((hlSorted[nb.idx].parameters[p] ?? 0) - (t.parameters[p] ?? 0)) ** 2;
+                      return { d: Math.sqrt(d2), v: t.kpis[hlKey] };
+                    }).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                    const predWo = woiDists.slice(0, hlK).reduce((s: number, d: { v: number }) => s + d.v, 0) / hlK;
+                    totalDiff += Math.abs(predWith - predWo);
+                  }
+                  hlInfluences.push({ iter: hlSorted[i].iteration, influence: totalDiff / 5 });
+                }
+                const hlMax = Math.max(...hlInfluences.map(h => h.influence)) || 1;
+                const hlNorm = hlInfluences.map(h => h.influence / hlMax);
+                const hlHighCount = hlNorm.filter(v => v > 0.6).length;
+                const hlBadge = hlHighCount > hlNorm.length * 0.2 ? "High Leverage" : hlHighCount > hlNorm.length * 0.05 ? "Mixed" : "Uniform";
+                const hlColor = hlBadge === "High Leverage" ? "#eab308" : hlBadge === "Mixed" ? "var(--color-primary)" : "var(--color-text-muted)";
+                const hlW = 260, hlH = 50, hlPd = 3;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Zap size={16} style={{ color: "var(--color-primary)" }} />
+                      <strong style={{ fontSize: "0.88rem" }}>High-Leverage Experiments</strong>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: hlBadge === "High Leverage" ? "rgba(234,179,8,0.12)" : hlBadge === "Mixed" ? "var(--color-success-bg)" : "rgba(148,163,184,0.12)", color: hlColor }}>{hlBadge}</span>
+                    </div>
+                    <svg width="100%" height={hlH} viewBox={`0 0 ${hlW} ${hlH}`} style={{ display: "block" }}>
+                      {/* Threshold line */}
+                      <line x1={hlPd} y1={hlPd + (1 - 0.6) * (hlH - 2 * hlPd)} x2={hlW - hlPd} y2={hlPd + (1 - 0.6) * (hlH - 2 * hlPd)} stroke="#eab308" strokeWidth="0.6" strokeDasharray="3,3" opacity="0.5" />
+                      {hlNorm.map((v, i) => {
+                        const x = hlPd + (i / (hlNorm.length - 1)) * (hlW - 2 * hlPd);
+                        const y = hlPd + (1 - v) * (hlH - 2 * hlPd);
+                        const col = v > 0.6 ? "#eab308" : v > 0.3 ? "var(--color-primary)" : "var(--color-text-muted)";
+                        return <circle key={i} cx={x} cy={y} r={v > 0.6 ? 3 : 2} fill={col} opacity={0.4 + v * 0.6} />;
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>trial 1</span>
+                      <span>{hlHighCount} high-leverage / {hlNorm.length} total</span>
+                      <span>trial {hlInfluences[hlInfluences.length - 1]?.iter}</span>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {hlBadge === "High Leverage" ? "Some experiments disproportionately shape predictions — consider replicating them." : hlBadge === "Mixed" ? "A few influential experiments — model isn't dominated by outliers." : "All experiments contribute uniformly — robust model foundation."}
                     </div>
                   </div>
                 );
