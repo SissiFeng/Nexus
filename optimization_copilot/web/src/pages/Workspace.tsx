@@ -111,6 +111,10 @@ import {
   Mountain,
   LineChart,
   Workflow,
+  Split,
+  Users,
+  Award,
+  Milestone,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3532,6 +3536,75 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Uncertainty Decomposition — Batch 22 */}
+              {trials.length >= 12 && (() => {
+                const udSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const udKpis = udSorted.map(t => Object.values(t.kpis)[0] ?? 0);
+                const udWin = 8;
+                const udWindows: { epistemic: number; aleatoric: number; total: number }[] = [];
+                for (let i = 0; i <= udKpis.length - udWin; i += Math.max(1, Math.floor(udWin / 2))) {
+                  const window = udKpis.slice(i, i + udWin);
+                  const mean = window.reduce((s, v) => s + v, 0) / window.length;
+                  const totalVar = window.reduce((s, v) => s + (v - mean) ** 2, 0) / window.length;
+                  // Aleatoric: average pairwise distance between adjacent trials (measurement noise proxy)
+                  let noiseSum = 0;
+                  for (let j = 1; j < window.length; j++) noiseSum += (window[j] - window[j - 1]) ** 2;
+                  const aleatoric = noiseSum / (2 * (window.length - 1));
+                  const epistemic = Math.max(0, totalVar - aleatoric);
+                  udWindows.push({ epistemic, aleatoric, total: totalVar });
+                }
+                if (udWindows.length < 3) return null;
+                const udMaxTotal = Math.max(0.0001, ...udWindows.map(w => w.total));
+                // Ratio of epistemic to total — higher = model is uncertain (can learn more)
+                const udRecentEpi = udWindows.slice(-3).reduce((s, w) => s + w.epistemic, 0) / (3 * Math.max(0.0001, udWindows.slice(-3).reduce((s, w) => s + w.total, 0)));
+                const udBadge = udRecentEpi > 0.6 ? "Model-Limited" : udRecentEpi > 0.3 ? "Balanced" : "Noise-Limited";
+                const udBadgeColor = udRecentEpi > 0.6 ? "var(--color-blue, #3b82f6)" : udRecentEpi > 0.3 ? "var(--color-green, #22c55e)" : "var(--color-yellow, #eab308)";
+                const udW = 240, udH = 80, udPadL = 4, udPadR = 4, udPadT = 6, udPadB = 14;
+                const udPlotW = udW - udPadL - udPadR;
+                const udPlotH = udH - udPadT - udPadB;
+                // Build stacked area paths
+                const udPoints = udWindows.map((w, i) => ({
+                  x: udPadL + (i / Math.max(1, udWindows.length - 1)) * udPlotW,
+                  epiY: udPadT + (1 - w.epistemic / udMaxTotal) * udPlotH,
+                  totalY: udPadT + (1 - w.total / udMaxTotal) * udPlotH,
+                  baseY: udPadT + udPlotH,
+                }));
+                // Aleatoric area (bottom): baseY to epiY offset
+                const udAleaTop = udPoints.map(p => ({ x: p.x, y: udPadT + (1 - (udWindows[udPoints.indexOf(p)]?.aleatoric ?? 0) / udMaxTotal) * udPlotH }));
+                const udAleaPath = `M${udPoints[0].x},${udPoints[0].baseY} ` + udAleaTop.map(p => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") + ` L${udPoints[udPoints.length - 1].x},${udPoints[udPoints.length - 1].baseY} Z`;
+                const udTotalPath = `M${udPoints[0].x},${udPoints[0].baseY} ` + udPoints.map(p => `L${p.x.toFixed(1)},${p.totalY.toFixed(1)}`).join(" ") + ` L${udPoints[udPoints.length - 1].x},${udPoints[udPoints.length - 1].baseY} Z`;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Split size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Uncertainty Decomposition</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: udBadgeColor + "18", color: udBadgeColor }}>{udBadge}</span>
+                    </div>
+                    <svg width={udW} height={udH} style={{ width: "100%", maxWidth: udW }}>
+                      <path d={udTotalPath} fill="rgba(59,130,246,0.25)" stroke="none" />
+                      <path d={udAleaPath} fill="rgba(234,179,8,0.35)" stroke="none" />
+                      {/* Top line */}
+                      <path d={udPoints.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.totalY.toFixed(1)}`).join(" ")} fill="none" stroke="var(--color-primary)" strokeWidth={1.2} />
+                      <text x={udW / 2} y={udH - 1} textAnchor="middle" fontSize={8} fill="var(--color-text-muted)">Window Index</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: "12px", fontSize: "0.75rem", marginTop: "4px" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                        <span style={{ width: 10, height: 6, background: "rgba(59,130,246,0.3)", display: "inline-block", borderRadius: 1 }} /> Epistemic (model)
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                        <span style={{ width: 10, height: 6, background: "rgba(234,179,8,0.4)", display: "inline-block", borderRadius: 1 }} /> Aleatoric (noise)
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      Epistemic ratio: <strong style={{ color: "var(--color-text)" }}>{(udRecentEpi * 100).toFixed(0)}%</strong>
+                      <span style={{ marginLeft: "6px", fontStyle: "italic" }}>
+                        {udRecentEpi > 0.6 ? " — model still learning, keep exploring" : udRecentEpi > 0.3 ? " — balanced uncertainty, normal optimization" : " — noise-limited, consider better measurements"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -5314,6 +5387,90 @@ export default function Workspace() {
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       <span>{flParams[0].name} →</span>
                       <span>↓ {flParams[1].name}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Model Disagreement Map — Batch 22 */}
+              {trials.length >= 10 && (() => {
+                const mdSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (mdSpecs.length < 2) return null;
+                const mdSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const mdParams = mdSpecs.slice(0, 2);
+                const mdN = 8;
+                const mdKpis = mdSorted.map(t => Object.values(t.kpis)[0] ?? 0);
+                // For each grid cell, compute "disagreement" = variance of k-NN predictions from different subsets (bootstrap)
+                const mdGrid: number[][] = Array.from({ length: mdN }, () => Array(mdN).fill(0));
+                const mdK = Math.min(5, Math.floor(mdSorted.length / 3));
+                for (let yi = 0; yi < mdN; yi++) {
+                  for (let xi = 0; xi < mdN; xi++) {
+                    const cx = mdParams[0].lower! + (xi + 0.5) / mdN * (mdParams[0].upper! - mdParams[0].lower!);
+                    const cy = mdParams[1].lower! + (yi + 0.5) / mdN * (mdParams[1].upper! - mdParams[1].lower!);
+                    // Get distances to all trials
+                    const dists = mdSorted.map((t, idx) => {
+                      const dx = (t.parameters[mdParams[0].name] - cx) / (mdParams[0].upper! - mdParams[0].lower!);
+                      const dy = (t.parameters[mdParams[1].name] - cy) / (mdParams[1].upper! - mdParams[1].lower!);
+                      return { dist: Math.sqrt(dx * dx + dy * dy), kpi: mdKpis[idx] };
+                    }).sort((a, b) => a.dist - b.dist);
+                    const neighbors = dists.slice(0, mdK);
+                    // "Disagreement" = std of neighbor KPIs (proxy for model uncertainty)
+                    const nMean = neighbors.reduce((s, n) => s + n.kpi, 0) / neighbors.length;
+                    const nVar = neighbors.reduce((s, n) => s + (n.kpi - nMean) ** 2, 0) / neighbors.length;
+                    mdGrid[yi][xi] = Math.sqrt(nVar);
+                  }
+                }
+                const mdMax = Math.max(0.0001, ...mdGrid.flat());
+                // Consensus score: fraction of cells with low disagreement
+                const mdLowDisagree = mdGrid.flat().filter(v => v / mdMax < 0.4).length / (mdN * mdN);
+                const mdBadge = mdLowDisagree > 0.7 ? "High Consensus" : mdLowDisagree > 0.4 ? "Moderate" : "High Disagreement";
+                const mdBadgeColor = mdLowDisagree > 0.7 ? "var(--color-green, #22c55e)" : mdLowDisagree > 0.4 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const mdCell = 22;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Users size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Model Disagreement Map</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: mdBadgeColor + "18", color: mdBadgeColor }}>{mdBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                      <svg width={mdCell * mdN + 2} height={mdCell * mdN + 2} style={{ flexShrink: 0 }}>
+                        {mdGrid.map((row, yi) => row.map((disagree, xi) => {
+                          const norm = disagree / mdMax;
+                          // Green (consensus) → Red (disagreement)
+                          const r = Math.round(34 + norm * 200);
+                          const g = Math.round(197 - norm * 140);
+                          const b = Math.round(94 - norm * 30);
+                          return (
+                            <rect key={`md-${yi}-${xi}`} x={xi * mdCell + 1} y={yi * mdCell + 1} width={mdCell - 1} height={mdCell - 1} rx={2} fill={`rgb(${r},${g},${b})`} stroke="var(--color-border)" strokeWidth={0.3}>
+                              <title>{mdParams[0].name}[{xi}] × {mdParams[1].name}[{yi}]: σ={disagree.toFixed(4)} ({(norm * 100).toFixed(0)}%)</title>
+                            </rect>
+                          );
+                        }))}
+                      </svg>
+                      <div style={{ flex: 1, fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                        <div style={{ marginBottom: "6px" }}>
+                          <span style={{ fontWeight: 600, color: "var(--color-text)" }}>Consensus: {(mdLowDisagree * 100).toFixed(0)}%</span>
+                          <span style={{ marginLeft: "6px" }}>of cells agree</span>
+                        </div>
+                        <div style={{ marginBottom: "4px" }}>Max σ: {mdMax.toFixed(4)}</div>
+                        <div style={{ marginBottom: "4px" }}>k-NN: {mdK} neighbors per cell</div>
+                        <div style={{ display: "flex", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
+                          {[["#22c55e", "Consensus"], ["#ef4444", "Disagreement"]].map(([c, l]) => (
+                            <span key={l} style={{ display: "flex", alignItems: "center", gap: "3px", fontSize: "0.7rem" }}>
+                              <span style={{ width: 8, height: 8, borderRadius: 2, background: c, display: "inline-block" }} />
+                              {l}
+                            </span>
+                          ))}
+                        </div>
+                        <div style={{ fontSize: "0.73rem", fontStyle: "italic", marginTop: "6px" }}>
+                          {mdLowDisagree < 0.4 ? "Red zones have high uncertainty — prioritize exploring these regions." : mdLowDisagree < 0.7 ? "Some uncertain regions remain — targeted exploration may help." : "Model is confident across most of the space."}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>{mdParams[0].name} →</span>
+                      <span>↓ {mdParams[1].name}</span>
                     </div>
                   </div>
                 );
@@ -8252,6 +8409,126 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Batch Informativeness — Batch 22 */}
+              {suggestions && trials.length >= 5 && (() => {
+                const bqSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (bqSpecs.length === 0 || suggestions.suggestions.length === 0) return null;
+                const bqSuggs = suggestions.suggestions;
+                const bqSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const bqK = Math.min(5, bqSorted.length);
+                // Expected improvement proxy: predicted value improvement over current best
+                const bqBestKpi = Math.max(...bqSorted.map(t => Object.values(t.kpis)[0] ?? -Infinity));
+                const bqEIs: number[] = bqSuggs.map(s => {
+                  // k-NN predicted value
+                  const dists = bqSorted.map(t => {
+                    let d = 0;
+                    bqSpecs.forEach((spec: { name: string; lower?: number; upper?: number }) => {
+                      const range = (spec.upper ?? 1) - (spec.lower ?? 0);
+                      const diff = ((s[spec.name] ?? 0) - (t.parameters[spec.name] ?? 0)) / (range || 1);
+                      d += diff * diff;
+                    });
+                    return { dist: Math.sqrt(d), kpi: Object.values(t.kpis)[0] ?? 0 };
+                  }).sort((a, b) => a.dist - b.dist).slice(0, bqK);
+                  const pred = dists.reduce((sum, d) => sum + d.kpi, 0) / dists.length;
+                  return Math.max(0, pred - bqBestKpi);
+                });
+                // Diversity: avg pairwise distance
+                let bqPairSum = 0, bqPairCount = 0;
+                for (let i = 0; i < bqSuggs.length; i++) {
+                  for (let j = i + 1; j < bqSuggs.length; j++) {
+                    let d = 0;
+                    bqSpecs.forEach((spec: { name: string; lower?: number; upper?: number }) => {
+                      const range = (spec.upper ?? 1) - (spec.lower ?? 0);
+                      const diff = ((bqSuggs[i][spec.name] ?? 0) - (bqSuggs[j][spec.name] ?? 0)) / (range || 1);
+                      d += diff * diff;
+                    });
+                    bqPairSum += Math.sqrt(d);
+                    bqPairCount++;
+                  }
+                }
+                const bqDiversity = bqPairCount > 0 ? Math.min(1, bqPairSum / bqPairCount / Math.sqrt(bqSpecs.length)) : 0;
+                // Coverage: how much of unexplored space the suggestions cover
+                const bqNovelty = bqSuggs.map(s => {
+                  const minDist = Math.min(...bqSorted.map(t => {
+                    let d = 0;
+                    bqSpecs.forEach((spec: { name: string; lower?: number; upper?: number }) => {
+                      const range = (spec.upper ?? 1) - (spec.lower ?? 0);
+                      const diff = ((s[spec.name] ?? 0) - (t.parameters[spec.name] ?? 0)) / (range || 1);
+                      d += diff * diff;
+                    });
+                    return Math.sqrt(d);
+                  }));
+                  return Math.min(1, minDist / Math.sqrt(bqSpecs.length) * 2);
+                });
+                const bqAvgNovelty = bqNovelty.reduce((s, v) => s + v, 0) / bqNovelty.length;
+                // Composite score: 40% EI quality + 30% diversity + 30% novelty
+                const bqEiMax = Math.max(0.0001, ...bqEIs);
+                const bqEiNorm = bqEIs.reduce((s, v) => s + v / bqEiMax, 0) / bqEIs.length;
+                const bqScore = Math.min(100, Math.round((bqEiNorm * 0.4 + bqDiversity * 0.3 + bqAvgNovelty * 0.3) * 100));
+                const bqBadge = bqScore > 70 ? "Run It" : bqScore > 45 ? "Acceptable" : "Reconsider";
+                const bqBadgeColor = bqScore > 70 ? "var(--color-green, #22c55e)" : bqScore > 45 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Gauge visualization
+                const bqGaugeW = 160, bqGaugeH = 90;
+                const bqAngle = (bqScore / 100) * Math.PI;
+                const bqR = 60;
+                const bqCx = bqGaugeW / 2, bqCy = 75;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Award size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Batch Informativeness</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: bqBadgeColor + "18", color: bqBadgeColor }}>{bqBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                      <svg width={bqGaugeW} height={bqGaugeH} style={{ flexShrink: 0 }}>
+                        {/* Background arc */}
+                        <path d={`M${bqCx - bqR},${bqCy} A${bqR},${bqR} 0 0,1 ${bqCx + bqR},${bqCy}`} fill="none" stroke="var(--color-border)" strokeWidth={8} strokeLinecap="round" />
+                        {/* Score arc segments */}
+                        {[
+                          { start: 0, end: 0.45, color: "#ef4444" },
+                          { start: 0.45, end: 0.7, color: "#eab308" },
+                          { start: 0.7, end: 1, color: "#22c55e" },
+                        ].map((seg, i) => {
+                          const s = Math.PI - seg.start * Math.PI;
+                          const e = Math.PI - seg.end * Math.PI;
+                          return (
+                            <path key={`bq-seg-${i}`} d={`M${bqCx + bqR * Math.cos(s)},${bqCy - bqR * Math.sin(s)} A${bqR},${bqR} 0 0,1 ${bqCx + bqR * Math.cos(e)},${bqCy - bqR * Math.sin(e)}`} fill="none" stroke={seg.color} strokeWidth={8} strokeLinecap="round" opacity={0.3} />
+                          );
+                        })}
+                        {/* Needle */}
+                        <line x1={bqCx} y1={bqCy} x2={bqCx + (bqR - 10) * Math.cos(Math.PI - bqAngle)} y2={bqCy - (bqR - 10) * Math.sin(Math.PI - bqAngle)} stroke="var(--color-text)" strokeWidth={2} strokeLinecap="round" />
+                        <circle cx={bqCx} cy={bqCy} r={4} fill="var(--color-text)" />
+                        <text x={bqCx} y={bqCy - 20} textAnchor="middle" fontSize={18} fontWeight={700} fill="var(--color-text)">{bqScore}</text>
+                        <text x={bqCx} y={bqCy - 8} textAnchor="middle" fontSize={8} fill="var(--color-text-muted)">/ 100</text>
+                        <text x={bqCx - bqR + 5} y={bqCy + 12} fontSize={7} fill="var(--color-text-muted)">0</text>
+                        <text x={bqCx + bqR - 12} y={bqCy + 12} fontSize={7} fill="var(--color-text-muted)">100</text>
+                      </svg>
+                      <div style={{ flex: 1, fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                        <div style={{ marginBottom: "6px", fontWeight: 600, color: "var(--color-text)" }}>Quality Breakdown</div>
+                        {[
+                          { label: "Expected Improvement", value: bqEiNorm, weight: "40%" },
+                          { label: "Batch Diversity", value: bqDiversity, weight: "30%" },
+                          { label: "Novelty Coverage", value: bqAvgNovelty, weight: "30%" },
+                        ].map(item => (
+                          <div key={item.label} style={{ marginBottom: "4px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem" }}>
+                              <span>{item.label} ({item.weight})</span>
+                              <span style={{ fontWeight: 600 }}>{(item.value * 100).toFixed(0)}%</span>
+                            </div>
+                            <div style={{ height: 4, background: "var(--color-border)", borderRadius: 2, overflow: "hidden" }}>
+                              <div style={{ width: `${item.value * 100}%`, height: "100%", background: item.value > 0.6 ? "var(--color-green, #22c55e)" : item.value > 0.3 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)", borderRadius: 2 }} />
+                            </div>
+                          </div>
+                        ))}
+                        <div style={{ fontSize: "0.73rem", fontStyle: "italic", marginTop: "6px" }}>
+                          {bqScore > 70 ? "This batch is worth running — good balance of exploitation and exploration." : bqScore > 45 ? "Acceptable batch — consider regenerating for better diversity." : "Batch quality is low — try increasing exploration weight."}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -10374,6 +10651,114 @@ export default function Workspace() {
                       {etTrend > 0.05 ? "Efficiency improving — optimization is accelerating." : etTrend > -0.05 ? "Steady efficiency — normal optimization trajectory." : "Efficiency declining — consider changing strategy or stopping."}
                       <span style={{ display: "flex", alignItems: "center", gap: "3px", marginTop: "3px" }}>
                         <span style={{ width: 10, height: 2, background: "var(--color-green, #22c55e)", display: "inline-block" }} /> = improvement found
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Importance Trajectory — Batch 22 */}
+              {trials.length >= 15 && (() => {
+                const itSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (itSpecs.length < 2) return null;
+                const itSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const itKpis = itSorted.map(t => Object.values(t.kpis)[0] ?? 0);
+                const itWinSize = Math.max(8, Math.floor(itSorted.length / 5));
+                const itStep = Math.max(1, Math.floor(itWinSize / 2));
+                // Sliding-window variance-based importance
+                const itWindows: { importances: number[] }[] = [];
+                for (let start = 0; start <= itSorted.length - itWinSize; start += itStep) {
+                  const winTrials = itSorted.slice(start, start + itWinSize);
+                  const winKpis = itKpis.slice(start, start + itWinSize);
+                  const kpiVar = (() => {
+                    const m = winKpis.reduce((s, v) => s + v, 0) / winKpis.length;
+                    return winKpis.reduce((s, v) => s + (v - m) ** 2, 0) / winKpis.length;
+                  })();
+                  if (kpiVar < 1e-12) {
+                    itWindows.push({ importances: itSpecs.map(() => 1 / itSpecs.length) });
+                    continue;
+                  }
+                  // For each parameter, compute correlation-based importance
+                  const imps = itSpecs.map((spec: { name: string; lower?: number; upper?: number }) => {
+                    const pVals = winTrials.map(t => t.parameters[spec.name] ?? 0);
+                    const pMean = pVals.reduce((s, v) => s + v, 0) / pVals.length;
+                    const kMean = winKpis.reduce((s, v) => s + v, 0) / winKpis.length;
+                    let num = 0, denP = 0, denK = 0;
+                    pVals.forEach((p, i) => {
+                      num += (p - pMean) * (winKpis[i] - kMean);
+                      denP += (p - pMean) ** 2;
+                      denK += (winKpis[i] - kMean) ** 2;
+                    });
+                    const corr = (denP > 0 && denK > 0) ? num / Math.sqrt(denP * denK) : 0;
+                    return corr * corr; // R² as importance
+                  });
+                  const impSum = imps.reduce((s, v) => s + v, 0) || 1;
+                  itWindows.push({ importances: imps.map(v => v / impSum) });
+                }
+                if (itWindows.length < 3) return null;
+                // Stability: average rank correlation between consecutive windows
+                let itRankCorr = 0;
+                for (let i = 1; i < itWindows.length; i++) {
+                  const prev = itWindows[i - 1].importances;
+                  const curr = itWindows[i].importances;
+                  const pRanks = prev.map((v, idx) => ({ v, idx })).sort((a, b) => b.v - a.v).map((item, r) => ({ idx: item.idx, r }));
+                  const cRanks = curr.map((v, idx) => ({ v, idx })).sort((a, b) => b.v - a.v).map((item, r) => ({ idx: item.idx, r }));
+                  let dSq = 0;
+                  pRanks.forEach(pr => {
+                    const cr = cRanks.find(c => c.idx === pr.idx);
+                    dSq += (pr.r - (cr?.r ?? 0)) ** 2;
+                  });
+                  const n = prev.length;
+                  itRankCorr += 1 - (6 * dSq) / (n * (n * n - 1));
+                }
+                itRankCorr /= (itWindows.length - 1);
+                const itBadge = itRankCorr > 0.7 ? "Stable" : itRankCorr > 0.3 ? "Shifting" : "Volatile";
+                const itBadgeColor = itRankCorr > 0.7 ? "var(--color-green, #22c55e)" : itRankCorr > 0.3 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Stacked area chart
+                const itW = 260, itH = 100, itPadL = 4, itPadR = 4, itPadT = 6, itPadB = 14;
+                const itPlotW = itW - itPadL - itPadR;
+                const itPlotH = itH - itPadT - itPadB;
+                // Colors for parameters (using HSL spread)
+                const itColors = itSpecs.map((_: unknown, i: number) => `hsl(${(i * 360) / itSpecs.length}, 65%, 55%)`);
+                // Build stacked area paths for each parameter
+                const itAreas = itSpecs.map((_: unknown, pIdx: number) => {
+                  const pts: { x: number; yTop: number; yBottom: number }[] = itWindows.map((w, wi) => {
+                    const x = itPadL + (wi / Math.max(1, itWindows.length - 1)) * itPlotW;
+                    const cumBelow = w.importances.slice(0, pIdx).reduce((s, v) => s + v, 0);
+                    const cumAbove = cumBelow + w.importances[pIdx];
+                    return { x, yTop: itPadT + (1 - cumAbove) * itPlotH, yBottom: itPadT + (1 - cumBelow) * itPlotH };
+                  });
+                  const topPath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.yTop.toFixed(1)}`).join(" ");
+                  const bottomPath = [...pts].reverse().map((p, i) => `${i === 0 ? "L" : "L"}${p.x.toFixed(1)},${p.yBottom.toFixed(1)}`).join(" ");
+                  return `${topPath} ${bottomPath} Z`;
+                });
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Milestone size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Importance Trajectory</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: itBadgeColor + "18", color: itBadgeColor }}>{itBadge}</span>
+                    </div>
+                    <svg width={itW} height={itH} style={{ width: "100%", maxWidth: itW }}>
+                      {itAreas.map((d, i) => (
+                        <path key={`it-area-${i}`} d={d} fill={itColors[i]} opacity={0.6} stroke={itColors[i]} strokeWidth={0.5}>
+                          <title>{itSpecs[i].name}</title>
+                        </path>
+                      ))}
+                      <text x={itW / 2} y={itH - 1} textAnchor="middle" fontSize={8} fill="var(--color-text-muted)">Window Index</text>
+                    </svg>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
+                      {itSpecs.map((s: { name: string }, i: number) => (
+                        <span key={s.name} style={{ display: "flex", alignItems: "center", gap: "3px", fontSize: "0.68rem" }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: itColors[i], display: "inline-block" }} />
+                          {s.name}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      Rank stability: <strong style={{ color: "var(--color-text)" }}>ρ = {itRankCorr.toFixed(2)}</strong>
+                      <span style={{ marginLeft: "6px", fontStyle: "italic" }}>
+                        {itRankCorr > 0.7 ? " — parameter importance is consistent" : itRankCorr > 0.3 ? " — importance is shifting between parameters" : " — volatile rankings indicate complex landscape"}
                       </span>
                     </div>
                   </div>
