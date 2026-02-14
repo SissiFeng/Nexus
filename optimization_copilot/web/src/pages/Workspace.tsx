@@ -95,6 +95,10 @@ import {
   Share2,
   ScanLine,
   Map,
+  HeartPulse,
+  Microscope,
+  CandlestickChart,
+  Hourglass,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3142,6 +3146,114 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Campaign Coherence Score */}
+              {trials.length >= 10 && (() => {
+                const ccSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (ccSpecs.length === 0) return null;
+                const ccSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const ccN = ccSorted.length;
+                const ccKey = Object.keys(ccSorted[0]?.kpis || {})[0];
+                if (!ccKey) return null;
+                const ccKpis = ccSorted.map(t => Number(t.kpis[ccKey]) || 0);
+
+                // 1. Calibration: LOO k-NN prediction accuracy
+                const ccK = Math.min(5, ccN - 1);
+                const ccNorms = ccSorted.map(t => {
+                  const vals: number[] = [];
+                  ccSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper ?? 1) - (s.lower ?? 0) || 1;
+                    vals.push(((Number(t.parameters[s.name]) || 0) - (s.lower ?? 0)) / range);
+                  });
+                  return vals;
+                });
+                let ccTotalErr = 0;
+                for (let i = 0; i < ccN; i++) {
+                  const dists = ccNorms.map((v, j) => ({ d: j === i ? Infinity : Math.sqrt(v.reduce((s, x, k) => s + (x - ccNorms[i][k]) ** 2, 0)), j }));
+                  dists.sort((a, b) => a.d - b.d);
+                  const pred = dists.slice(0, ccK).reduce((s, d) => s + ccKpis[d.j], 0) / ccK;
+                  ccTotalErr += Math.abs(pred - ccKpis[i]);
+                }
+                const ccMAE = ccTotalErr / ccN;
+                const ccKpiStd = Math.sqrt(ccKpis.reduce((s, v) => s + (v - ccKpis.reduce((a, b) => a + b, 0) / ccN) ** 2, 0) / ccN) || 1;
+                const ccCalibration = Math.max(0, Math.min(1, 1 - ccMAE / ccKpiStd));
+
+                // 2. Exploration balance: novelty of recent 20% vs overall spread
+                const ccRecent = ccNorms.slice(-Math.max(5, Math.floor(ccN * 0.2)));
+                const ccRecentCentroid = ccRecent[0].map((_, k) => ccRecent.reduce((s, v) => s + v[k], 0) / ccRecent.length);
+                const ccAllCentroid = ccNorms[0].map((_, k) => ccNorms.reduce((s, v) => s + v[k], 0) / ccN);
+                const ccRecentSpread = ccRecent.reduce((s, v) => s + Math.sqrt(v.reduce((ss, x, k) => ss + (x - ccRecentCentroid[k]) ** 2, 0)), 0) / ccRecent.length;
+                const ccAllSpread = ccNorms.reduce((s, v) => s + Math.sqrt(v.reduce((ss, x, k) => ss + (x - ccAllCentroid[k]) ** 2, 0)), 0) / ccN;
+                const ccExploration = Math.max(0, Math.min(1, ccRecentSpread / (ccAllSpread || 1)));
+
+                // 3. Convergence: improvement in last 30% vs first 30%
+                const cc30 = Math.max(3, Math.floor(ccN * 0.3));
+                const ccEarlyBest = Math.min(...ccKpis.slice(0, cc30));
+                const ccLateBest = Math.min(...ccKpis.slice(-cc30));
+                const ccOverallRange = Math.max(...ccKpis) - Math.min(...ccKpis) || 1;
+                const ccConvergence = Math.max(0, Math.min(1, (ccEarlyBest - ccLateBest) / ccOverallRange));
+
+                // Weighted score
+                const ccScore = Math.round((ccCalibration * 0.4 + ccExploration * 0.3 + ccConvergence * 0.3) * 100);
+                const ccStatus = ccScore >= 70 ? "Healthy" : ccScore >= 40 ? "Investigate" : "Critical";
+                const ccStatusColor = ccScore >= 70 ? "var(--color-green, #22c55e)" : ccScore >= 40 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                // Arc drawing helper
+                const ccCx = 90, ccCy = 90, ccStartAngle = -210, ccEndAngle = 30;
+                const ccArc = (r: number, frac: number) => {
+                  const startRad = (ccStartAngle * Math.PI) / 180;
+                  const endRad = ((ccStartAngle + (ccEndAngle - ccStartAngle) * frac) * Math.PI) / 180;
+                  const x1 = ccCx + r * Math.cos(startRad), y1 = ccCy + r * Math.sin(startRad);
+                  const x2 = ccCx + r * Math.cos(endRad), y2 = ccCy + r * Math.sin(endRad);
+                  const large = frac > 0.5 ? 1 : 0;
+                  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${large} 1 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+                };
+
+                const ccDimensions = [
+                  { label: "Calibration", value: ccCalibration, radius: 70, color: "#3b82f6" },
+                  { label: "Exploration", value: ccExploration, radius: 55, color: "#8b5cf6" },
+                  { label: "Convergence", value: ccConvergence, radius: 40, color: "#10b981" },
+                ];
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <HeartPulse size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Campaign Coherence</h3>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: ccStatusColor + "18", color: ccStatusColor }}>{ccStatus} ({ccScore})</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                      <svg width={180} height={140} viewBox="0 0 180 140" style={{ flexShrink: 0 }}>
+                        {/* Background arcs */}
+                        {ccDimensions.map((d, i) => (
+                          <path key={`bg-${i}`} d={ccArc(d.radius, 1)} fill="none" stroke="var(--color-border)" strokeWidth={8} strokeLinecap="round" />
+                        ))}
+                        {/* Value arcs */}
+                        {ccDimensions.map((d, i) => (
+                          <path key={`val-${i}`} d={ccArc(d.radius, Math.max(0.01, d.value))} fill="none" stroke={d.color} strokeWidth={8} strokeLinecap="round" opacity={0.85} />
+                        ))}
+                        {/* Center score */}
+                        <text x={ccCx} y={ccCy - 4} textAnchor="middle" fill={ccStatusColor} fontFamily="var(--font-mono)" fontSize={22} fontWeight={700}>{ccScore}</text>
+                        <text x={ccCx} y={ccCy + 12} textAnchor="middle" fill="var(--color-text-muted)" fontSize={9}>/ 100</text>
+                      </svg>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: "0.78rem", flex: 1 }}>
+                        {ccDimensions.map((d, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
+                            <span style={{ flex: 1 }}>{d.label}</span>
+                            <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: d.color }}>{(d.value * 100).toFixed(0)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>40% calibration + 30% exploration + 30% convergence</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -4518,6 +4630,115 @@ export default function Workspace() {
                         <span style={{ display: "inline-block", width: 14, height: 2, background: "#eab308", marginRight: 3, marginLeft: 8, verticalAlign: "middle" }} />Moderate
                         <span style={{ display: "inline-block", width: 14, height: 2, background: "#94a3b8", marginRight: 3, marginLeft: 8, verticalAlign: "middle" }} />Weak
                       </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Local Sensitivity Map */}
+              {trials.length >= 15 && (() => {
+                const lsSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (lsSpecs.length < 2) return null;
+                const lsKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!lsKey) return null;
+
+                // Pick top 2 params by variance
+                const lsVarScores = lsSpecs.map((s: { name: string; lower?: number; upper?: number }) => {
+                  const vals = trials.map(t => Number(t.parameters[s.name]) || 0);
+                  const mu = vals.reduce((a, b) => a + b, 0) / vals.length;
+                  return { spec: s, variance: vals.reduce((a, v) => a + (v - mu) ** 2, 0) / vals.length };
+                }).sort((a: { variance: number }, b: { variance: number }) => b.variance - a.variance);
+                const lsP1 = lsVarScores[0].spec as { name: string; lower?: number; upper?: number };
+                const lsP2 = lsVarScores[1].spec as { name: string; lower?: number; upper?: number };
+                const lsGrid = 8;
+
+                // Build grid: each cell stores KPI values
+                const lsCells: number[][][] = Array.from({ length: lsGrid }, () => Array.from({ length: lsGrid }, () => []));
+                const lsP1Min = lsP1.lower ?? 0, lsP1Max = lsP1.upper ?? 1;
+                const lsP2Min = lsP2.lower ?? 0, lsP2Max = lsP2.upper ?? 1;
+                const lsP1Range = lsP1Max - lsP1Min || 1, lsP2Range = lsP2Max - lsP2Min || 1;
+                trials.forEach(t => {
+                  const v1 = Number(t.parameters[lsP1.name]) || 0;
+                  const v2 = Number(t.parameters[lsP2.name]) || 0;
+                  const c = Math.min(lsGrid - 1, Math.max(0, Math.floor((v1 - lsP1Min) / lsP1Range * lsGrid)));
+                  const r = Math.min(lsGrid - 1, Math.max(0, Math.floor((v2 - lsP2Min) / lsP2Range * lsGrid)));
+                  lsCells[lsGrid - 1 - r][c].push(Number(t.kpis[lsKey]) || 0);
+                });
+
+                // Compute local std per cell (sensitivity)
+                const lsStds: (number | null)[][] = lsCells.map(row => row.map(cell => {
+                  if (cell.length < 2) return null;
+                  const mu = cell.reduce((a, b) => a + b, 0) / cell.length;
+                  return Math.sqrt(cell.reduce((a, v) => a + (v - mu) ** 2, 0) / cell.length);
+                }));
+
+                // Max std for normalization
+                let lsMaxStd = 0;
+                lsStds.forEach(row => row.forEach(v => { if (v !== null && v > lsMaxStd) lsMaxStd = v; }));
+                if (lsMaxStd === 0) lsMaxStd = 1;
+
+                // Count high-sensitivity cells (>60% of max)
+                let lsHighCount = 0;
+                lsStds.forEach(row => row.forEach(v => { if (v !== null && v / lsMaxStd > 0.6) lsHighCount++; }));
+                const lsTotalPopulated = lsStds.flat().filter(v => v !== null).length;
+                const lsStatus = lsHighCount === 0 ? "Uniform" : lsHighCount <= lsTotalPopulated * 0.3 ? "Localized" : "Widespread";
+                const lsStatusColor = lsStatus === "Uniform" ? "var(--color-green, #22c55e)" : lsStatus === "Localized" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                const lsCellSize = 28, lsGap = 2, lsPad = 30;
+                const lsW = lsPad + lsGrid * (lsCellSize + lsGap) + 30;
+                const lsH = lsPad + lsGrid * (lsCellSize + lsGap) + 16;
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <Microscope size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Local Sensitivity</h2>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: lsStatusColor + "18", color: lsStatusColor }}>{lsStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Local KPI variance across {lsP1.name} × {lsP2.name}. Red = high sensitivity, blue = low.
+                    </p>
+                    <svg width={lsW} height={lsH} viewBox={`0 0 ${lsW} ${lsH}`} style={{ display: "block", maxWidth: "100%" }}>
+                      {/* Y-axis label */}
+                      <text x={4} y={lsPad + (lsGrid * (lsCellSize + lsGap)) / 2} textAnchor="middle" fill="var(--color-text-muted)" fontSize={8} fontFamily="var(--font-mono)" transform={`rotate(-90, 4, ${lsPad + (lsGrid * (lsCellSize + lsGap)) / 2})`}>{lsP2.name}</text>
+                      {/* X-axis label */}
+                      <text x={lsPad + (lsGrid * (lsCellSize + lsGap)) / 2} y={lsH - 2} textAnchor="middle" fill="var(--color-text-muted)" fontSize={8} fontFamily="var(--font-mono)">{lsP1.name}</text>
+                      {/* Grid cells */}
+                      {lsStds.map((row, ri) => row.map((val, ci) => {
+                        const x = lsPad + ci * (lsCellSize + lsGap);
+                        const y = lsPad + ri * (lsCellSize + lsGap);
+                        const norm = val !== null ? val / lsMaxStd : -1;
+                        let fill: string;
+                        if (norm < 0) fill = "var(--color-border)";
+                        else if (norm < 0.25) fill = "#3b82f6";
+                        else if (norm < 0.5) fill = "#8b5cf6";
+                        else if (norm < 0.75) fill = "#f59e0b";
+                        else fill = "#ef4444";
+                        const count = lsCells[ri][ci].length;
+                        return (
+                          <g key={`${ri}-${ci}`}>
+                            <rect x={x} y={y} width={lsCellSize} height={lsCellSize} rx={3} fill={fill} opacity={norm < 0 ? 0.15 : 0.7} />
+                            {count > 0 && <text x={x + lsCellSize / 2} y={y + lsCellSize / 2 + 3} textAnchor="middle" fill={norm > 0.5 ? "#fff" : "var(--color-text)"} fontSize={8} fontFamily="var(--font-mono)">{count}</text>}
+                          </g>
+                        );
+                      }))}
+                      {/* Color legend */}
+                      {[
+                        { label: "Low", color: "#3b82f6" },
+                        { label: "Med", color: "#8b5cf6" },
+                        { label: "High", color: "#f59e0b" },
+                        { label: "V.High", color: "#ef4444" },
+                      ].map((item, i) => (
+                        <g key={i}>
+                          <rect x={lsPad + lsGrid * (lsCellSize + lsGap) + 6} y={lsPad + i * 18} width={10} height={10} rx={2} fill={item.color} opacity={0.7} />
+                          <text x={lsPad + lsGrid * (lsCellSize + lsGap) + 20} y={lsPad + i * 18 + 8} fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">{item.label}</text>
+                        </g>
+                      ))}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>{lsHighCount} high-sensitivity cells of {lsTotalPopulated} populated</span>
                     </div>
                   </div>
                 );
@@ -7034,6 +7255,116 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Prediction Confidence Intervals */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const pcSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (pcSpecs.length === 0) return null;
+                const pcKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!pcKey) return null;
+                const pcK = Math.min(7, trials.length - 1);
+                const pcSugs = suggestions.suggestions;
+
+                // Normalize trials
+                const pcTrialNorms = trials.map(t => {
+                  const vals: number[] = [];
+                  pcSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper ?? 1) - (s.lower ?? 0) || 1;
+                    vals.push(((Number(t.parameters[s.name]) || 0) - (s.lower ?? 0)) / range);
+                  });
+                  return vals;
+                });
+                const pcKpis = trials.map(t => Number(t.kpis[pcKey]) || 0);
+
+                // For each suggestion: k-NN prediction + std
+                const pcData = pcSugs.map((sug: Record<string, number>, idx: number) => {
+                  const sugNorm: number[] = [];
+                  pcSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper ?? 1) - (s.lower ?? 0) || 1;
+                    sugNorm.push(((Number(sug[s.name]) || 0) - (s.lower ?? 0)) / range);
+                  });
+                  const dists = pcTrialNorms.map((v, j) => ({
+                    d: Math.sqrt(v.reduce((s, x, k) => s + (x - sugNorm[k]) ** 2, 0)),
+                    j,
+                  })).sort((a, b) => a.d - b.d);
+                  const neighbors = dists.slice(0, pcK);
+                  const predicted = neighbors.reduce((s, n) => s + pcKpis[n.j], 0) / pcK;
+                  const std = Math.sqrt(neighbors.reduce((s, n) => s + (pcKpis[n.j] - predicted) ** 2, 0) / pcK);
+                  return { idx: idx + 1, predicted, std, minDist: dists[0].d };
+                }).sort((a, b) => a.predicted - b.predicted);
+
+                const pcAllVals = pcData.flatMap(d => [d.predicted - d.std, d.predicted + d.std]);
+                const pcMinVal = Math.min(...pcAllVals);
+                const pcMaxVal = Math.max(...pcAllVals);
+                const pcRange = pcMaxVal - pcMinVal || 1;
+                const pcBest = Math.min(...pcKpis);
+
+                // SVG dimensions
+                const pcLabelW = 32, pcBarW = 220, pcValW = 60, pcH = pcData.length * 28 + 30;
+                const pcTotalW = pcLabelW + pcBarW + pcValW;
+
+                const pcAvgStd = pcData.reduce((s, d) => s + d.std, 0) / pcData.length;
+                const pcKpiStd = Math.sqrt(pcKpis.reduce((s, v) => s + (v - pcKpis.reduce((a, b) => a + b, 0) / pcKpis.length) ** 2, 0) / pcKpis.length) || 1;
+                const pcConfidence = pcAvgStd < pcKpiStd * 0.3 ? "High" : pcAvgStd < pcKpiStd * 0.6 ? "Moderate" : "Low";
+                const pcConfColor = pcConfidence === "High" ? "var(--color-green, #22c55e)" : pcConfidence === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <CandlestickChart size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Prediction Confidence</h3>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: pcConfColor + "18", color: pcConfColor }}>{pcConfidence} Confidence</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      k-NN predicted {pcKey} ± std for each suggestion. Narrower bars = more certain.
+                    </p>
+                    <svg width={pcTotalW} height={pcH} viewBox={`0 0 ${pcTotalW} ${pcH}`} style={{ display: "block", maxWidth: "100%" }}>
+                      {/* Best-so-far line */}
+                      {(() => {
+                        const bestX = pcLabelW + ((pcBest - pcMinVal) / pcRange) * pcBarW;
+                        return (
+                          <g>
+                            <line x1={bestX} y1={4} x2={bestX} y2={pcH - 18} stroke="var(--color-green, #22c55e)" strokeWidth={1} strokeDasharray="3,3" opacity={0.6} />
+                            <text x={bestX} y={pcH - 8} textAnchor="middle" fill="var(--color-green, #22c55e)" fontSize={7} fontFamily="var(--font-mono)">best</text>
+                          </g>
+                        );
+                      })()}
+                      {pcData.map((d, i) => {
+                        const y = 8 + i * 28;
+                        const centerX = pcLabelW + ((d.predicted - pcMinVal) / pcRange) * pcBarW;
+                        const halfW = (d.std / pcRange) * pcBarW;
+                        const leftX = Math.max(pcLabelW, centerX - halfW);
+                        const rightX = Math.min(pcLabelW + pcBarW, centerX + halfW);
+                        const hue = d.std < pcKpiStd * 0.3 ? "#22c55e" : d.std < pcKpiStd * 0.6 ? "#eab308" : "#ef4444";
+                        return (
+                          <g key={i}>
+                            {/* Label */}
+                            <text x={pcLabelW - 6} y={y + 12} textAnchor="end" fill="var(--color-text)" fontSize={10} fontFamily="var(--font-mono)" fontWeight={600}>#{d.idx}</text>
+                            {/* Error bar (whiskers) */}
+                            <line x1={leftX} y1={y + 10} x2={rightX} y2={y + 10} stroke={hue} strokeWidth={3} strokeLinecap="round" opacity={0.5} />
+                            <line x1={leftX} y1={y + 6} x2={leftX} y2={y + 14} stroke={hue} strokeWidth={1.5} strokeLinecap="round" opacity={0.7} />
+                            <line x1={rightX} y1={y + 6} x2={rightX} y2={y + 14} stroke={hue} strokeWidth={1.5} strokeLinecap="round" opacity={0.7} />
+                            {/* Center dot */}
+                            <circle cx={centerX} cy={y + 10} r={4} fill={hue} />
+                            {/* Value text */}
+                            <text x={pcLabelW + pcBarW + 6} y={y + 12} fill="var(--color-text)" fontSize={8} fontFamily="var(--font-mono)">{d.predicted.toPrecision(3)} ±{d.std.toPrecision(2)}</text>
+                          </g>
+                        );
+                      })}
+                      {/* Axis */}
+                      <line x1={pcLabelW} y1={pcH - 20} x2={pcLabelW + pcBarW} y2={pcH - 20} stroke="var(--color-border)" strokeWidth={0.5} />
+                      <text x={pcLabelW} y={pcH - 11} fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">{pcMinVal.toPrecision(3)}</text>
+                      <text x={pcLabelW + pcBarW} y={pcH - 11} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">{pcMaxVal.toPrecision(3)}</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>k={pcK} NN prediction</span>
+                      <span>avg ±{pcAvgStd.toPrecision(2)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -8736,6 +9067,117 @@ export default function Workspace() {
                     <div style={{ display: "flex", gap: 12, marginTop: 2, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
                       <span>{rvGrid}×{rvGrid} grid, top 2 variance params</span>
                       <span style={{ marginLeft: "auto" }}>Best: {rvMinKpi.toPrecision(3)} in ({rvBestCell.col + 1},{rvGrid - rvBestCell.row})</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Stagnation Pattern Detector */}
+              {trials.length >= 20 && (() => {
+                const spSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const spKey = Object.keys(spSorted[0]?.kpis || {})[0];
+                if (!spKey) return null;
+                const spKpis = spSorted.map(t => Number(t.kpis[spKey]) || 0);
+                const spN = spKpis.length;
+
+                // Best-so-far curve
+                const spBsf: number[] = [];
+                let spBest = spKpis[0];
+                spKpis.forEach(v => { spBest = Math.min(spBest, v); spBsf.push(spBest); });
+
+                // Rolling improvement rate (window=10)
+                const spWin = Math.min(10, Math.floor(spN / 3));
+                const spRates: { iter: number; rate: number }[] = [];
+                for (let i = spWin; i < spN; i++) {
+                  const improvement = spBsf[i - spWin] - spBsf[i]; // positive = improving (for min)
+                  const range = Math.max(...spKpis) - Math.min(...spKpis) || 1;
+                  spRates.push({ iter: spSorted[i].iteration, rate: (improvement / range) * 100 });
+                }
+                if (spRates.length === 0) return null;
+
+                // Detect epochs: progressing, plateau, cycling
+                const spSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                const spEpochs: { start: number; end: number; type: string }[] = [];
+                const spEpochWin = Math.min(10, spRates.length);
+                for (let i = 0; i <= spRates.length - spEpochWin; i += Math.max(1, Math.floor(spEpochWin / 2))) {
+                  const chunk = spRates.slice(i, i + spEpochWin);
+                  const avgRate = chunk.reduce((s, r) => s + r.rate, 0) / chunk.length;
+                  let type: string;
+                  if (avgRate > 0.5) type = "progressing";
+                  else if (avgRate > -0.1) {
+                    // Check cycling: compare parameter centroid shift
+                    if (spSpecs.length > 0 && i + spEpochWin < spN) {
+                      const windowTrials = spSorted.slice(i + spWin, i + spWin + spEpochWin);
+                      const prevTrials = spSorted.slice(Math.max(0, i + spWin - spEpochWin), i + spWin);
+                      if (prevTrials.length >= 3 && windowTrials.length >= 3) {
+                        const centroid = (ts: typeof trials) => spSpecs.map((s: { name: string; lower?: number; upper?: number }) => {
+                          const range = ((s.upper ?? 1) - (s.lower ?? 0)) || 1;
+                          return ts.reduce((acc, t) => acc + ((Number(t.parameters[s.name]) || 0) - (s.lower ?? 0)) / range, 0) / ts.length;
+                        });
+                        const c1 = centroid(prevTrials), c2 = centroid(windowTrials);
+                        const drift = Math.sqrt(c1.reduce((s, v, k) => s + (v - c2[k]) ** 2, 0));
+                        type = drift < 0.15 ? "cycling" : "plateau";
+                      } else type = "plateau";
+                    } else type = "plateau";
+                  } else type = "plateau";
+                  spEpochs.push({ start: chunk[0].iter, end: chunk[chunk.length - 1].iter, type });
+                }
+
+                // Overall status from last epoch
+                const spLastType = spEpochs.length > 0 ? spEpochs[spEpochs.length - 1].type : "progressing";
+                const spStatus = spLastType === "progressing" ? "Progressing" : spLastType === "cycling" ? "Cycling" : "Plateau";
+                const spStatusColor = spStatus === "Progressing" ? "var(--color-green, #22c55e)" : spStatus === "Plateau" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                // SVG
+                const spPadL = 30, spPadR = 10, spChartW = 320, spChartH = 100;
+                const spW = spPadL + spChartW + spPadR;
+                const spH = spChartH + 40;
+                const spMaxRate = Math.max(5, Math.max(...spRates.map(r => Math.abs(r.rate))));
+                const spZeroY = 16 + spChartH / 2;
+
+                const spMinIter = spRates[0].iter, spMaxIter = spRates[spRates.length - 1].iter;
+                const spIterRange = spMaxIter - spMinIter || 1;
+                const spX = (iter: number) => spPadL + ((iter - spMinIter) / spIterRange) * spChartW;
+                const spY = (rate: number) => spZeroY - (rate / spMaxRate) * (spChartH / 2);
+
+                // Line path
+                const spLine = spRates.map((r, i) => `${i === 0 ? "M" : "L"}${spX(r.iter).toFixed(1)},${spY(r.rate).toFixed(1)}`).join(" ");
+
+                // Epoch colors
+                const spEpochColors: Record<string, string> = { progressing: "rgba(34,197,94,0.12)", plateau: "rgba(234,179,8,0.12)", cycling: "rgba(239,68,68,0.12)" };
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <Hourglass size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Stagnation Patterns</h2>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: spStatusColor + "18", color: spStatusColor }}>{spStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Rolling improvement rate (window={spWin}) with detected epochs.
+                    </p>
+                    <svg width={spW} height={spH} viewBox={`0 0 ${spW} ${spH}`} style={{ display: "block", maxWidth: "100%" }}>
+                      {/* Epoch backgrounds */}
+                      {spEpochs.map((e, i) => (
+                        <rect key={i} x={spX(e.start)} y={16} width={Math.max(2, spX(e.end) - spX(e.start))} height={spChartH} fill={spEpochColors[e.type] || "transparent"} rx={2} />
+                      ))}
+                      {/* Zero line */}
+                      <line x1={spPadL} y1={spZeroY} x2={spPadL + spChartW} y2={spZeroY} stroke="var(--color-border)" strokeWidth={0.5} strokeDasharray="4,3" />
+                      <text x={spPadL - 4} y={spZeroY + 3} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">0%</text>
+                      {/* Rate line */}
+                      <path d={spLine} fill="none" stroke="var(--color-primary)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Axis labels */}
+                      <text x={spPadL} y={spH - 2} fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">{spMinIter}</text>
+                      <text x={spPadL + spChartW} y={spH - 2} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">{spMaxIter}</text>
+                      <text x={spPadL - 4} y={20} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">+{spMaxRate.toFixed(0)}%</text>
+                      <text x={spPadL - 4} y={16 + spChartH} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">-{spMaxRate.toFixed(0)}%</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, justifyContent: "center", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(34,197,94,0.3)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Progressing</span>
+                      <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(234,179,8,0.3)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Plateau</span>
+                      <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(239,68,68,0.3)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Cycling</span>
                     </div>
                   </div>
                 );
