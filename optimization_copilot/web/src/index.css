@@ -2681,6 +2681,69 @@ a:hover {
   background: var(--color-row-winner) !important;
 }
 
+/* ── Correlation List ── */
+
+.correlation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.correlation-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 70px 70px;
+  align-items: center;
+  gap: 12px;
+}
+
+.correlation-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.correlation-bar-bg {
+  height: 8px;
+  background: var(--color-bar-bg);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.correlation-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  position: absolute;
+  top: 0;
+}
+
+.correlation-value {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.correlation-strength {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .correlation-row {
+    grid-template-columns: 80px 1fr 60px;
+  }
+  .correlation-strength {
+    display: none;
+  }
+}
+
 /* ── Responsive Overrides ── */
 
 @media (max-width: 1024px) {

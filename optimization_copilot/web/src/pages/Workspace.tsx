@@ -465,13 +465,13 @@ export default function Workspace() {
 
               <div className="card">
                 <h2>Parameter Space</h2>
-                {campaign.best_parameters ? (
+                {trials.length > 0 ? (
                   <RealScatterMatrix
-                    data={campaign.kpi_history.iterations.map((_, i) => ({
-                      ...campaign.best_parameters!,
-                      objective: campaign.kpi_history.values[i],
+                    data={trials.map((t) => ({
+                      ...t.parameters,
+                      objective: Object.values(t.kpis)[0] ?? 0,
                     }))}
-                    parameters={Object.keys(campaign.best_parameters)}
+                    parameters={Object.keys(trials[0].parameters)}
                     objectiveName="objective"
                     objectiveDirection="minimize"
                   />
@@ -481,6 +481,59 @@ export default function Workspace() {
                   </p>
                 )}
               </div>
+
+              {/* Parameter Correlation Summary */}
+              {trials.length >= 5 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                const objValues = trials.map((t) => Object.values(t.kpis)[0] ?? 0);
+                const correlations = paramNames.map((p) => {
+                  const paramValues = trials.map((t) => Number(t.parameters[p]) || 0);
+                  const n = paramValues.length;
+                  const meanP = paramValues.reduce((a, b) => a + b, 0) / n;
+                  const meanO = objValues.reduce((a, b) => a + b, 0) / n;
+                  const stdP = Math.sqrt(paramValues.reduce((a, v) => a + (v - meanP) ** 2, 0) / n);
+                  const stdO = Math.sqrt(objValues.reduce((a, v) => a + (v - meanO) ** 2, 0) / n);
+                  if (stdP === 0 || stdO === 0) return { name: p, corr: 0 };
+                  const cov = paramValues.reduce((a, v, i) => a + (v - meanP) * (objValues[i] - meanO), 0) / n;
+                  return { name: p, corr: cov / (stdP * stdO) };
+                }).sort((a, b) => Math.abs(b.corr) - Math.abs(a.corr));
+
+                return (
+                  <div className="card">
+                    <h2>Parameter–Objective Correlation</h2>
+                    <p style={{ fontSize: "0.82rem", color: "var(--color-text-muted)", marginBottom: "16px" }}>
+                      Pearson correlation between each parameter and the primary objective.
+                      Stronger values suggest higher influence.
+                    </p>
+                    <div className="correlation-list">
+                      {correlations.map((c) => {
+                        const absCorr = Math.abs(c.corr);
+                        const color = absCorr > 0.5 ? "var(--color-primary)" : absCorr > 0.3 ? "var(--color-yellow)" : "var(--color-gray)";
+                        const strength = absCorr > 0.5 ? "Strong" : absCorr > 0.3 ? "Moderate" : "Weak";
+                        return (
+                          <div key={c.name} className="correlation-row">
+                            <span className="correlation-name mono">{c.name}</span>
+                            <div className="correlation-bar-bg">
+                              <div
+                                className="correlation-bar-fill"
+                                style={{
+                                  width: `${absCorr * 100}%`,
+                                  background: color,
+                                  marginLeft: c.corr < 0 ? `${(1 - absCorr) * 50}%` : "50%",
+                                }}
+                              />
+                            </div>
+                            <span className="correlation-value mono" style={{ color }}>
+                              {c.corr > 0 ? "+" : ""}{c.corr.toFixed(3)}
+                            </span>
+                            <span className="correlation-strength" style={{ color }}>{strength}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Pareto Front — shown when 2+ objectives are configured */}
               {(() => {
