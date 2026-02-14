@@ -357,13 +357,16 @@ export default function Workspace() {
     }
   };
 
+  const sugCount = suggestions?.suggestions?.length ?? 0;
+  const trialCount = campaign.observations?.length ?? 0;
+
   const tabs = [
-    { id: "overview", label: "Overview", icon: LayoutDashboard },
-    { id: "explore", label: "Explore", icon: Search },
-    { id: "suggestions", label: "Suggestions", icon: Beaker },
-    { id: "insights", label: "Insights", icon: Lightbulb },
-    { id: "history", label: "History", icon: Clock },
-    { id: "export", label: "Export", icon: Download },
+    { id: "overview", label: "Overview", icon: LayoutDashboard, badge: null as number | null },
+    { id: "explore", label: "Explore", icon: Search, badge: null },
+    { id: "suggestions", label: "Suggestions", icon: Beaker, badge: sugCount > 0 ? sugCount : null },
+    { id: "insights", label: "Insights", icon: Lightbulb, badge: null },
+    { id: "history", label: "History", icon: Clock, badge: trialCount > 0 ? trialCount : null },
+    { id: "export", label: "Export", icon: Download, badge: null },
   ] as const;
 
   // Build trial data from real observations
@@ -481,6 +484,9 @@ export default function Workspace() {
             >
               <tab.icon size={16} />
               <span>{tab.label}</span>
+              {tab.badge !== null && (
+                <span className="tab-badge">{tab.badge > 99 ? "99+" : tab.badge}</span>
+              )}
               <kbd className="tab-kbd">{idx + 1}</kbd>
             </button>
           ))}
@@ -1574,6 +1580,27 @@ export default function Workspace() {
         .workspace-tab.active {
           color: var(--color-primary);
           border-bottom-color: var(--color-primary);
+        }
+
+        .tab-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 18px;
+          height: 18px;
+          padding: 0 5px;
+          border-radius: 9px;
+          font-size: 0.65rem;
+          font-weight: 700;
+          font-family: var(--font-mono);
+          background: var(--color-primary-subtle);
+          color: var(--color-primary);
+          line-height: 1;
+        }
+
+        .workspace-tab.active .tab-badge {
+          background: var(--color-primary);
+          color: white;
         }
 
         .tab-kbd {
