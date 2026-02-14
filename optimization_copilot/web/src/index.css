@@ -1040,6 +1040,7 @@ a:hover {
   .page-header {
     flex-direction: column;
     align-items: flex-start;
+    gap: 10px;
   }
 
   .search-input {
@@ -1047,7 +1048,7 @@ a:hover {
   }
 
   .stats-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .campaign-header {
@@ -1063,13 +1064,75 @@ a:hover {
     width: 100%;
   }
 
+  .nav-bar {
+    padding: 0 12px;
+    gap: 0;
+  }
+
   .nav-links {
-    margin-left: 20px;
-    gap: 14px;
+    margin-left: 8px;
+    gap: 2px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .nav-links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-link {
+    padding: 6px 8px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .nav-right {
+    flex-shrink: 0;
   }
 
   .audit-entry-header {
     flex-wrap: wrap;
+  }
+
+  .compare-toolbar {
+    left: 12px;
+    right: 12px;
+    transform: none;
+    bottom: 16px;
+  }
+
+  @keyframes toolbar-slide-up {
+    from {
+      transform: translateY(20px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-row {
+    grid-template-columns: 1fr;
+  }
+
+  .nav-brand a {
+    font-size: 0.82rem;
+  }
+
+  .dashboard-card-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-card-actions .btn {
+    justify-content: center;
   }
 }
 

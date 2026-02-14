@@ -1840,15 +1840,24 @@ export default function Workspace() {
           }
 
           .workspace-tabs {
-            padding: 0 16px;
+            padding: 0 12px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+          }
+
+          .workspace-tabs::-webkit-scrollbar {
+            display: none;
           }
 
           .workspace-tab {
             padding: 10px 12px;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
+            white-space: nowrap;
+            flex-shrink: 0;
           }
 
-          .workspace-tab span {
+          .tab-kbd {
             display: none;
           }
 
@@ -1856,8 +1865,62 @@ export default function Workspace() {
             grid-template-columns: 1fr;
           }
 
+          .workspace-layout {
+            flex-direction: column;
+          }
+
           .workspace-chat {
             width: 100%;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 50vh;
+            z-index: 50;
+            border-top: 1px solid var(--color-border);
+            border-left: none;
+            box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
+          }
+
+          .workspace-main {
+            padding-bottom: 60px;
+          }
+
+          .workspace-breadcrumb {
+            font-size: 0.78rem;
+            padding: 8px 16px;
+          }
+
+          .workspace-meta {
+            flex-wrap: wrap;
+            gap: 6px;
+          }
+
+          .workspace-title {
+            font-size: 1.1rem;
+          }
+
+          .stats-row {
+            grid-template-columns: repeat(2, 1fr);
+          }
+
+          .history-toolbar {
+            flex-direction: column;
+            gap: 8px;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .stats-row {
+            grid-template-columns: 1fr;
+          }
+
+          .workspace-tab span {
+            display: none;
+          }
+
+          .workspace-tab .tab-badge {
+            display: inline-flex;
           }
         }
       `}</style>
