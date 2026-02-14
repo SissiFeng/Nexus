@@ -123,6 +123,10 @@ import {
   Anchor,
   AlertOctagon,
   Calculator,
+  Waypoints,                     // Batch 25
+  Diff,
+  Rabbit,
+  Snail,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3878,6 +3882,99 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Optimization Momentum — second derivative of improvement */}
+              {(() => {
+                const omObs = campaign.observations || [];
+                if (omObs.length < 10) return null;
+                const omSorted = [...omObs].sort((a, b) => a.iteration - b.iteration);
+                const omObjKey = Object.keys(omSorted[0].kpi_values)[0];
+                if (!omObjKey) return null;
+                const omDir = campaign.objective_directions?.[omObjKey] === "minimize" ? -1 : 1;
+                // Compute best-so-far curve
+                let omBest = -Infinity;
+                const omBSF: number[] = [];
+                for (const o of omSorted) {
+                  const v = (Number(o.kpi_values[omObjKey]) || 0) * omDir;
+                  if (v > omBest) omBest = v;
+                  omBSF.push(omBest);
+                }
+                // Compute velocity (first derivative) in windows of 5
+                const omWinSize = 5;
+                const omVelocities: number[] = [];
+                for (let i = omWinSize; i < omBSF.length; i++) {
+                  omVelocities.push((omBSF[i] - omBSF[i - omWinSize]) / omWinSize);
+                }
+                if (omVelocities.length < 4) return null;
+                // Compute acceleration (second derivative)
+                const omAccels: number[] = [];
+                for (let i = 1; i < omVelocities.length; i++) {
+                  omAccels.push(omVelocities[i] - omVelocities[i - 1]);
+                }
+                // Recent momentum: average of last 5 accelerations
+                const omRecentN = Math.min(5, omAccels.length);
+                const omRecent = omAccels.slice(-omRecentN);
+                const omAvgAccel = omRecent.reduce((s, v) => s + v, 0) / omRecentN;
+                const omAvgVel = omVelocities.slice(-omRecentN).reduce((s, v) => s + v, 0) / omRecentN;
+                const omBadge = omAvgAccel > 0.001 ? "Accelerating" : omAvgAccel > -0.001 ? "Steady" : "Decelerating";
+                const omBadgeColor = omAvgAccel > 0.001 ? "var(--color-green, #22c55e)" : omAvgAccel > -0.001 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Spark chart of velocity + acceleration
+                const omW = 280, omH = 80, omPadL = 8, omPadR = 8, omPadT = 12, omPadB = 18;
+                const omPlotW = omW - omPadL - omPadR;
+                const omPlotH = omH - omPadT - omPadB;
+                const omMaxV = Math.max(...omVelocities.map(Math.abs), 0.001);
+                const omVelPts = omVelocities.map((v, i) => ({
+                  x: omPadL + (i / (omVelocities.length - 1)) * omPlotW,
+                  y: omPadT + (0.5 - (v / omMaxV) * 0.45) * omPlotH + omPlotH * 0.25,
+                }));
+                const omVelLine = omVelPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                // Area fill below velocity
+                const omBaseY = omPadT + omPlotH * 0.75;
+                const omAreaPath = omVelLine + `L${omVelPts[omVelPts.length - 1].x.toFixed(1)},${omBaseY} L${omVelPts[0].x.toFixed(1)},${omBaseY} Z`;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Waypoints size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>Optimization Momentum</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: omBadgeColor + "18", color: omBadgeColor }}>{omBadge}</span>
+                    </div>
+                    <svg width={omW} height={omH} viewBox={`0 0 ${omW} ${omH}`} style={{ display: "block", margin: "0 auto" }}>
+                      <defs>
+                        <linearGradient id="omGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={omBadgeColor} stopOpacity="0.25" />
+                          <stop offset="100%" stopColor={omBadgeColor} stopOpacity="0.02" />
+                        </linearGradient>
+                      </defs>
+                      {/* Zero line */}
+                      <line x1={omPadL} y1={omBaseY} x2={omW - omPadR} y2={omBaseY} stroke="var(--color-border)" strokeWidth="1" strokeDasharray="4,3" />
+                      {/* Area */}
+                      <path d={omAreaPath} fill="url(#omGrad)" />
+                      {/* Velocity line */}
+                      <path d={omVelLine} fill="none" stroke={omBadgeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx={omVelPts[omVelPts.length - 1].x} cy={omVelPts[omVelPts.length - 1].y} r="3.5" fill={omBadgeColor} />
+                      {/* Labels */}
+                      <text x={omPadL} y={omH - 2} style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>Early</text>
+                      <text x={omW - omPadR} y={omH - 2} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>Recent</text>
+                      <text x={omW / 2} y={omH - 2} textAnchor="middle" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>Improvement velocity</text>
+                    </svg>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "8px" }}>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>Velocity</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)", color: omAvgVel > 0 ? "var(--color-green, #22c55e)" : "var(--color-text-muted)" }}>{omAvgVel > 0 ? "+" : ""}{omAvgVel.toFixed(5)}/iter</div>
+                      </div>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>Acceleration</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)", color: omBadgeColor }}>{omAvgAccel > 0 ? "+" : ""}{omAvgAccel.toFixed(5)}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "8px", textAlign: "center" }}>
+                      {omBadge === "Accelerating" ? "Improvement rate is increasing — the optimizer is gaining momentum." :
+                       omBadge === "Steady" ? "Improvement rate is stable — consistent progress being made." :
+                       "Improvement rate is declining — consider changing strategy or expanding search space."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -5963,6 +6060,105 @@ export default function Workspace() {
                       {rsBadge === "Robust" ? "Top-performing regions are stable across resamples — high confidence in optimal parameters." :
                        rsBadge === "Mixed" ? "Some parameters show instability — consider focusing exploration on fragile dimensions." :
                        "Parameter rankings shift significantly across resamples — more data needed for reliable conclusions."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Local Sensitivity Map — finite-difference sensitivity at best point */}
+              {trials.length >= 8 && (() => {
+                const lsSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (lsSpecs.length < 2) return null;
+                const lsObjKey = Object.keys(trials[0].kpis)[0];
+                if (!lsObjKey) return null;
+                const lsSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // Find best trial
+                const lsBest = lsSorted.reduce((best, t) => (Number(t.kpis[lsObjKey]) || 0) < (Number(best.kpis[lsObjKey]) || 0) ? t : best);
+                const lsBestParams = lsSpecs.map((s: { name: string }) => Number(lsBest.parameters[s.name]) || 0);
+                // For each parameter, compute local sensitivity via k-NN
+                const lsParamNames = lsSpecs.map((s: { name: string }) => s.name);
+                const lsRanges = lsSpecs.map((s: { lower?: number; upper?: number }) => (s.upper ?? 1) - (s.lower ?? 0));
+                const lsSensitivities = lsParamNames.map((_p: string, pi: number) => {
+                  // Find trials near best point but varying in this parameter
+                  const lsEps = lsRanges[pi] * 0.15;
+                  // Partition into "lower" and "upper" neighbors along this param
+                  const bestVal = lsBestParams[pi];
+                  const lsLower = lsSorted.filter(t => {
+                    const v = Number(t.parameters[lsParamNames[pi]]) || 0;
+                    if (v >= bestVal - lsEps && v < bestVal) {
+                      // Check other params are close
+                      return lsParamNames.every((p2: string, j: number) => j === pi || Math.abs((Number(t.parameters[p2]) || 0) - lsBestParams[j]) < lsRanges[j] * 0.3);
+                    }
+                    return false;
+                  });
+                  const lsUpper = lsSorted.filter(t => {
+                    const v = Number(t.parameters[lsParamNames[pi]]) || 0;
+                    if (v > bestVal && v <= bestVal + lsEps) {
+                      return lsParamNames.every((p2: string, j: number) => j === pi || Math.abs((Number(t.parameters[p2]) || 0) - lsBestParams[j]) < lsRanges[j] * 0.3);
+                    }
+                    return false;
+                  });
+                  // If not enough neighbors, use broader k-NN approach
+                  if (lsLower.length === 0 && lsUpper.length === 0) {
+                    // Fall back: compute correlation between this param and objective in local neighborhood
+                    const lsK = Math.min(15, Math.floor(lsSorted.length * 0.3));
+                    const lsDists = lsSorted.map(t => ({
+                      d: Math.sqrt(lsParamNames.reduce((s: number, p: string, j: number) => s + ((Number(t.parameters[p]) || 0) - lsBestParams[j]) ** 2 / (lsRanges[j] || 1) ** 2, 0)),
+                      pv: Number(t.parameters[lsParamNames[pi]]) || 0,
+                      ov: Number(t.kpis[lsObjKey]) || 0,
+                    })).sort((a, b) => a.d - b.d).slice(0, lsK);
+                    if (lsDists.length < 3) return 0;
+                    const pmean = lsDists.reduce((s, d) => s + d.pv, 0) / lsDists.length;
+                    const omean = lsDists.reduce((s, d) => s + d.ov, 0) / lsDists.length;
+                    const pstd = Math.sqrt(lsDists.reduce((s, d) => s + (d.pv - pmean) ** 2, 0) / lsDists.length);
+                    const ostd = Math.sqrt(lsDists.reduce((s, d) => s + (d.ov - omean) ** 2, 0) / lsDists.length);
+                    if (pstd < 1e-10 || ostd < 1e-10) return 0;
+                    const corr = lsDists.reduce((s, d) => s + (d.pv - pmean) * (d.ov - omean), 0) / (lsDists.length * pstd * ostd);
+                    return Math.abs(corr);
+                  }
+                  const lsAvgLower = lsLower.length > 0 ? lsLower.reduce((s, t) => s + (Number(t.kpis[lsObjKey]) || 0), 0) / lsLower.length : Number(lsBest.kpis[lsObjKey]) || 0;
+                  const lsAvgUpper = lsUpper.length > 0 ? lsUpper.reduce((s, t) => s + (Number(t.kpis[lsObjKey]) || 0), 0) / lsUpper.length : Number(lsBest.kpis[lsObjKey]) || 0;
+                  const lsDeltaObj = Math.abs(lsAvgUpper - lsAvgLower);
+                  const lsRange = lsRanges[pi] || 1;
+                  return lsDeltaObj / lsRange;
+                });
+                const lsMaxSens = Math.max(...lsSensitivities, 0.001);
+                const lsNormalized = lsSensitivities.map((s: number) => s / lsMaxSens);
+                const lsHighCount = lsNormalized.filter((v: number) => v > 0.6).length;
+                const lsBadge = lsHighCount > lsNormalized.length * 0.5 ? "Sensitive" : lsHighCount > 0 ? "Moderate" : "Robust";
+                const lsBadgeColor = lsBadge === "Sensitive" ? "var(--color-red, #ef4444)" : lsBadge === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)";
+                // Horizontal bar chart
+                const lsBarH = 20;
+                const lsLabelW = 70;
+                const lsBarMaxW = 180;
+                const lsTotalH = lsParamNames.length * (lsBarH + 4) + 10;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Diff size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>Local Sensitivity Map</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: lsBadgeColor + "18", color: lsBadgeColor }}>{lsBadge}</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginBottom: "8px" }}>Sensitivity of objective to each parameter near the best point.</div>
+                    <svg width={lsLabelW + lsBarMaxW + 50} height={lsTotalH} viewBox={`0 0 ${lsLabelW + lsBarMaxW + 50} ${lsTotalH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {lsParamNames.map((p: string, i: number) => {
+                        const y = i * (lsBarH + 4) + 5;
+                        const w = lsNormalized[i] * lsBarMaxW;
+                        const barColor = lsNormalized[i] > 0.6 ? "var(--color-red, #ef4444)" : lsNormalized[i] > 0.3 ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)";
+                        return (
+                          <g key={i}>
+                            <text x={lsLabelW - 4} y={y + lsBarH / 2 + 4} textAnchor="end" style={{ fontSize: "0.55rem", fontFamily: "var(--font-mono)", fill: "var(--color-text-muted)" }}>{p.length > 8 ? p.slice(0, 7) + "…" : p}</text>
+                            <rect x={lsLabelW} y={y} width={lsBarMaxW} height={lsBarH} rx={4} fill="var(--color-border)" opacity={0.3} />
+                            <rect x={lsLabelW} y={y} width={Math.max(w, 2)} height={lsBarH} rx={4} fill={barColor} opacity={0.7} />
+                            <text x={lsLabelW + Math.max(w, 2) + 4} y={y + lsBarH / 2 + 4} style={{ fontSize: "0.55rem", fontFamily: "var(--font-mono)", fontWeight: 600, fill: barColor }}>{(lsNormalized[i] * 100).toFixed(0)}%</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "6px", textAlign: "center" }}>
+                      {lsBadge === "Sensitive" ? "Objective changes sharply near optimum — precise parameter control is critical." :
+                       lsBadge === "Moderate" ? "Some parameters strongly affect the objective near optimum — focus tuning there." :
+                       "Objective is flat near optimum — robust to small parameter variations."}
                     </div>
                   </div>
                 );
@@ -9259,6 +9455,81 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Redundancy Filter — similarity of suggestions to past trials */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 3 && (() => {
+                const rfSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rfSpecs.length < 2) return null;
+                const rfParamNames = rfSpecs.map((s: { name: string }) => s.name);
+                const rfRanges = rfSpecs.map((s: { lower?: number; upper?: number }) => Math.max((s.upper ?? 1) - (s.lower ?? 0), 1e-10));
+                const rfSuggs = suggestions.suggestions;
+                // For each suggestion, find min normalized Euclidean distance to any past trial
+                const rfDistances = rfSuggs.map(s => {
+                  let minDist = Infinity;
+                  for (const t of trials) {
+                    let dist = 0;
+                    for (let j = 0; j < rfParamNames.length; j++) {
+                      const diff = ((Number(s[rfParamNames[j]]) || 0) - (Number(t.parameters[rfParamNames[j]]) || 0)) / rfRanges[j];
+                      dist += diff * diff;
+                    }
+                    dist = Math.sqrt(dist / rfParamNames.length);
+                    if (dist < minDist) minDist = dist;
+                  }
+                  return minDist;
+                });
+                // Threshold: < 0.05 normalized distance = redundant, < 0.15 = overlap
+                const rfRedundant = rfDistances.filter(d => d < 0.05).length;
+                const rfOverlap = rfDistances.filter(d => d >= 0.05 && d < 0.15).length;
+                const rfNovel = rfDistances.filter(d => d >= 0.15).length;
+                const rfRedPct = rfSuggs.length > 0 ? rfRedundant / rfSuggs.length : 0;
+                const rfBadge = rfRedPct < 0.1 ? "Novel" : rfRedPct < 0.4 ? "Some Overlap" : "Redundant";
+                const rfBadgeColor = rfRedPct < 0.1 ? "var(--color-green, #22c55e)" : rfRedPct < 0.4 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Visual: horizontal bar per suggestion showing distance
+                const rfMaxDist = Math.max(...rfDistances, 0.3);
+                const rfW = 280, rfBarH = 22, rfLabelW = 30, rfPad = 8;
+                const rfTotalH = rfSuggs.length * (rfBarH + 4) + 10;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Rabbit size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>Redundancy Filter</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: rfBadgeColor + "18", color: rfBadgeColor }}>{rfBadge}</span>
+                    </div>
+                    <svg width={rfW} height={rfTotalH} viewBox={`0 0 ${rfW} ${rfTotalH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* Threshold lines */}
+                      {[0.05, 0.15].map(th => {
+                        const x = rfLabelW + rfPad + (th / rfMaxDist) * (rfW - rfLabelW - 2 * rfPad);
+                        return <line key={th} x1={x} y1={0} x2={x} y2={rfTotalH} stroke={th === 0.05 ? "var(--color-red, #ef4444)" : "var(--color-yellow, #eab308)"} strokeWidth="1" strokeDasharray="4,3" opacity={0.4} />;
+                      })}
+                      {rfSuggs.map((_s, i) => {
+                        const y = i * (rfBarH + 4) + 5;
+                        const dist = rfDistances[i];
+                        const w = (dist / rfMaxDist) * (rfW - rfLabelW - 2 * rfPad);
+                        const color = dist < 0.05 ? "var(--color-red, #ef4444)" : dist < 0.15 ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)";
+                        const label = dist < 0.05 ? "redundant" : dist < 0.15 ? "overlap" : "novel";
+                        return (
+                          <g key={i}>
+                            <text x={rfLabelW - 2} y={y + rfBarH / 2 + 4} textAnchor="end" style={{ fontSize: "0.6rem", fontWeight: 600, fill: "var(--color-text-muted)" }}>#{i + 1}</text>
+                            <rect x={rfLabelW + rfPad} y={y} width={rfW - rfLabelW - 2 * rfPad} height={rfBarH} rx={4} fill="var(--color-border)" opacity={0.15} />
+                            <rect x={rfLabelW + rfPad} y={y} width={Math.max(w, 2)} height={rfBarH} rx={4} fill={color} opacity={0.6} />
+                            <text x={rfLabelW + rfPad + Math.max(w, 2) + 4} y={y + rfBarH / 2 + 4} style={{ fontSize: "0.5rem", fontFamily: "var(--font-mono)", fill: color, fontWeight: 600 }}>{dist.toFixed(3)} {label}</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "center", gap: "16px", marginTop: "8px", fontSize: "0.72rem" }}>
+                      <span style={{ color: "var(--color-green, #22c55e)" }}><strong>{rfNovel}</strong> novel</span>
+                      <span style={{ color: "var(--color-yellow, #eab308)" }}><strong>{rfOverlap}</strong> overlap</span>
+                      <span style={{ color: "var(--color-red, #ef4444)" }}><strong>{rfRedundant}</strong> redundant</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "6px", textAlign: "center" }}>
+                      {rfBadge === "Novel" ? "All suggestions explore new parameter regions — efficient use of experimental budget." :
+                       rfBadge === "Some Overlap" ? "Some suggestions overlap with past trials — consider increasing exploration weight." :
+                       "Many suggestions duplicate past experiments — strongly consider increasing diversity."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -11699,6 +11970,82 @@ export default function Workspace() {
                       {rbBadge === "Near-Optimal" ? "Optimization outperforms theoretical bound — excellent exploration-exploitation balance." :
                        rbBadge === "Acceptable" ? "Regret tracks close to bound — reasonable optimization efficiency." :
                        "Regret exceeds theoretical bound — consider more aggressive exploitation or model tuning."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Discovery Cadence */}
+              {trials.length >= 6 && (() => {
+                const dcObjKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!dcObjKey) return null;
+                const dcSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // Find new-best events (cumulative best improvement)
+                let dcBest = dcSorted[0].kpis[dcObjKey];
+                const dcEvents: { iteration: number; value: number; gap: number }[] = [{ iteration: dcSorted[0].iteration, value: dcBest, gap: 0 }];
+                for (let i = 1; i < dcSorted.length; i++) {
+                  const v = dcSorted[i].kpis[dcObjKey];
+                  if (v < dcBest) {
+                    dcEvents.push({ iteration: dcSorted[i].iteration, value: v, gap: dcSorted[i].iteration - dcEvents[dcEvents.length - 1].iteration });
+                    dcBest = v;
+                  }
+                }
+                if (dcEvents.length < 2) return null;
+                // Gaps between discoveries (skip first which has gap=0)
+                const dcGaps = dcEvents.slice(1).map(e => e.gap);
+                const dcMaxGap = Math.max(...dcGaps);
+                const dcAvgGap = dcGaps.reduce((s, g) => s + g, 0) / dcGaps.length;
+                // Trend: compare first half avg vs second half avg
+                const dcHalf = Math.floor(dcGaps.length / 2);
+                const dcFirstHalf = dcHalf > 0 ? dcGaps.slice(0, dcHalf).reduce((s, g) => s + g, 0) / dcHalf : dcAvgGap;
+                const dcSecondHalf = dcHalf > 0 ? dcGaps.slice(dcHalf).reduce((s, g) => s + g, 0) / (dcGaps.length - dcHalf) : dcAvgGap;
+                const dcRatio = dcFirstHalf > 0 ? dcSecondHalf / dcFirstHalf : 1;
+                const dcBadge = dcRatio < 1.2 ? "Frequent" : dcRatio < 2.5 ? "Slowing" : "Stalled";
+                const dcBadgeColor = dcRatio < 1.2 ? "var(--color-green, #22c55e)" : dcRatio < 2.5 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // SVG bar chart of gaps
+                const dcW = 260, dcH = 90, dcPadL = 28, dcPadR = 4, dcPadT = 8, dcPadB = 16;
+                const dcPlotW = dcW - dcPadL - dcPadR;
+                const dcPlotH = dcH - dcPadT - dcPadB;
+                const dcBarW = Math.min(18, Math.max(4, dcPlotW / dcGaps.length - 2));
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Snail size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Discovery Cadence</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: dcBadgeColor + "18", color: dcBadgeColor }}>{dcBadge}</span>
+                    </div>
+                    <svg width={dcW} height={dcH} style={{ width: "100%", maxWidth: dcW }}>
+                      {/* Y-axis label */}
+                      <text x={2} y={dcPadT + dcPlotH / 2} textAnchor="start" fontSize={7} fill="var(--color-text-muted)" transform={`rotate(-90, 2, ${dcPadT + dcPlotH / 2})`} dominantBaseline="middle">Gap (iter)</text>
+                      {/* Bars */}
+                      {dcGaps.map((g, i) => {
+                        const barH = dcMaxGap > 0 ? (g / dcMaxGap) * dcPlotH : 0;
+                        const x = dcPadL + (i / Math.max(1, dcGaps.length - 1)) * (dcPlotW - dcBarW);
+                        const barColor = g <= dcAvgGap ? "var(--color-green, #22c55e)" : g <= dcAvgGap * 2 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return (
+                          <g key={`dc-bar-${i}`}>
+                            <rect x={x} y={dcPadT + dcPlotH - barH} width={dcBarW} height={barH} rx={2} fill={barColor} opacity={0.7}>
+                              <title>Discovery #{i + 2}: gap = {g} iterations (value = {dcEvents[i + 1].value.toFixed(4)})</title>
+                            </rect>
+                            {dcGaps.length <= 12 && (
+                              <text x={x + dcBarW / 2} y={dcH - 3} textAnchor="middle" fontSize={6.5} fill="var(--color-text-muted)">#{i + 2}</text>
+                            )}
+                          </g>
+                        );
+                      })}
+                      {/* Average line */}
+                      {dcMaxGap > 0 && (
+                        <line x1={dcPadL - 2} x2={dcPadL + dcPlotW} y1={dcPadT + dcPlotH - (dcAvgGap / dcMaxGap) * dcPlotH} y2={dcPadT + dcPlotH - (dcAvgGap / dcMaxGap) * dcPlotH} stroke="var(--color-primary)" strokeWidth={1} strokeDasharray="3,2" opacity={0.6} />
+                      )}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "0.73rem" }}>
+                      <span style={{ color: "var(--color-text-muted)" }}>{dcEvents.length} discoveries in {dcSorted.length} trials</span>
+                      <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--color-text)" }}>Avg gap: {dcAvgGap.toFixed(1)} iter</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {dcBadge === "Frequent" ? "Discoveries occur at a steady pace — optimization is actively finding improvements." :
+                       dcBadge === "Slowing" ? "Gaps between discoveries are widening — may be approaching optimum or needing strategy change." :
+                       "Long gaps between discoveries — consider restarting exploration or adjusting search bounds."}
                     </div>
                   </div>
                 );
