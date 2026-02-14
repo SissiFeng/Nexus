@@ -75,6 +75,10 @@ import {
   Gauge,
   MapPin,
   Scan,
+  Waves,
+  Grid3x3,
+  Diamond,
+  FlaskRound,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -2475,6 +2479,78 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Information Gain Efficiency */}
+              {trials.length >= 6 && (() => {
+                const igObjKey = campaign.objective_names?.[0] || Object.keys(trials[0].kpis)[0];
+                const igSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const igVals = igSorted.map(t => t.kpis[igObjKey] ?? 0);
+                const igN = igVals.length;
+                const igWinSize = Math.max(3, Math.floor(igN / 12));
+                // Compute rolling variance reduction (proxy for information gain)
+                const igGains: { iter: number; gain: number }[] = [];
+                for (let i = igWinSize; i < igN; i += Math.max(1, Math.floor(igWinSize / 2))) {
+                  const before = igVals.slice(Math.max(0, i - igWinSize * 2), i - igWinSize);
+                  const after = igVals.slice(i - igWinSize, i);
+                  if (before.length < 2 || after.length < 2) continue;
+                  const varBefore = (() => { const m = before.reduce((a, b) => a + b, 0) / before.length; return before.reduce((a, v) => a + (v - m) ** 2, 0) / before.length; })();
+                  const varAfter = (() => { const m = after.reduce((a, b) => a + b, 0) / after.length; return after.reduce((a, v) => a + (v - m) ** 2, 0) / after.length; })();
+                  const gain = varBefore > 1e-12 ? Math.max(0, 0.5 * Math.log(varBefore / Math.max(varAfter, 1e-15))) : 0;
+                  igGains.push({ iter: igSorted[i].iteration, gain: Math.min(gain, 3) });
+                }
+                if (igGains.length < 3) return null;
+                const igMax = Math.max(...igGains.map(g => g.gain), 0.01);
+                const igAvg = igGains.reduce((a, g) => a + g.gain, 0) / igGains.length;
+                const igRecent = igGains.slice(-3).reduce((a, g) => a + g.gain, 0) / 3;
+                const igPhase = igRecent > igAvg * 0.75 ? "Active learning" : igRecent > igAvg * 0.3 ? "Diminishing" : "Saturated";
+                const igPhaseColor = igPhase === "Active learning" ? "#22c55e" : igPhase === "Diminishing" ? "#f59e0b" : "#ef4444";
+                const igW = 200, igH = 65, igPadX = 18, igPadY = 10;
+                const igChartW = igW - 2 * igPadX, igChartH = igH - 2 * igPadY;
+                const igPts = igGains.map((g, i) => ({
+                  x: igPadX + (i / (igGains.length - 1)) * igChartW,
+                  y: igH - igPadY - (g.gain / igMax) * igChartH,
+                }));
+                const igPath = igPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const igAreaPath = `M${igPts[0].x},${igH - igPadY} ${igPts.map(p => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")} L${igPts[igPts.length - 1].x},${igH - igPadY} Z`;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Waves size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Information Gain</h3>
+                      <span className="findings-badge" style={{ background: igPhaseColor + "18", color: igPhaseColor, marginLeft: "auto" }}>
+                        {igPhase}
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${igW} ${igH}`} style={{ display: "block" }}>
+                      <defs>
+                        <linearGradient id="ig-fill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={igPhaseColor} stopOpacity="0.25" />
+                          <stop offset="100%" stopColor={igPhaseColor} stopOpacity="0.02" />
+                        </linearGradient>
+                      </defs>
+                      {/* Grid lines */}
+                      {[0.25, 0.5, 0.75].map(t => (
+                        <line key={`igg${t}`} x1={igPadX} y1={igH - igPadY - t * igChartH} x2={igW - igPadX} y2={igH - igPadY - t * igChartH} stroke="var(--color-border)" strokeWidth="0.5" />
+                      ))}
+                      {/* Fill */}
+                      <path d={igAreaPath} fill="url(#ig-fill)" />
+                      {/* Line */}
+                      <path d={igPath} fill="none" stroke={igPhaseColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Endpoint */}
+                      <circle cx={igPts[igPts.length - 1].x} cy={igPts[igPts.length - 1].y} r="2.5" fill={igPhaseColor} />
+                      {/* Labels */}
+                      <text x={igPadX} y={igH - 1} fontSize="5.5" fill="var(--color-text-muted)">early</text>
+                      <text x={igW - igPadX} y={igH - 1} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">recent</text>
+                      <text x={igPadX - 2} y={igPadY + 3} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">high</text>
+                      <text x={igPadX - 2} y={igH - igPadY} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">low</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                      <span>Avg gain: {igAvg.toFixed(3)} nats/window</span>
+                      <span>Recent: {igRecent.toFixed(3)} nats/window</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -3205,6 +3281,104 @@ export default function Workspace() {
                         <span key={seg.name}><strong style={{ color: seg.color }}>{seg.pct.toFixed(0)}%</strong> {seg.name}</span>
                       ))}
                       {vdIntW > 2 && <span><strong style={{ color: "#64748b" }}>{((vdInteraction / vdAll) * 100).toFixed(0)}%</strong> interactions</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Ensemble Disagreement Map */}
+              {trials.length >= 10 && (() => {
+                const edSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (edSpecs.length < 2) return null;
+                const edObjKey = campaign.objective_names?.[0] || Object.keys(trials[0].kpis)[0];
+                // Pick top-2 parameters by variance in objective across quantile bins
+                const edVarScores = edSpecs.map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const vals = trials.map(t => t.parameters[sp.name] ?? 0);
+                  const objs = trials.map(t => t.kpis[edObjKey] ?? 0);
+                  const sorted = vals.map((v: number, i: number) => ({ v, o: objs[i] })).sort((a: { v: number }, b: { v: number }) => a.v - b.v);
+                  const half = Math.floor(sorted.length / 2);
+                  const lo = sorted.slice(0, half).map((s: { o: number }) => s.o);
+                  const hi = sorted.slice(half).map((s: { o: number }) => s.o);
+                  const loMean = lo.reduce((a: number, b: number) => a + b, 0) / lo.length;
+                  const hiMean = hi.reduce((a: number, b: number) => a + b, 0) / hi.length;
+                  return { name: sp.name, lo: sp.lower ?? 0, hi: sp.upper ?? 1, score: Math.abs(hiMean - loMean) };
+                }).sort((a: { score: number }, b: { score: number }) => b.score - a.score);
+                const edP1 = edVarScores[0], edP2 = edVarScores[1];
+                // Build 10x10 grid of LOO disagreement
+                const edG = 10;
+                const edGrid: number[][] = Array.from({ length: edG }, () => Array(edG).fill(0));
+                const edNorm = (v: number, lo: number, hi: number) => hi > lo ? (v - lo) / (hi - lo) : 0.5;
+                // For each grid cell, compute LOO prediction disagreement (std of k-nearest preds)
+                const edK = 5;
+                for (let gi = 0; gi < edG; gi++) {
+                  for (let gj = 0; gj < edG; gj++) {
+                    const cx = (gi + 0.5) / edG;
+                    const cy = (gj + 0.5) / edG;
+                    // Find k nearest trials
+                    const dists = trials.map((t, idx) => ({
+                      idx,
+                      d: Math.sqrt((edNorm(t.parameters[edP1.name], edP1.lo, edP1.hi) - cx) ** 2 + (edNorm(t.parameters[edP2.name], edP2.lo, edP2.hi) - cy) ** 2),
+                      obj: t.kpis[edObjKey] ?? 0,
+                    })).sort((a, b) => a.d - b.d).slice(0, edK);
+                    // LOO predictions: each point predicts using remaining k-1
+                    const preds: number[] = [];
+                    for (let li = 0; li < dists.length; li++) {
+                      const others = dists.filter((_, j) => j !== li);
+                      const wSum = others.reduce((a, o) => a + 1 / Math.max(o.d, 0.01), 0);
+                      const pred = others.reduce((a, o) => a + (o.obj / Math.max(o.d, 0.01)), 0) / Math.max(wSum, 1e-10);
+                      preds.push(pred);
+                    }
+                    const predMean = preds.reduce((a, b) => a + b, 0) / preds.length;
+                    const disagreement = Math.sqrt(preds.reduce((a, v) => a + (v - predMean) ** 2, 0) / preds.length);
+                    edGrid[gi][gj] = disagreement;
+                  }
+                }
+                const edMax = Math.max(...edGrid.flat(), 1e-10);
+                const edAvg = edGrid.flat().reduce((a, b) => a + b, 0) / (edG * edG);
+                const edCellW = 14, edCellH = 14;
+                const edSvgW = edG * edCellW + 30, edSvgH = edG * edCellH + 25;
+                const edOx = 25, edOy = 5;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Grid3x3 size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Model Disagreement</h3>
+                      <span className="findings-badge" style={{ background: edAvg / edMax > 0.5 ? "#8b5cf618" : "#22c55e18", color: edAvg / edMax > 0.5 ? "#8b5cf6" : "#22c55e", marginLeft: "auto" }}>
+                        avg {((edAvg / edMax) * 100).toFixed(0)}% disagreement
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${edSvgW} ${edSvgH}`} style={{ display: "block" }}>
+                      {/* Heatmap cells */}
+                      {edGrid.map((row, gi) => row.map((val, gj) => {
+                        const intensity = val / edMax;
+                        const r = Math.round(255 * intensity);
+                        const g = Math.round(255 * (1 - intensity * 0.7));
+                        const b = Math.round(180 + 75 * intensity);
+                        return (
+                          <rect key={`ed${gi}-${gj}`} x={edOx + gi * edCellW} y={edOy + (edG - 1 - gj) * edCellH} width={edCellW - 1} height={edCellH - 1} rx={2} fill={`rgb(${r},${g},${b})`} opacity={0.8} />
+                        );
+                      }))}
+                      {/* Observation dots */}
+                      {trials.slice(-40).map((t, i) => {
+                        const nx = edNorm(t.parameters[edP1.name], edP1.lo, edP1.hi);
+                        const ny = edNorm(t.parameters[edP2.name], edP2.lo, edP2.hi);
+                        return <circle key={`edo${i}`} cx={edOx + nx * edG * edCellW} cy={edOy + (1 - ny) * edG * edCellH} r="1.8" fill="white" stroke="#333" strokeWidth="0.5" />;
+                      })}
+                      {/* Axis labels */}
+                      <text x={edOx + edG * edCellW / 2} y={edSvgH - 1} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle">{edP1.name}</text>
+                      <text x={3} y={edOy + edG * edCellH / 2} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90, 3, ${edOy + edG * edCellH / 2})`}>{edP2.name}</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 8, fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(255,76,255)" }} /> High
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(128,191,218)" }} /> Medium
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(0,255,180)" }} /> Low
+                      </span>
+                      <span style={{ marginLeft: "auto" }}>LOO cross-validation on {edK}-NN</span>
                     </div>
                   </div>
                 );
@@ -5113,6 +5287,88 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* D-Optimality Scores */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const doSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (doSpecs.length === 0) return null;
+                const doD = doSpecs.length;
+                const doNorm = (val: number, sp: { lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0, hi = sp.upper ?? 1;
+                  return hi > lo ? (val - lo) / (hi - lo) : 0.5;
+                };
+                // Existing design matrix (normalized)
+                const doX = trials.map(t => doSpecs.map((s: { name: string; lower?: number; upper?: number }) => doNorm(t.parameters[s.name] ?? 0, s)));
+                // Compute min distance to existing points for each suggestion (space-filling score)
+                const doScores = suggestions.suggestions.map((sug: Record<string, number>, idx: number) => {
+                  const sugNorm = doSpecs.map((s: { name: string; lower?: number; upper?: number }) => doNorm(sug[s.name] ?? 0, s));
+                  // D-optimality proxy: min distance to existing points (space-filling)
+                  const minDist = Math.min(...doX.map((obs: number[]) => Math.sqrt(obs.reduce((a: number, v: number, i: number) => a + (v - sugNorm[i]) ** 2, 0))));
+                  // A-optimality proxy: average distance to k nearest
+                  const allDists = doX.map((obs: number[]) => Math.sqrt(obs.reduce((a: number, v: number, i: number) => a + (v - sugNorm[i]) ** 2, 0))).sort((a: number, b: number) => a - b);
+                  const kNearest = allDists.slice(0, 5);
+                  const avgKDist = kNearest.reduce((a: number, b: number) => a + b, 0) / kNearest.length;
+                  // E-optimality proxy: distance from centroid
+                  const centroid = doSpecs.map((_: unknown, di: number) => doX.reduce((a: number, obs: number[]) => a + obs[di], 0) / doX.length);
+                  const centDist = Math.sqrt(centroid.reduce((a: number, c: number, i: number) => a + (c - sugNorm[i]) ** 2, 0));
+                  return { idx: idx + 1, dScore: minDist, aScore: avgKDist, eScore: centDist };
+                });
+                // Normalize scores to 0-100
+                const doMaxD = Math.max(...doScores.map((s: { dScore: number }) => s.dScore), 0.01);
+                const doMaxA = Math.max(...doScores.map((s: { aScore: number }) => s.aScore), 0.01);
+                const doMaxE = Math.max(...doScores.map((s: { eScore: number }) => s.eScore), 0.01);
+                const doNormed = doScores.map((s: { idx: number; dScore: number; aScore: number; eScore: number }) => ({
+                  idx: s.idx,
+                  d: (s.dScore / doMaxD) * 100,
+                  a: (s.aScore / doMaxA) * 100,
+                  e: (s.eScore / doMaxE) * 100,
+                }));
+                const doBarW = 14, doGap = 6, doGroupW = doBarW * 3 + doGap;
+                const doSvgW = doNormed.length * (doGroupW + 12) + 30;
+                const doSvgH = 60;
+                const doPadY = 10, doPadX = 20;
+                const doChartH = doSvgH - 2 * doPadY;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Diamond size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Design Optimality</h3>
+                      <span className="findings-badge" style={{ background: "#3b82f618", color: "#3b82f6", marginLeft: "auto" }}>
+                        {doD}D space-filling
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${doSvgW} ${doSvgH}`} style={{ display: "block" }}>
+                      {/* 50% reference line */}
+                      <line x1={doPadX} y1={doPadY + doChartH * 0.5} x2={doSvgW - 5} y2={doPadY + doChartH * 0.5} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3 2" />
+                      <text x={doPadX - 2} y={doPadY + doChartH * 0.5 + 2} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">50</text>
+                      {/* Bars for each suggestion */}
+                      {doNormed.map((s: { idx: number; d: number; a: number; e: number }, i: number) => {
+                        const gx = doPadX + i * (doGroupW + 12);
+                        const barH = (v: number) => (v / 100) * doChartH;
+                        return (
+                          <Fragment key={`do${i}`}>
+                            <rect x={gx} y={doPadY + doChartH - barH(s.d)} width={doBarW} height={barH(s.d)} rx={2} fill="#3b82f6" opacity={0.8} />
+                            <rect x={gx + doBarW} y={doPadY + doChartH - barH(s.a)} width={doBarW} height={barH(s.a)} rx={2} fill="#22c55e" opacity={0.8} />
+                            <rect x={gx + doBarW * 2} y={doPadY + doChartH - barH(s.e)} width={doBarW} height={barH(s.e)} rx={2} fill="#8b5cf6" opacity={0.8} />
+                            <text x={gx + doGroupW / 2} y={doSvgH - 1} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle">#{s.idx}</text>
+                          </Fragment>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: 10, fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#3b82f6" }} /> D-opt (min dist)
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#22c55e" }} /> A-opt (k-NN avg)
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: "#8b5cf6" }} /> E-opt (centroid)
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -6139,6 +6395,201 @@ export default function Workspace() {
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 2 }}>
                       <span>{scSpecs.length} dims × {scG} grid cells</span>
                       {scStalled && <span style={{ color: "#f59e0b", fontWeight: 500 }}>Coverage stalled — consider forcing exploration</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Hypothesis Rejection Timeline */}
+              {trials.length >= 10 && (() => {
+                const hrSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (hrSpecs.length === 0) return null;
+                const hrSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const hrN = hrSorted.length;
+
+                // --- Hypothesis 1: Monotonicity per parameter (running Spearman rank correlation) ---
+                const hrMonoHyps = hrSpecs.slice(0, 4).map((s: { name: string; type: string; lower?: number; upper?: number }) => {
+                  const kpiKey = Object.keys(hrSorted[0]?.kpis || {})[0];
+                  if (!kpiKey) return null;
+                  // Compute Spearman correlation in expanding windows
+                  const hrSnapshots: { iter: number; rho: number; pReject: boolean }[] = [];
+                  const step = Math.max(1, Math.floor(hrN / 16));
+                  for (let w = 8; w <= hrN; w += step) {
+                    const slice = hrSorted.slice(0, w);
+                    const xs = slice.map(t => Number(t.parameters[s.name]) || 0);
+                    const ys = slice.map(t => Number(t.kpis[kpiKey]) || 0);
+                    // Rank arrays
+                    const rank = (arr: number[]) => {
+                      const sorted = [...arr].map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
+                      const ranks = new Array(arr.length);
+                      sorted.forEach((el, r) => { ranks[el.i] = r + 1; });
+                      return ranks;
+                    };
+                    const rx = rank(xs);
+                    const ry = rank(ys);
+                    const n = rx.length;
+                    const d2 = rx.reduce((sum, rxi, i) => sum + (rxi - ry[i]) ** 2, 0);
+                    const rho = 1 - (6 * d2) / (n * (n * n - 1));
+                    // |rho| < 0.3 with enough data => reject monotonicity
+                    const pReject = n >= 10 && Math.abs(rho) < 0.3;
+                    hrSnapshots.push({ iter: slice[slice.length - 1].iteration, rho, pReject });
+                  }
+                  return {
+                    label: `Mono(${s.name.length > 6 ? s.name.slice(0, 5) + "…" : s.name})`,
+                    snapshots: hrSnapshots,
+                    type: "monotonicity" as const,
+                  };
+                }).filter(Boolean) as Array<{ label: string; snapshots: Array<{ iter: number; rho: number; pReject: boolean }>; type: string }>;
+
+                // --- Hypothesis 2: Optimum in center vs edge ---
+                const hrOptHyp = (() => {
+                  const kpiKey = Object.keys(hrSorted[0]?.kpis || {})[0];
+                  if (!kpiKey || hrSpecs.length < 1) return null;
+                  const hrSnapCenter: { iter: number; rho: number; pReject: boolean }[] = [];
+                  const step = Math.max(1, Math.floor(hrN / 16));
+                  for (let w = 8; w <= hrN; w += step) {
+                    const slice = hrSorted.slice(0, w);
+                    // Check if best trials are in center 40% of parameter space
+                    const kpiVals = slice.map(t => Number(t.kpis[kpiKey]) || 0);
+                    const kpiMin = Math.min(...kpiVals);
+                    const kpiMax = Math.max(...kpiVals);
+                    const kpiThresh = kpiMin + (kpiMax - kpiMin) * 0.7;
+                    const topTrials = slice.filter(t => (Number(t.kpis[kpiKey]) || 0) >= kpiThresh);
+                    const centerCount = topTrials.filter(t => {
+                      return hrSpecs.every((sp: { name: string; lower?: number; upper?: number }) => {
+                        const lo = sp.lower ?? 0, hi = sp.upper ?? 1;
+                        const norm = hi > lo ? (Number(t.parameters[sp.name]) - lo) / (hi - lo) : 0.5;
+                        return norm >= 0.3 && norm <= 0.7;
+                      });
+                    }).length;
+                    const centerFrac = topTrials.length > 0 ? centerCount / topTrials.length : 0.5;
+                    // If most top trials are NOT centered => reject center hypothesis
+                    const pReject = topTrials.length >= 3 && centerFrac < 0.3;
+                    hrSnapCenter.push({ iter: slice[slice.length - 1].iteration, rho: centerFrac, pReject });
+                  }
+                  return {
+                    label: "Opt@Center",
+                    snapshots: hrSnapCenter,
+                    type: "center" as const,
+                  };
+                })();
+
+                // --- Hypothesis 3: No interaction effects (independence test) ---
+                const hrInterHyp = (() => {
+                  const kpiKey = Object.keys(hrSorted[0]?.kpis || {})[0];
+                  if (!kpiKey || hrSpecs.length < 2) return null;
+                  const s0 = hrSpecs[0] as { name: string; lower?: number; upper?: number };
+                  const s1 = hrSpecs[1] as { name: string; lower?: number; upper?: number };
+                  const hrSnapInter: { iter: number; rho: number; pReject: boolean }[] = [];
+                  const step = Math.max(1, Math.floor(hrN / 16));
+                  for (let w = 10; w <= hrN; w += step) {
+                    const slice = hrSorted.slice(0, w);
+                    // Compute residual-product correlation as interaction proxy
+                    const xs = slice.map(t => Number(t.parameters[s0.name]) || 0);
+                    const ys = slice.map(t => Number(t.parameters[s1.name]) || 0);
+                    const zs = slice.map(t => Number(t.kpis[kpiKey]) || 0);
+                    const mean = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
+                    const mx = mean(xs), my = mean(ys), mz = mean(zs);
+                    // Product term correlation with kpi
+                    const prods = xs.map((x, i) => (x - mx) * (ys[i] - my));
+                    const mp = mean(prods);
+                    const covPZ = prods.reduce((s, p, i) => s + (p - mp) * (zs[i] - mz), 0) / slice.length;
+                    const stdP = Math.sqrt(prods.reduce((s, p) => s + (p - mp) ** 2, 0) / slice.length) || 1;
+                    const stdZ = Math.sqrt(zs.reduce((s, z) => s + (z - mz) ** 2, 0) / slice.length) || 1;
+                    const interCorr = covPZ / (stdP * stdZ);
+                    // Reject independence (meaning interaction detected) if |corr| > 0.4
+                    const pReject = slice.length >= 10 && Math.abs(interCorr) > 0.4;
+                    hrSnapInter.push({ iter: slice[slice.length - 1].iteration, rho: interCorr, pReject });
+                  }
+                  return {
+                    label: `Indep(${s0.name.slice(0, 3)}×${s1.name.slice(0, 3)})`,
+                    snapshots: hrSnapInter,
+                    type: "interaction" as const,
+                  };
+                })();
+
+                const hrAllHyps = [...hrMonoHyps, ...(hrOptHyp ? [hrOptHyp] : []), ...(hrInterHyp ? [hrInterHyp] : [])];
+                if (hrAllHyps.length === 0) return null;
+
+                const hrRejected = hrAllHyps.filter(h => h.snapshots.length > 0 && h.snapshots[h.snapshots.length - 1].pReject).length;
+                const hrW = 440, hrH = 24 * hrAllHyps.length + 32, hrPadL = 100, hrPadR = 16, hrPadT = 6, hrPadB = 22;
+                const hrPlotW = hrW - hrPadL - hrPadR;
+                const hrRowH = (hrH - hrPadT - hrPadB) / hrAllHyps.length;
+
+                // Find global iteration range across all hypotheses
+                const hrAllIters = hrAllHyps.flatMap(h => h.snapshots.map(s => s.iter));
+                const hrMinIter = Math.min(...hrAllIters);
+                const hrMaxIter = Math.max(...hrAllIters);
+                const hrIterRange = hrMaxIter - hrMinIter || 1;
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <FlaskRound size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Hypothesis Rejection Timeline</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Structural hypotheses tested via rolling statistics. Red = rejected.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto", color: hrRejected > 0 ? "rgba(239,68,68,0.8)" : "#22c55e", borderColor: hrRejected > 0 ? "rgba(239,68,68,0.3)" : "rgba(34,197,94,0.3)" }}>
+                        {hrRejected} rejected / {hrAllHyps.length} tested
+                      </span>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={hrW} height={hrH} viewBox={`0 0 ${hrW} ${hrH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Swim lane backgrounds */}
+                        {hrAllHyps.map((h, hi) => (
+                          <g key={hi}>
+                            {hi % 2 === 0 && (
+                              <rect x={hrPadL} y={hrPadT + hi * hrRowH} width={hrPlotW} height={hrRowH} fill="var(--color-border)" opacity={0.15} />
+                            )}
+                            {/* Label */}
+                            <text x={hrPadL - 6} y={hrPadT + hi * hrRowH + hrRowH / 2 + 3} textAnchor="end" fontSize="8" fontFamily="var(--font-mono)" fontWeight={500} fill={h.snapshots.length > 0 && h.snapshots[h.snapshots.length - 1].pReject ? "rgba(239,68,68,0.8)" : "var(--color-text-secondary)"}>
+                              {h.label}
+                            </text>
+                            {/* Status segments: green=active, red=rejected */}
+                            {h.snapshots.map((snap, si) => {
+                              const x1 = hrPadL + ((snap.iter - hrMinIter) / hrIterRange) * hrPlotW;
+                              const nextIter = si < h.snapshots.length - 1 ? h.snapshots[si + 1].iter : hrMaxIter;
+                              const x2 = hrPadL + ((nextIter - hrMinIter) / hrIterRange) * hrPlotW;
+                              const y = hrPadT + hi * hrRowH + hrRowH * 0.3;
+                              const barH = hrRowH * 0.4;
+                              return (
+                                <rect key={si} x={x1} y={y} width={Math.max(2, x2 - x1)} height={barH} rx={2} fill={snap.pReject ? "rgba(239,68,68,0.45)" : "rgba(34,197,94,0.35)"} />
+                              );
+                            })}
+                            {/* Rejection marker */}
+                            {h.snapshots.map((snap, si) => {
+                              if (!snap.pReject) return null;
+                              // Show rejection marker at first rejection point
+                              const prevNotRejected = si === 0 || !h.snapshots[si - 1].pReject;
+                              if (!prevNotRejected) return null;
+                              const x = hrPadL + ((snap.iter - hrMinIter) / hrIterRange) * hrPlotW;
+                              const y = hrPadT + hi * hrRowH + hrRowH / 2;
+                              return (
+                                <g key={`rej${si}`}>
+                                  <line x1={x} y1={y - hrRowH * 0.3} x2={x} y2={y + hrRowH * 0.3} stroke="rgba(239,68,68,0.7)" strokeWidth="1.5" />
+                                  <text x={x} y={y - hrRowH * 0.35} textAnchor="middle" fontSize="7" fill="rgba(239,68,68,0.8)" fontWeight="600">✗</text>
+                                </g>
+                              );
+                            })}
+                          </g>
+                        ))}
+                        {/* X axis */}
+                        <line x1={hrPadL} y1={hrH - hrPadB} x2={hrPadL + hrPlotW} y2={hrH - hrPadB} stroke="var(--color-border)" strokeWidth="0.5" />
+                        <text x={hrPadL} y={hrH - 4} fontSize="7" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">iter {hrMinIter}</text>
+                        <text x={hrPadL + hrPlotW} y={hrH - 4} fontSize="7" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" textAnchor="end">iter {hrMaxIter}</text>
+                        <text x={hrPadL + hrPlotW / 2} y={hrH - 4} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle">Iteration →</text>
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "rgba(34,197,94,0.35)", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Active</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "rgba(239,68,68,0.45)", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Rejected</span>
+                      <span className="efficiency-legend-item"><span style={{ fontWeight: 600, color: "rgba(239,68,68,0.8)", marginRight: 4 }}>✗</span>Rejection point</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                        Spearman ρ, center fraction, product correlation
+                      </span>
                     </div>
                   </div>
                 );
