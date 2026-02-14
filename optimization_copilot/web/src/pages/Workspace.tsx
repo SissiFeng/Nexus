@@ -103,6 +103,10 @@ import {
   GitMerge,
   ListOrdered,
   SplitSquareVertical,
+  EyeOff,
+  ShieldAlert,
+  Fingerprint,
+  BrainCircuit,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3347,6 +3351,111 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Acquisition Blindspot Detector */}
+              {(() => {
+                const abTrials = (campaign.observations || []).filter((o: { iteration: number; parameters: Record<string, number>; kpi_values: Record<string, number> }) => o.kpi_values?.objective != null);
+                const abParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (abTrials.length < 10 || abParams.length < 2) return null;
+
+                // Normalize all trials into [0,1] space
+                const abNorm = abTrials.map((t: { parameters: Record<string, number> }) =>
+                  abParams.map((p: { name: string; lower?: number; upper?: number }) => {
+                    const lo = p.lower!, hi = p.upper!, range = hi - lo || 1;
+                    return ((t.parameters[p.name] ?? lo) - lo) / range;
+                  })
+                );
+
+                // Create 6×6 grid on top-2-variance parameters (reuse pattern)
+                const abVarScores = abParams.map((_p: { name: string; lower?: number; upper?: number }, pi: number) => {
+                  const vals = abNorm.map((n: number[]) => n[pi]);
+                  const mean = vals.reduce((a: number, b: number) => a + b, 0) / vals.length;
+                  return { pi, variance: vals.reduce((a: number, v: number) => a + (v - mean) ** 2, 0) / vals.length };
+                }).sort((a: { variance: number }, b: { variance: number }) => b.variance - a.variance);
+                const abP0 = abVarScores[0].pi, abP1 = abVarScores[1].pi;
+
+                const abGridN = 6;
+                const abCells: { gx: number; gy: number; density: number; variance: number; blindspot: number }[] = [];
+                const abKpis = abTrials.map((t: { kpi_values: Record<string, number> }) => t.kpi_values.objective);
+
+                for (let gy = 0; gy < abGridN; gy++) {
+                  for (let gx = 0; gx < abGridN; gx++) {
+                    const cx = (gx + 0.5) / abGridN, cy = (gy + 0.5) / abGridN;
+                    // Count nearby trials (density)
+                    let density = 0, localKpis: number[] = [];
+                    abNorm.forEach((n: number[], i: number) => {
+                      const dx = n[abP0] - cx, dy = n[abP1] - cy;
+                      const dist = Math.sqrt(dx * dx + dy * dy);
+                      if (dist < 0.25) { density++; localKpis.push(abKpis[i]); }
+                    });
+                    // Local variance (uncertainty proxy)
+                    let variance = 0;
+                    if (localKpis.length >= 2) {
+                      const m = localKpis.reduce((a, b) => a + b, 0) / localKpis.length;
+                      variance = Math.sqrt(localKpis.reduce((a, v) => a + (v - m) ** 2, 0) / localKpis.length);
+                    } else {
+                      // High uncertainty if no data
+                      const globalStd = (() => { const m = abKpis.reduce((a: number, b: number) => a + b, 0) / abKpis.length; return Math.sqrt(abKpis.reduce((a: number, v: number) => a + (v - m) ** 2, 0) / abKpis.length); })();
+                      variance = globalStd;
+                    }
+                    // Blindspot = high variance * low density
+                    const maxDensity = abTrials.length / (abGridN * abGridN) * 3;
+                    const normDensity = Math.min(density / maxDensity, 1);
+                    const blindspot = variance * (1 - normDensity);
+                    abCells.push({ gx, gy, density, variance, blindspot });
+                  }
+                }
+
+                const abMaxBlind = Math.max(...abCells.map(c => c.blindspot), 0.001);
+                const abHighCount = abCells.filter(c => c.blindspot / abMaxBlind > 0.6).length;
+                const abPct = abHighCount / abCells.length;
+                const abStatus = abPct < 0.15 ? "Well Covered" : abPct < 0.3 ? "Some Gaps" : "Blindspots";
+                const abColor = abStatus === "Well Covered" ? "var(--color-green, #22c55e)" : abStatus === "Some Gaps" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                const abCellW = 36, abCellH = 36;
+                const abPadL = 50, abPadT = 10, abPadB = 30;
+                const abW = abPadL + abGridN * abCellW + 10;
+                const abH = abPadT + abGridN * abCellH + abPadB;
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <EyeOff size={15} style={{ color: abColor }} />
+                      <h2 style={{ margin: 0 }}>Acquisition Blindspots</h2>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: 8, background: abColor + "18", color: abColor }}>{abStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Regions with high uncertainty but low sampling density. Red = potential blindspots.
+                    </p>
+                    <svg width={abW} height={abH} viewBox={`0 0 ${abW} ${abH}`} style={{ width: "100%", height: "auto", maxHeight: 260 }}>
+                      {abCells.map((c, i) => {
+                        const norm = c.blindspot / abMaxBlind;
+                        const r = Math.round(norm > 0.6 ? 180 + 75 * norm : 60 * norm);
+                        const g = Math.round(norm > 0.6 ? 80 * (1 - norm) : 100 + 100 * (1 - norm));
+                        const b = Math.round(norm > 0.3 ? 50 : 180 * (1 - norm));
+                        return (
+                          <rect key={i} x={abPadL + c.gx * abCellW + 1} y={abPadT + (abGridN - 1 - c.gy) * abCellH + 1} width={abCellW - 2} height={abCellH - 2} rx={3} fill={`rgb(${r},${g},${b})`} opacity={0.85}>
+                            <title>{`${abParams[abP0].name}=[${(c.gx / abGridN).toFixed(2)},${((c.gx + 1) / abGridN).toFixed(2)}], ${abParams[abP1].name}=[${(c.gy / abGridN).toFixed(2)},${((c.gy + 1) / abGridN).toFixed(2)}]\nDensity: ${c.density} trials\nBlindspot: ${(norm * 100).toFixed(0)}%`}</title>
+                          </rect>
+                        );
+                      })}
+                      {/* Density dots */}
+                      {abCells.filter(c => c.density > 0).map((c, i) => (
+                        <text key={`d${i}`} x={abPadL + c.gx * abCellW + abCellW / 2} y={abPadT + (abGridN - 1 - c.gy) * abCellH + abCellH / 2 + 4} textAnchor="middle" fontSize={9} fill="white" fontWeight={600} opacity={0.9}>{c.density}</text>
+                      ))}
+                      {/* Y-axis label */}
+                      <text x={abPadL - 4} y={abPadT + abGridN * abCellH / 2} textAnchor="end" fontSize={9} fill="var(--color-text-muted)" transform={`rotate(-90,${abPadL - 4},${abPadT + abGridN * abCellH / 2})`}>{abParams[abP1].name}</text>
+                      {/* X-axis label */}
+                      <text x={abPadL + abGridN * abCellW / 2} y={abH - 4} textAnchor="middle" fontSize={9} fill="var(--color-text-muted)">{abParams[abP0].name}</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 6 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "rgb(30,180,150)" }} /> safe</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "rgb(220,60,30)" }} /> blindspot</span>
+                      <span style={{ marginLeft: "auto" }}>{abHighCount}/{abCells.length} high-risk cells</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -4948,6 +5057,97 @@ export default function Workspace() {
                       <span>↑ emerging ({rdDriftCounts.emerging})</span>
                       <span>→ stable ({rdDriftCounts.stable})</span>
                       <span>↓ decaying ({rdDriftCounts.decaying})</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Extrapolation Risk Atlas */}
+              {trials.length >= 15 && (() => {
+                const erParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (erParams.length < 2) return null;
+
+                // Normalize trials
+                const erNorm = trials.map((t: { parameters: Record<string, number> }) =>
+                  erParams.map((p: { name: string; lower?: number; upper?: number }) => {
+                    const lo = p.lower!, hi = p.upper!;
+                    return (hi - lo) > 0 ? ((t.parameters[p.name] ?? lo) - lo) / (hi - lo) : 0.5;
+                  })
+                );
+
+                // PCA-like: project onto top 2 variance axes
+                const erMeans = erParams.map((_: unknown, pi: number) => erNorm.reduce((s: number, n: number[]) => s + n[pi], 0) / erNorm.length);
+                const erVarByAxis = erParams.map((_: unknown, pi: number) => {
+                  return erNorm.reduce((s: number, n: number[]) => s + (n[pi] - erMeans[pi]) ** 2, 0) / erNorm.length;
+                });
+                const erAxes = erVarByAxis.map((v: number, i: number) => ({ i, v })).sort((a: { v: number }, b: { v: number }) => b.v - a.v);
+                const erA0 = erAxes[0].i, erA1 = erAxes[1].i;
+
+                // Project each trial to 2D
+                const erPts = erNorm.map((n: number[]) => ({ x: n[erA0], y: n[erA1] }));
+
+                // Create 8×8 risk grid
+                const erGridN = 8;
+                const erCells: { gx: number; gy: number; risk: number; nearest: number }[] = [];
+                for (let gy = 0; gy < erGridN; gy++) {
+                  for (let gx = 0; gx < erGridN; gx++) {
+                    const cx = (gx + 0.5) / erGridN, cy = (gy + 0.5) / erGridN;
+                    // Min distance to any training point
+                    let minDist = Infinity;
+                    erPts.forEach((p: { x: number; y: number }) => {
+                      const d = Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2);
+                      if (d < minDist) minDist = d;
+                    });
+                    // Risk = distance-based (farther from data = riskier)
+                    const risk = Math.min(minDist / 0.4, 1); // normalize: 0.4 distance = max risk
+                    erCells.push({ gx, gy, risk, nearest: minDist });
+                  }
+                }
+
+                const erHighRisk = erCells.filter(c => c.risk > 0.6).length;
+                const erPct = erHighRisk / erCells.length;
+                const erStatus = erPct < 0.2 ? "Well Supported" : erPct < 0.4 ? "Some Gaps" : "High Risk";
+                const erColor = erStatus === "Well Supported" ? "var(--color-green, #22c55e)" : erStatus === "Some Gaps" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                const erCellW = 28, erCellH = 28;
+                const erPadL = 40, erPadT = 8, erPadB = 24, erPadR = 8;
+                const erW = erPadL + erGridN * erCellW + erPadR;
+                const erH = erPadT + erGridN * erCellH + erPadB;
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <ShieldAlert size={15} style={{ color: erColor }} />
+                      <h2 style={{ margin: 0 }}>Extrapolation Risk</h2>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: 8, background: erColor + "18", color: erColor }}>{erStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Distance from observations in {erParams[erA0].name} vs {erParams[erA1].name}. Red = predictions unreliable.
+                    </p>
+                    <svg width={erW} height={erH} viewBox={`0 0 ${erW} ${erH}`} style={{ width: "100%", height: "auto", maxHeight: 260 }}>
+                      {erCells.map((c, i) => {
+                        const r = Math.round(40 + 200 * c.risk);
+                        const g = Math.round(140 * (1 - c.risk));
+                        const b = Math.round(200 * (1 - c.risk) + 40);
+                        return (
+                          <rect key={i} x={erPadL + c.gx * erCellW} y={erPadT + (erGridN - 1 - c.gy) * erCellH} width={erCellW - 1} height={erCellH - 1} rx={2} fill={`rgb(${r},${g},${b})`} opacity={0.8}>
+                            <title>{`Risk: ${(c.risk * 100).toFixed(0)}%\nNearest trial: ${c.nearest.toFixed(3)}`}</title>
+                          </rect>
+                        );
+                      })}
+                      {/* Training points */}
+                      {erPts.map((p: { x: number; y: number }, i: number) => (
+                        <circle key={`t${i}`} cx={erPadL + p.x * erGridN * erCellW} cy={erPadT + (1 - p.y) * erGridN * erCellH} r={2.5} fill="white" stroke="var(--color-text)" strokeWidth={0.8} opacity={0.7} />
+                      ))}
+                      {/* Axes */}
+                      <text x={erPadL - 4} y={erPadT + erGridN * erCellH / 2} textAnchor="end" fontSize={8} fill="var(--color-text-muted)" transform={`rotate(-90,${erPadL - 4},${erPadT + erGridN * erCellH / 2})`}>{erParams[erA1].name}</text>
+                      <text x={erPadL + erGridN * erCellW / 2} y={erH - 4} textAnchor="middle" fontSize={8} fill="var(--color-text-muted)">{erParams[erA0].name}</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "rgb(40,140,240)" }} /> safe</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "rgb(240,40,40)" }} /> risky</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "white", border: "1px solid var(--color-text)" }} /> trials</span>
+                      <span style={{ marginLeft: "auto" }}>{erHighRisk}/{erCells.length} high-risk</span>
                     </div>
                   </div>
                 );
@@ -7691,6 +7891,100 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Batch Information Overlap */}
+              {suggestions && suggestions.suggestions.length >= 2 && (() => {
+                const biSugs = suggestions.suggestions;
+                const biParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (biParams.length < 1) return null;
+                const biN = biSugs.length;
+
+                // Normalize suggestions
+                const biNorm = biSugs.map((sug: Record<string, number>) =>
+                  biParams.map((p: { name: string; lower?: number; upper?: number }) => {
+                    const lo = p.lower!, hi = p.upper!;
+                    return (hi - lo) > 0 ? ((sug[p.name] ?? lo) - lo) / (hi - lo) : 0.5;
+                  })
+                );
+
+                // Pairwise similarity (1 - normalized Euclidean distance)
+                const biMaxDist = Math.sqrt(biParams.length); // max possible dist in unit hypercube
+                const biMatrix: number[][] = [];
+                for (let i = 0; i < biN; i++) {
+                  biMatrix[i] = [];
+                  for (let j = 0; j < biN; j++) {
+                    if (i === j) { biMatrix[i][j] = 1; continue; }
+                    const dist = Math.sqrt(biNorm[i].reduce((s: number, v: number, k: number) => s + (v - biNorm[j][k]) ** 2, 0));
+                    biMatrix[i][j] = 1 - dist / biMaxDist;
+                  }
+                }
+
+                // Average off-diagonal similarity
+                let biSumSim = 0, biCount = 0;
+                for (let i = 0; i < biN; i++) for (let j = i + 1; j < biN; j++) { biSumSim += biMatrix[i][j]; biCount++; }
+                const biAvgSim = biCount > 0 ? biSumSim / biCount : 0;
+                const biIndependence = 1 - biAvgSim;
+
+                const biStatus = biIndependence > 0.75 ? "Independent" : biIndependence > 0.5 ? "Mild Overlap" : "Redundant";
+                const biColor = biStatus === "Independent" ? "var(--color-green, #22c55e)" : biStatus === "Mild Overlap" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                const biCellSize = Math.min(40, 200 / biN);
+                const biPadL = 36, biPadT = 24;
+                const biW = biPadL + biN * biCellSize + 8;
+                const biH = biPadT + biN * biCellSize + 8;
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Fingerprint size={15} style={{ color: biColor }} />
+                      <h2 style={{ margin: 0 }}>Batch Overlap</h2>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: 8, background: biColor + "18", color: biColor }}>{biStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Pairwise similarity between suggestions. Lower = more diverse batch.
+                    </p>
+                    <svg width={biW} height={biH} viewBox={`0 0 ${biW} ${biH}`} style={{ width: "100%", height: "auto", maxHeight: 240 }}>
+                      {/* Column headers */}
+                      {Array.from({ length: biN }, (_, j) => (
+                        <text key={`ch${j}`} x={biPadL + j * biCellSize + biCellSize / 2} y={biPadT - 6} textAnchor="middle" fontSize={9} fill="var(--color-text-muted)" fontWeight={600}>#{j + 1}</text>
+                      ))}
+                      {/* Row headers */}
+                      {Array.from({ length: biN }, (_, i) => (
+                        <text key={`rh${i}`} x={biPadL - 6} y={biPadT + i * biCellSize + biCellSize / 2 + 3} textAnchor="end" fontSize={9} fill="var(--color-text-muted)" fontWeight={600}>#{i + 1}</text>
+                      ))}
+                      {/* Lower triangle + diagonal */}
+                      {Array.from({ length: biN }, (_, i) =>
+                        Array.from({ length: biN }, (__, j) => {
+                          if (j > i) return null; // upper triangle empty
+                          const sim = biMatrix[i][j];
+                          const isDiag = i === j;
+                          const r = isDiag ? 200 : Math.round(60 + 195 * sim);
+                          const g = isDiag ? 200 : Math.round(180 * (1 - sim) + 60);
+                          const b = isDiag ? 210 : Math.round(60);
+                          return (
+                            <g key={`${i}-${j}`}>
+                              <rect x={biPadL + j * biCellSize + 1} y={biPadT + i * biCellSize + 1} width={biCellSize - 2} height={biCellSize - 2} rx={3} fill={isDiag ? "var(--color-border)" : `rgb(${r},${g},${b})`} opacity={isDiag ? 0.4 : 0.85}>
+                                <title>{isDiag ? `Suggestion #${i + 1}` : `#${i + 1} vs #${j + 1}: ${(sim * 100).toFixed(0)}% similar`}</title>
+                              </rect>
+                              {!isDiag && biCellSize >= 28 && (
+                                <text x={biPadL + j * biCellSize + biCellSize / 2} y={biPadT + i * biCellSize + biCellSize / 2 + 3} textAnchor="middle" fontSize={8} fill="white" fontWeight={600}>{(sim * 100).toFixed(0)}%</text>
+                              )}
+                              {isDiag && (
+                                <text x={biPadL + j * biCellSize + biCellSize / 2} y={biPadT + i * biCellSize + biCellSize / 2 + 3} textAnchor="middle" fontSize={8} fill="var(--color-text-muted)">—</text>
+                              )}
+                            </g>
+                          );
+                        })
+                      )}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "rgb(60,240,60)" }} /> diverse</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "rgb(255,120,60)" }} /> similar</span>
+                      <span style={{ marginLeft: "auto" }}>independence: {(biIndependence * 100).toFixed(0)}%</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -9618,6 +9912,118 @@ export default function Workspace() {
                       <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(59,130,246,0.15)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Exploration</span>
                       <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(249,115,22,0.15)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Exploitation</span>
                       <span>60% variance + 40% improvement</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Trial Information Value */}
+              {trials.length >= 10 && (() => {
+                const ivTrials = trials.slice().sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                const ivKpis = ivTrials.map((t: { kpis: Record<string, number> }) => t.kpis?.objective).filter((v: unknown): v is number => v != null);
+                if (ivKpis.length < 10) return null;
+
+                // For each trial, compute information value:
+                // = variance reduction + novelty contribution
+                const ivValues: { idx: number; infoValue: number; isExploit: boolean; cumValue: number }[] = [];
+                let ivCum = 0;
+
+                const ivParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                const ivNorm = ivTrials.map((t: { parameters: Record<string, number> }) =>
+                  ivParams.map((p: { name: string; lower?: number; upper?: number }) => {
+                    const lo = p.lower!, hi = p.upper!;
+                    return (hi - lo) > 0 ? ((t.parameters[p.name] ?? lo) - lo) / (hi - lo) : 0.5;
+                  })
+                );
+
+                // Global KPI stats
+                const ivMean = ivKpis.reduce((a: number, b: number) => a + b, 0) / ivKpis.length;
+                const ivStd = Math.sqrt(ivKpis.reduce((a: number, v: number) => a + (v - ivMean) ** 2, 0) / ivKpis.length) || 0.001;
+                let ivBest = Infinity;
+
+                for (let i = 0; i < ivKpis.length; i++) {
+                  // Novelty: min distance to all prior trials
+                  let minDist = 1;
+                  if (i > 0 && ivParams.length > 0) {
+                    for (let j = 0; j < i; j++) {
+                      const d = Math.sqrt(ivNorm[i].reduce((s: number, v: number, k: number) => s + (v - ivNorm[j][k]) ** 2, 0) / ivParams.length);
+                      if (d < minDist) minDist = d;
+                    }
+                  }
+
+                  // Variance reduction: how much this trial improved the best
+                  const prevBest = ivBest;
+                  if (ivKpis[i] < ivBest) ivBest = ivKpis[i];
+                  const improvement = prevBest === Infinity ? 0.5 : Math.max(0, (prevBest - ivKpis[i]) / ivStd);
+
+                  // Info value = novelty * 0.5 + improvement_signal * 0.5
+                  const infoValue = minDist * 0.4 + Math.min(improvement, 1) * 0.6;
+                  const isExploit = minDist < 0.15; // close to prior trial = exploitation
+
+                  ivCum += infoValue;
+                  ivValues.push({ idx: i, infoValue, isExploit, cumValue: ivCum });
+                }
+
+                // Normalize cumulative
+                const ivMaxCum = ivCum || 1;
+                const ivMaxVal = Math.max(...ivValues.map(v => v.infoValue), 0.01);
+
+                // Classify: high/low info trials
+                const ivMedian = [...ivValues].sort((a, b) => a.infoValue - b.infoValue)[Math.floor(ivValues.length / 2)].infoValue;
+                const ivHighInfo = ivValues.filter(v => v.infoValue > ivMedian).length;
+                const ivRecentHigh = ivValues.slice(-20).filter(v => v.infoValue > ivMedian).length;
+                const ivStatus = ivRecentHigh / Math.min(20, ivValues.length) > 0.5 ? "Efficient" : ivRecentHigh / Math.min(20, ivValues.length) > 0.3 ? "Moderate" : "Declining";
+                const ivColor = ivStatus === "Efficient" ? "var(--color-green, #22c55e)" : ivStatus === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                const ivPadL = 36, ivPadR = 40, ivPadT = 8, ivPadB = 24;
+                const ivW = 420, ivH = 140;
+                const ivPlotW = ivW - ivPadL - ivPadR, ivPlotH = ivH - ivPadT - ivPadB;
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <BrainCircuit size={15} style={{ color: ivColor }} />
+                      <h2 style={{ margin: 0 }}>Information Value</h2>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: 8, background: ivColor + "18", color: ivColor }}>{ivStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Per-trial learning contribution: novelty (40%) + improvement signal (60%).
+                    </p>
+                    <svg width={ivW} height={ivH} viewBox={`0 0 ${ivW} ${ivH}`} style={{ width: "100%", height: "auto" }} preserveAspectRatio="xMidYMid meet">
+                      {/* Y axis for bars */}
+                      <text x={ivPadL - 4} y={ivPadT + 4} textAnchor="end" fontSize={7} fill="var(--color-text-muted)">1.0</text>
+                      <text x={ivPadL - 4} y={ivPadT + ivPlotH} textAnchor="end" fontSize={7} fill="var(--color-text-muted)">0</text>
+                      {/* Median line */}
+                      <line x1={ivPadL} y1={ivPadT + ivPlotH * (1 - ivMedian / ivMaxVal)} x2={ivPadL + ivPlotW} y2={ivPadT + ivPlotH * (1 - ivMedian / ivMaxVal)} stroke="var(--color-text-muted)" strokeDasharray="3,3" strokeWidth={0.5} opacity={0.6} />
+                      <text x={ivPadL + ivPlotW + 2} y={ivPadT + ivPlotH * (1 - ivMedian / ivMaxVal) + 3} fontSize={7} fill="var(--color-text-muted)">med</text>
+                      {/* Bars */}
+                      {ivValues.map((v, i) => {
+                        const barW = Math.max(1, ivPlotW / ivValues.length - 0.5);
+                        const barH = (v.infoValue / ivMaxVal) * ivPlotH;
+                        const x = ivPadL + (i / ivValues.length) * ivPlotW;
+                        const color = v.isExploit ? "#f59e0b" : v.infoValue > ivMedian ? "#22c55e" : "#94a3b8";
+                        return (
+                          <rect key={i} x={x} y={ivPadT + ivPlotH - barH} width={barW} height={barH} fill={color} opacity={0.75} rx={0.5}>
+                            <title>{`Trial ${v.idx + 1}\nInfo value: ${v.infoValue.toFixed(3)}\n${v.isExploit ? "Exploitation" : "Exploration"}`}</title>
+                          </rect>
+                        );
+                      })}
+                      {/* Cumulative curve */}
+                      <polyline
+                        points={ivValues.map((v, i) => `${ivPadL + (i / ivValues.length) * ivPlotW},${ivPadT + ivPlotH * (1 - v.cumValue / ivMaxCum)}`).join(" ")}
+                        fill="none" stroke="#3b82f6" strokeWidth={1.5} opacity={0.8}
+                      />
+                      {/* Right axis label */}
+                      <text x={ivW - 2} y={ivPadT + 4} textAnchor="end" fontSize={7} fill="#3b82f6">cum</text>
+                      {/* X axis */}
+                      <text x={ivPadL + ivPlotW / 2} y={ivH - 2} textAnchor="middle" fontSize={8} fill="var(--color-text-muted)">Trial</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 10, fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 1, background: "#22c55e" }} /> high info</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 1, background: "#f59e0b" }} /> exploit</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 1, background: "#94a3b8" }} /> low info</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 16, height: 2, background: "#3b82f6" }} /> cumulative</span>
+                      <span style={{ marginLeft: "auto" }}>{ivHighInfo}/{ivValues.length} informative</span>
                     </div>
                   </div>
                 );
