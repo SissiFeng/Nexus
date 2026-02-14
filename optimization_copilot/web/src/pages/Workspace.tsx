@@ -130,6 +130,7 @@ import {
   Link2,                          // Batch 26
   Siren,
   Repeat2,
+  MoveUpRight,                     // Batch 27
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -4050,6 +4051,85 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Objective Headroom (Batch 27) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 6) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const obs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (obs.length < 6) return null;
+                // build best-so-far series
+                const ohBest: number[] = [];
+                let ohRunBest = -Infinity;
+                obs.forEach((o: { kpi_values: Record<string, number> }) => {
+                  const v = o.kpi_values[kpiKey];
+                  if (v > ohRunBest) ohRunBest = v;
+                  ohBest.push(ohRunBest);
+                });
+                // fit asymptotic model: y = a - b * exp(-c * x)
+                // use heuristic: a ≈ extrapolated ceiling, b = a - y0, c from mid-point
+                const ohN = ohBest.length;
+                const ohY0 = ohBest[0];
+                const ohYn = ohBest[ohN - 1];
+                // estimate ceiling: if improvement is decelerating, extrapolate
+                const ohRecentGain = ohYn - ohBest[Math.max(0, ohN - Math.floor(ohN / 3))];
+                const ohEarlyGain = ohBest[Math.floor(ohN / 3)] - ohY0;
+                const ohDecelRatio = ohEarlyGain > 0 ? ohRecentGain / ohEarlyGain : 1;
+                // ceiling estimate: project remaining gain based on deceleration
+                const ohTotalGain = ohYn - ohY0;
+                const ohEstCeiling = ohTotalGain > 0 ? ohYn + ohTotalGain * Math.max(0.05, ohDecelRatio) * 0.5 : ohYn * 1.1;
+                const ohPctReached = ohEstCeiling !== ohY0
+                  ? Math.min(1, Math.max(0, (ohYn - ohY0) / (ohEstCeiling - ohY0)))
+                  : 1;
+                const ohBadge = ohPctReached > 0.85 ? "Near Ceiling" : ohPctReached > 0.5 ? "Room to Grow" : "Early Stage";
+                const ohBadgeColor = ohPctReached > 0.85 ? "var(--color-red, #ef4444)" : ohPctReached > 0.5 ? "var(--color-yellow, #eab308)" : "var(--color-blue, #3b82f6)";
+                // gauge arc SVG
+                const ohW = 220, ohH = 130;
+                const ohCx = ohW / 2, ohCy = 110, ohR = 85;
+                const ohStartAngle = Math.PI;
+                const ohEndAngle = 0;
+                const ohValAngle = ohStartAngle - ohPctReached * Math.PI;
+                const ohArcPath = (startA: number, endA: number) => {
+                  const x1 = ohCx + ohR * Math.cos(startA);
+                  const y1 = ohCy - ohR * Math.sin(startA);
+                  const x2 = ohCx + ohR * Math.cos(endA);
+                  const y2 = ohCy - ohR * Math.sin(endA);
+                  const large = Math.abs(startA - endA) > Math.PI ? 1 : 0;
+                  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${ohR},${ohR} 0 ${large} 0 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+                };
+                const ohNeedleX = ohCx + (ohR - 15) * Math.cos(ohValAngle);
+                const ohNeedleY = ohCy - (ohR - 15) * Math.sin(ohValAngle);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Milestone size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Objective Headroom</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: ohBadgeColor, color: "#fff" }}>{ohBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <svg width={ohW} height={ohH} viewBox={`0 0 ${ohW} ${ohH}`}>
+                        {/* background arc */}
+                        <path d={ohArcPath(ohStartAngle, ohEndAngle)} fill="none" stroke="var(--color-border, #e2e8f0)" strokeWidth="14" strokeLinecap="round" />
+                        {/* filled arc */}
+                        <path d={ohArcPath(ohStartAngle, ohValAngle)} fill="none" stroke={ohBadgeColor} strokeWidth="14" strokeLinecap="round" opacity="0.85" />
+                        {/* needle */}
+                        <line x1={ohCx} y1={ohCy} x2={ohNeedleX} y2={ohNeedleY} stroke="var(--color-text, #1e293b)" strokeWidth="2" strokeLinecap="round" />
+                        <circle cx={ohCx} cy={ohCy} r="4" fill="var(--color-text, #1e293b)" />
+                        {/* percentage label */}
+                        <text x={ohCx} y={ohCy - 25} textAnchor="middle" fontSize="22" fontWeight="700" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">{(ohPctReached * 100).toFixed(0)}%</text>
+                        <text x={ohCx} y={ohCy - 8} textAnchor="middle" fontSize="10" fill="var(--color-text-muted, #64748b)">of estimated ceiling</text>
+                        {/* scale labels */}
+                        <text x={ohCx - ohR - 5} y={ohCy + 14} textAnchor="middle" fontSize="9" fill="var(--color-text-muted, #64748b)">0%</text>
+                        <text x={ohCx + ohR + 5} y={ohCy + 14} textAnchor="middle" fontSize="9" fill="var(--color-text-muted, #64748b)">100%</text>
+                      </svg>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", textAlign: "center", marginTop: "4px" }}>
+                      Current best: {ohYn.toPrecision(4)} · Est. ceiling: {ohEstCeiling.toPrecision(4)}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -6367,6 +6447,75 @@ export default function Workspace() {
                       {ihBadge === "Independent" ? "Parameters act independently — main effects dominate the response." :
                        ihBadge === "Mild Coupling" ? "Some parameter pairs interact — joint tuning may improve results." :
                        "Strong interactions detected — parameter combinations matter more than individual values."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Effect Monotonicity (Batch 27) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 8) return null;
+                const emSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (emSpecs.length === 0) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const emObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (emObs.length < 8) return null;
+                // for each parameter, sort obs by parameter value and check monotonicity
+                const emResults: { name: string; score: number; direction: string }[] = [];
+                emSpecs.forEach((spec: { name: string }) => {
+                  const sorted = [...emObs].sort((a: { parameters: Record<string, number> }, b: { parameters: Record<string, number> }) =>
+                    (a.parameters[spec.name] || 0) - (b.parameters[spec.name] || 0)
+                  );
+                  const vals = sorted.map((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey]);
+                  // compute monotonicity score: fraction of consecutive pairs that go in the same direction
+                  let emUp = 0, emDown = 0;
+                  for (let i = 1; i < vals.length; i++) {
+                    if (vals[i] > vals[i - 1]) emUp++;
+                    else if (vals[i] < vals[i - 1]) emDown++;
+                  }
+                  const emTotal = vals.length - 1;
+                  const emMonoScore = emTotal > 0 ? Math.max(emUp, emDown) / emTotal : 0;
+                  const emDir = emUp >= emDown ? "increasing" : "decreasing";
+                  emResults.push({ name: spec.name, score: emMonoScore, direction: emDir });
+                });
+                emResults.sort((a, b) => b.score - a.score);
+                const emMonoCount = emResults.filter(r => r.score > 0.7).length;
+                const emBadge = emMonoCount === emResults.length ? "Monotonic"
+                  : emMonoCount >= emResults.length * 0.5 ? "Mixed" : "Complex";
+                const emBadgeColor = emBadge === "Monotonic" ? "var(--color-green, #22c55e)"
+                  : emBadge === "Mixed" ? "var(--color-yellow, #eab308)" : "var(--color-purple, #a855f7)";
+                const emBarW = 200, emBarH = emResults.length * 28 + 4;
+                const emMaxLabel = Math.max(...emResults.map(r => r.name.length));
+                const emLabelW = Math.min(emMaxLabel * 7 + 10, 90);
+                const emChartW = emBarW - emLabelW - 35;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <MoveUpRight size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Effect Monotonicity</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: emBadgeColor, color: "#fff" }}>{emBadge}</span>
+                    </div>
+                    <svg width={emBarW} height={emBarH} viewBox={`0 0 ${emBarW} ${emBarH}`} style={{ display: "block", width: "100%" }}>
+                      {emResults.map((r, i) => {
+                        const y = i * 28 + 2;
+                        const barLen = r.score * emChartW;
+                        const color = r.score > 0.7 ? "var(--color-green, #22c55e)" : r.score > 0.5 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        const arrow = r.direction === "increasing" ? "↑" : "↓";
+                        return (
+                          <g key={r.name}>
+                            <text x={emLabelW - 4} y={y + 16} textAnchor="end" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">{r.name.length > 12 ? r.name.slice(0, 11) + "…" : r.name}</text>
+                            <rect x={emLabelW} y={y + 4} width={emChartW} height="16" rx="3" fill="var(--color-border, #e2e8f0)" />
+                            <rect x={emLabelW} y={y + 4} width={Math.max(barLen, 2)} height="16" rx="3" fill={color} opacity="0.8" />
+                            <text x={emLabelW + emChartW + 3} y={y + 16} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted, #64748b)">{arrow}{(r.score * 100).toFixed(0)}%</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      {emMonoCount}/{emResults.length} parameters show monotonic effects — {emBadge === "Monotonic" ? "simple response surface." : emBadge === "Mixed" ? "some non-linear patterns." : "highly non-linear landscape."}
                     </div>
                   </div>
                 );
@@ -9810,6 +9959,90 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Suggestion Provenance (Batch 27) ── */}
+              {(() => {
+                if (!suggestions?.suggestions?.length || !campaign?.observations?.length || campaign.observations.length < 3) return null;
+                const spSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (spSpecs.length === 0) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const spObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (spObs.length < 3) return null;
+                // find best observation
+                let spBestIdx = 0;
+                spObs.forEach((o: { kpi_values: Record<string, number> }, i: number) => {
+                  if (o.kpi_values[kpiKey] > spObs[spBestIdx].kpi_values[kpiKey]) spBestIdx = i;
+                });
+                const spBestParams = spObs[spBestIdx].parameters;
+                // normalize distances
+                const spNorm = (params: Record<string, number>, ref: Record<string, number>) => {
+                  let sum = 0, count = 0;
+                  spSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper || 1) - (s.lower || 0);
+                    if (range > 0 && params[s.name] != null && ref[s.name] != null) {
+                      sum += ((params[s.name] - ref[s.name]) / range) ** 2;
+                      count++;
+                    }
+                  });
+                  return count > 0 ? Math.sqrt(sum / count) : 0;
+                };
+                // for each suggestion, compute exploit score (closeness to best) and explore score (distance from nearest obs)
+                const spData = suggestions.suggestions.map((sug: Record<string, number>, idx: number) => {
+                  const distToBest = spNorm(sug, spBestParams);
+                  let minDistToObs = Infinity;
+                  spObs.forEach((o: { parameters: Record<string, number> }) => {
+                    const d = spNorm(sug, o.parameters);
+                    if (d < minDistToObs) minDistToObs = d;
+                  });
+                  // exploit = 1 - distToBest (closer = more exploitative), clamped
+                  const exploit = Math.max(0, Math.min(1, 1 - distToBest * 3));
+                  // explore = minDistToObs (farther from data = more exploratory), clamped
+                  const explore = Math.max(0, Math.min(1, minDistToObs * 3));
+                  const total = exploit + explore || 1;
+                  return { idx: idx + 1, exploit: exploit / total, explore: explore / total };
+                });
+                const spAvgExploit = spData.reduce((s: number, d: { exploit: number }) => s + d.exploit, 0) / spData.length;
+                const spBadge = spAvgExploit > 0.65 ? "Exploit-Heavy" : spAvgExploit < 0.35 ? "Explore-Heavy" : "Balanced";
+                const spBadgeColor = spBadge === "Exploit-Heavy" ? "var(--color-orange, #f97316)" : spBadge === "Explore-Heavy" ? "var(--color-blue, #3b82f6)" : "var(--color-green, #22c55e)";
+                const spW = 220, spBarH = 18, spGap = 6;
+                const spH = spData.length * (spBarH + spGap) + 24;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Split size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Suggestion Provenance</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: spBadgeColor, color: "#fff" }}>{spBadge}</span>
+                    </div>
+                    <svg width={spW} height={spH} viewBox={`0 0 ${spW} ${spH}`} style={{ display: "block", width: "100%" }}>
+                      {/* legend */}
+                      <rect x="0" y="0" width="10" height="10" rx="2" fill="var(--color-orange, #f97316)" opacity="0.75" />
+                      <text x="14" y="9" fontSize="9" fill="var(--color-text-muted, #64748b)">Exploit</text>
+                      <rect x="60" y="0" width="10" height="10" rx="2" fill="var(--color-blue, #3b82f6)" opacity="0.75" />
+                      <text x="74" y="9" fontSize="9" fill="var(--color-text-muted, #64748b)">Explore</text>
+                      {spData.map((d: { idx: number; exploit: number; explore: number }, i: number) => {
+                        const y = i * (spBarH + spGap) + 20;
+                        const maxBar = spW - 40;
+                        const exploitW = d.exploit * maxBar;
+                        const exploreW = d.explore * maxBar;
+                        return (
+                          <g key={d.idx}>
+                            <text x="0" y={y + 13} fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">#{d.idx}</text>
+                            <rect x="28" y={y} width={exploitW} height={spBarH} rx="3" fill="var(--color-orange, #f97316)" opacity="0.75" />
+                            <rect x={28 + exploitW} y={y} width={exploreW} height={spBarH} rx="3" fill="var(--color-blue, #3b82f6)" opacity="0.75" />
+                            <text x={28 + exploitW + exploreW + 4} y={y + 13} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted, #64748b)">{(d.exploit * 100).toFixed(0)}/{(d.explore * 100).toFixed(0)}</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      {spBadge === "Balanced" ? "Good balance between refining known regions and exploring new areas." : spBadge === "Exploit-Heavy" ? "Batch is focused on refining near the current best." : "Batch is pushing into unexplored territory."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -12423,6 +12656,84 @@ export default function Workspace() {
                       {rvBadge === "Predictable" ? "Past experiments replay well — the model is capturing the true response surface." :
                        rvBadge === "Noisy" ? "Partial predictability — results are moderately influenced by noise or unmodeled factors." :
                        "Low replay fidelity — the response surface may be highly complex or noisy."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Regime Change Detector (Batch 27) ── */}
+              {(() => {
+                if (trials.length < 12) return null;
+                const kpiKey = Object.keys(trials[0].kpis || {})[0];
+                if (!kpiKey) return null;
+                const rcVals = trials.map((t: { kpis: Record<string, number> }) => t.kpis[kpiKey]).filter((v: number) => v != null);
+                if (rcVals.length < 12) return null;
+                // CUSUM changepoint detection
+                const rcMean = rcVals.reduce((s: number, v: number) => s + v, 0) / rcVals.length;
+                const rcStd = Math.sqrt(rcVals.reduce((s: number, v: number) => s + (v - rcMean) ** 2, 0) / rcVals.length) || 1;
+                const rcThreshold = rcStd * 1.5; // sensitivity threshold
+                let rcCusum = 0;
+                let rcCusumNeg = 0;
+                const rcChangepoints: number[] = [];
+                const rcCusumVals: number[] = [];
+                for (let i = 0; i < rcVals.length; i++) {
+                  const z = (rcVals[i] - rcMean) / rcStd;
+                  rcCusum = Math.max(0, rcCusum + z - 0.5);
+                  rcCusumNeg = Math.max(0, rcCusumNeg - z - 0.5);
+                  rcCusumVals.push(rcCusum - rcCusumNeg);
+                  if (rcCusum > rcThreshold || rcCusumNeg > rcThreshold) {
+                    rcChangepoints.push(i);
+                    rcCusum = 0;
+                    rcCusumNeg = 0;
+                  }
+                }
+                const rcNumChanges = rcChangepoints.length;
+                const rcBadge = rcNumChanges === 0 ? "Stable" : rcNumChanges <= 2 ? "Shifting" : "Volatile";
+                const rcBadgeColor = rcBadge === "Stable" ? "var(--color-green, #22c55e)" : rcBadge === "Shifting" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // render timeline with CUSUM curve and changepoint markers
+                const rcW = 260, rcH = 80;
+                const rcPad = { l: 5, r: 5, t: 8, b: 14 };
+                const rcPlotW = rcW - rcPad.l - rcPad.r;
+                const rcPlotH = rcH - rcPad.t - rcPad.b;
+                const rcCMin = Math.min(...rcCusumVals);
+                const rcCMax = Math.max(...rcCusumVals);
+                const rcCRange = rcCMax - rcCMin || 1;
+                const rcPoints = rcCusumVals.map((v, i) => ({
+                  x: rcPad.l + (i / (rcCusumVals.length - 1)) * rcPlotW,
+                  y: rcPad.t + (1 - (v - rcCMin) / rcCRange) * rcPlotH,
+                }));
+                const rcLine = rcPoints.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                // zero line
+                const rcZeroY = rcPad.t + (1 - (0 - rcCMin) / rcCRange) * rcPlotH;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <ScanLine size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Regime Change Detector</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: rcBadgeColor, color: "#fff" }}>{rcBadge}</span>
+                    </div>
+                    <svg width={rcW} height={rcH} viewBox={`0 0 ${rcW} ${rcH}`} style={{ display: "block", width: "100%" }}>
+                      {/* zero line */}
+                      <line x1={rcPad.l} y1={rcZeroY} x2={rcW - rcPad.r} y2={rcZeroY} stroke="var(--color-text-muted, #94a3b8)" strokeWidth="0.5" strokeDasharray="3,3" />
+                      {/* CUSUM curve */}
+                      <path d={rcLine} fill="none" stroke="var(--color-primary, #6366f1)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* changepoint markers */}
+                      {rcChangepoints.map((cp, i) => {
+                        const px = rcPad.l + (cp / (rcCusumVals.length - 1)) * rcPlotW;
+                        return (
+                          <g key={i}>
+                            <line x1={px} y1={rcPad.t} x2={px} y2={rcH - rcPad.b} stroke="var(--color-red, #ef4444)" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.7" />
+                            <circle cx={px} cy={rcPad.t + 2} r="3.5" fill="var(--color-red, #ef4444)" />
+                            <text x={px} y={rcH - 2} textAnchor="middle" fontSize="8" fontFamily="var(--font-mono)" fill="var(--color-red, #ef4444)">#{cp + 1}</text>
+                          </g>
+                        );
+                      })}
+                      {/* iteration axis labels */}
+                      <text x={rcPad.l} y={rcH - 2} fontSize="8" fill="var(--color-text-muted, #64748b)">1</text>
+                      <text x={rcW - rcPad.r} y={rcH - 2} textAnchor="end" fontSize="8" fill="var(--color-text-muted, #64748b)">{rcVals.length}</text>
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      CUSUM detected {rcNumChanges} regime change{rcNumChanges !== 1 ? "s" : ""} — {rcBadge === "Stable" ? "consistent optimization dynamics throughout." : rcBadge === "Shifting" ? "optimization strategy adapted during the campaign." : "frequent shifts in optimization landscape."}
                     </div>
                   </div>
                 );
