@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { fetchInsights, type InsightsData, type InsightSummary, type CorrelationInsight, type OptimalRegion, type TopCondition } from "../api";
+import { fetchInsights, fetchImportance, type InsightsData, type InsightSummary, type CorrelationInsight, type OptimalRegion, type TopCondition, type ParameterImportanceData } from "../api";
 
 interface InsightsPanelProps {
   campaignId: string;
@@ -120,18 +120,57 @@ function OptimalRegionBar({ region }: { region: OptimalRegion }) {
   );
 }
 
+function ImportanceChart({ data }: { data: ParameterImportanceData }) {
+  const sorted = [...data.importances].sort((a, b) => b.importance - a.importance);
+  const max = sorted.length > 0 ? sorted[0].importance : 1;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+      {sorted.map((item) => {
+        const pct = max > 0 ? (item.importance / max) * 100 : 0;
+        return (
+          <div key={item.name} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ width: "100px", fontSize: "0.82rem", fontWeight: 500, textAlign: "right", flexShrink: 0, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {item.name}
+            </span>
+            <div style={{ flex: 1, height: "18px", background: "var(--color-border)", borderRadius: "4px", overflow: "hidden", position: "relative" }}>
+              <div
+                style={{
+                  width: `${pct}%`,
+                  height: "100%",
+                  background: pct > 50 ? "var(--color-primary)" : pct > 20 ? "var(--color-blue)" : "var(--color-text-muted)",
+                  borderRadius: "4px",
+                  transition: "width 0.4s ease",
+                  minWidth: "2px",
+                }}
+              />
+            </div>
+            <span style={{ width: "50px", fontSize: "0.78rem", fontFamily: "var(--font-mono)", fontWeight: 600, color: pct > 50 ? "var(--color-primary)" : "var(--color-text-muted)", textAlign: "right", flexShrink: 0 }}>
+              {(item.importance * 100).toFixed(1)}%
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Main component ── */
 
 export default function InsightsPanel({ campaignId }: InsightsPanelProps) {
   const [data, setData] = useState<InsightsData | null>(null);
+  const [importance, setImportance] = useState<ParameterImportanceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetchInsights(campaignId)
-      .then((d) => setData(d))
+    Promise.all([
+      fetchInsights(campaignId),
+      fetchImportance(campaignId).catch(() => null),
+    ])
+      .then(([d, imp]) => { setData(d); setImportance(imp); })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to fetch insights"))
       .finally(() => setLoading(false));
   }, [campaignId]);
@@ -171,6 +210,14 @@ export default function InsightsPanel({ campaignId }: InsightsPanelProps) {
           <div style={S.grid}>
             {[...summaries].sort((a, b) => b.importance - a.importance).map((s, i) => <SummaryCard key={i} summary={s} />)}
           </div>
+        </div>
+      )}
+
+      {/* Parameter importance */}
+      {importance && importance.importances.length > 0 && (
+        <div style={S.section}>
+          <div style={S.secTitle}>Parameter Importance</div>
+          <ImportanceChart data={importance} />
         </div>
       )}
 
