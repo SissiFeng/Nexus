@@ -82,6 +82,9 @@ import {
   Aperture,
   Orbit,
   Thermometer,
+  ScatterChart,
+  AlignVerticalJustifyStart,
+  LayoutGrid,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -2654,6 +2657,159 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Prediction Calibration Plot */}
+              {trials.length >= 10 && (() => {
+                const pc2Sorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const pc2KpiKey = Object.keys(pc2Sorted[0]?.kpis || {})[0];
+                if (!pc2KpiKey) return null;
+                const pc2Vals = pc2Sorted.map(t => t.kpis[pc2KpiKey] ?? 0);
+                const pc2N = pc2Vals.length;
+
+                // LOO prediction: for each point i, predict using k=5 nearest neighbors
+                const pc2K = Math.min(5, pc2N - 1);
+                const pc2Predictions: number[] = [];
+                for (let i = 0; i < pc2N; i++) {
+                  const pc2Dists: { d: number; v: number }[] = [];
+                  for (let j = 0; j < pc2N; j++) {
+                    if (j === i) continue;
+                    const pKeys = Object.keys(pc2Sorted[i].parameters);
+                    let dist = 0;
+                    for (const pk of pKeys) {
+                      const diff = (Number(pc2Sorted[i].parameters[pk]) || 0) - (Number(pc2Sorted[j].parameters[pk]) || 0);
+                      dist += diff * diff;
+                    }
+                    pc2Dists.push({ d: Math.sqrt(dist), v: pc2Vals[j] });
+                  }
+                  pc2Dists.sort((a, b) => a.d - b.d);
+                  const pc2Neighbors = pc2Dists.slice(0, pc2K);
+                  const pc2Pred = pc2Neighbors.reduce((s, n) => s + n.v, 0) / pc2Neighbors.length;
+                  pc2Predictions.push(pc2Pred);
+                }
+
+                // Compute residual std from LOO
+                const pc2Residuals = pc2Vals.map((v, i) => v - pc2Predictions[i]);
+                const pc2ResMean = pc2Residuals.reduce((a, b) => a + b, 0) / pc2N;
+                const pc2ResStd = Math.sqrt(pc2Residuals.reduce((s, r) => s + (r - pc2ResMean) ** 2, 0) / pc2N) || 0.001;
+
+                // For calibration: compute predicted percentile for each point
+                // using Gaussian CDF approximation: P(x) ≈ 0.5 * (1 + erf(x / sqrt(2)))
+                const pc2Erf = (x: number) => {
+                  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429;
+                  const p = 0.3275911;
+                  const sign = x < 0 ? -1 : 1;
+                  const t = 1 / (1 + p * Math.abs(x));
+                  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+                  return sign * y;
+                };
+                const pc2NormCdf = (x: number) => 0.5 * (1 + pc2Erf(x / Math.SQRT2));
+
+                // Predicted percentile: where does observed fall in predicted distribution N(pred, std)?
+                const pc2PredPercentiles = pc2Vals.map((v, i) => pc2NormCdf((v - pc2Predictions[i]) / pc2ResStd));
+
+                // Observed percentile: rank among all observed values
+                const pc2ObsPercentiles = pc2Vals.map(v => {
+                  const rank = pc2Vals.filter(o => o <= v).length;
+                  return rank / pc2N;
+                });
+
+                // Bin into 10 bins and compute average predicted & observed percentile
+                const pc2NBins = 10;
+                const pc2Bins: { pred: number; obs: number }[] = [];
+                for (let b = 0; b < pc2NBins; b++) {
+                  const lo = b / pc2NBins, hi = (b + 1) / pc2NBins;
+                  const inBin = pc2PredPercentiles.map((pp, i) => ({ pp, op: pc2ObsPercentiles[i] })).filter(d => d.pp >= lo && d.pp < hi);
+                  if (inBin.length > 0) {
+                    pc2Bins.push({
+                      pred: inBin.reduce((s, d) => s + d.pp, 0) / inBin.length,
+                      obs: inBin.reduce((s, d) => s + d.op, 0) / inBin.length,
+                    });
+                  }
+                }
+
+                // Expected Calibration Error
+                const pc2ECE = pc2Bins.length > 0
+                  ? pc2Bins.reduce((s, b) => s + Math.abs(b.pred - b.obs), 0) / pc2Bins.length
+                  : 0;
+                const pc2Cal = pc2ECE < 0.08 ? "Well-calibrated" : pc2ECE < 0.15 ? "Moderate" : "Miscalibrated";
+                const pc2CalColor = pc2ECE < 0.08 ? "#22c55e" : pc2ECE < 0.15 ? "#f59e0b" : "#ef4444";
+
+                // SVG layout
+                const pc2W = 280, pc2H = 180, pc2Pad = 36;
+                const pc2PlotW = pc2W - 2 * pc2Pad, pc2PlotH = pc2H - 2 * pc2Pad;
+
+                return (
+                  <div className="card" style={{ marginBottom: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <ScatterChart size={16} style={{ color: "var(--color-primary)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Prediction Calibration</h3>
+                      <span className="findings-badge" style={{ background: pc2CalColor + "18", color: pc2CalColor, marginLeft: "auto" }}>
+                        ECE: {(pc2ECE * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginBottom: 8 }}>
+                      LOO predicted percentile vs observed — {pc2Cal}
+                    </div>
+                    <svg width={pc2W} height={pc2H} viewBox={`0 0 ${pc2W} ${pc2H}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Grid lines */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                        <Fragment key={`pc2g${v}`}>
+                          <line
+                            x1={pc2Pad} y1={pc2Pad + pc2PlotH * (1 - v)}
+                            x2={pc2Pad + pc2PlotW} y2={pc2Pad + pc2PlotH * (1 - v)}
+                            stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3"
+                          />
+                          <text x={pc2Pad - 4} y={pc2Pad + pc2PlotH * (1 - v) + 3} fontSize="6" fill="var(--color-text-muted)" textAnchor="end">{(v * 100).toFixed(0)}%</text>
+                          <text x={pc2Pad + pc2PlotW * v} y={pc2H - pc2Pad + 12} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle">{(v * 100).toFixed(0)}%</text>
+                        </Fragment>
+                      ))}
+                      {/* Perfect calibration line (diagonal) */}
+                      <line x1={pc2Pad} y1={pc2Pad + pc2PlotH} x2={pc2Pad + pc2PlotW} y2={pc2Pad} stroke="var(--color-text-muted)" strokeWidth="1" strokeDasharray="4,4" opacity="0.5" />
+                      {/* Binned calibration points */}
+                      {pc2Bins.map((b, i) => (
+                        <circle
+                          key={`pc2b${i}`}
+                          cx={pc2Pad + b.pred * pc2PlotW}
+                          cy={pc2Pad + (1 - b.obs) * pc2PlotH}
+                          r="4"
+                          fill={pc2CalColor}
+                          opacity="0.8"
+                          stroke="white"
+                          strokeWidth="1"
+                        />
+                      ))}
+                      {/* Calibration line connecting bins */}
+                      {pc2Bins.length > 1 && (
+                        <polyline
+                          points={pc2Bins.map(b => `${pc2Pad + b.pred * pc2PlotW},${pc2Pad + (1 - b.obs) * pc2PlotH}`).join(" ")}
+                          fill="none"
+                          stroke={pc2CalColor}
+                          strokeWidth="1.5"
+                          strokeLinejoin="round"
+                        />
+                      )}
+                      {/* Scatter of individual points (faint) */}
+                      {pc2PredPercentiles.map((pp, i) => (
+                        <circle
+                          key={`pc2p${i}`}
+                          cx={pc2Pad + pp * pc2PlotW}
+                          cy={pc2Pad + (1 - pc2ObsPercentiles[i]) * pc2PlotH}
+                          r="1.5"
+                          fill="var(--color-primary)"
+                          opacity="0.2"
+                        />
+                      ))}
+                      {/* Axis labels */}
+                      <text x={pc2Pad + pc2PlotW / 2} y={pc2H - 4} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle">Predicted Percentile</text>
+                      <text x={8} y={pc2Pad + pc2PlotH / 2} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90, 8, ${pc2Pad + pc2PlotH / 2})`}>Observed Percentile</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span>σ_residual: {pc2ResStd.toFixed(4)}</span>
+                      <span>{pc2Bins.length} bins from {pc2N} points</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -3573,6 +3729,142 @@ export default function Workspace() {
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "#8b5cf6", marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.6 }} />Nonlinear</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "#3b82f6", marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.6 }} />Moderate</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "var(--color-text-muted)", marginRight: 4, verticalAlign: "middle", borderRadius: 2, opacity: 0.6 }} />Linear</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Marginal Response Profiles */}
+              {trials.length >= 8 && (() => {
+                const mrSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (mrSpecs.length === 0) return null;
+                const mrKpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!mrKpiKey) return null;
+                const mrParams = mrSpecs.slice(0, 6); // Up to 6 parameters
+                const mrNBins = 5;
+
+                // For each parameter, bin trials and compute mean + stderr of KPI
+                const mrProfiles = mrParams.map((spec: { name: string; lower?: number; upper?: number }) => {
+                  const lo = spec.lower!;
+                  const hi = spec.upper!;
+                  const range = hi - lo || 1;
+                  const bins: { center: number; mean: number; stderr: number; count: number }[] = [];
+                  for (let b = 0; b < mrNBins; b++) {
+                    const bLo = lo + (b / mrNBins) * range;
+                    const bHi = lo + ((b + 1) / mrNBins) * range;
+                    const bCenter = (bLo + bHi) / 2;
+                    const inBin = trials.filter(t => {
+                      const v = Number(t.parameters[spec.name]) ?? 0;
+                      return v >= bLo && v < bHi;
+                    }).map(t => t.kpis[mrKpiKey] ?? 0);
+                    if (inBin.length > 0) {
+                      const mean = inBin.reduce((a, b2) => a + b2, 0) / inBin.length;
+                      const variance = inBin.length > 1 ? inBin.reduce((s, v) => s + (v - mean) ** 2, 0) / (inBin.length - 1) : 0;
+                      bins.push({ center: bCenter, mean, stderr: Math.sqrt(variance / inBin.length), count: inBin.length });
+                    }
+                  }
+                  // Compute monotonicity score
+                  let mrMono = 0;
+                  if (bins.length > 1) {
+                    let ups = 0, downs = 0;
+                    for (let i2 = 1; i2 < bins.length; i2++) {
+                      if (bins[i2].mean > bins[i2 - 1].mean) ups++;
+                      else if (bins[i2].mean < bins[i2 - 1].mean) downs++;
+                    }
+                    mrMono = Math.max(ups, downs) / (bins.length - 1);
+                  }
+                  return { name: spec.name, bins, lo, hi, monotonicity: mrMono };
+                });
+
+                // SVG layout: small multiples
+                const mrColW = 130, mrColH = 80, mrPad = 20, mrPadB = 16;
+                const mrCols = Math.min(mrProfiles.length, 3);
+                const mrRows = Math.ceil(mrProfiles.length / mrCols);
+                const mrW = mrCols * mrColW + mrPad;
+                const mrH = mrRows * mrColH + mrPad;
+
+                // Global KPI range for consistent y-axis
+                const mrAllMeans = mrProfiles.flatMap(p => p.bins.map(b => b.mean));
+                const mrAllErrs = mrProfiles.flatMap(p => p.bins.map(b => b.stderr));
+                const mrYMin = Math.min(...mrAllMeans.map((m, i) => m - mrAllErrs[i]));
+                const mrYMax = Math.max(...mrAllMeans.map((m, i) => m + mrAllErrs[i]));
+                const mrYRange = mrYMax - mrYMin || 1;
+
+                const mrMonotonic = mrProfiles.filter(p => p.monotonicity > 0.8).length;
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <AlignVerticalJustifyStart size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Marginal Response Profiles</h2>
+                        <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>1D binned response per parameter</div>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto" }}>
+                        {mrMonotonic} monotonic
+                      </span>
+                    </div>
+                    <svg width={mrW} height={mrH} viewBox={`0 0 ${mrW} ${mrH}`} style={{ width: "100%", height: "auto" }}>
+                      {mrProfiles.map((prof, pi) => {
+                        const col = pi % mrCols;
+                        const row = Math.floor(pi / mrCols);
+                        const ox = col * mrColW + mrPad;
+                        const oy = row * mrColH + 6;
+                        const pw = mrColW - mrPad - 10;
+                        const ph = mrColH - mrPadB - 12;
+                        const xScale = (v: number) => ox + ((v - prof.lo) / (prof.hi - prof.lo || 1)) * pw;
+                        const yScale = (v: number) => oy + ph - ((v - mrYMin) / mrYRange) * ph;
+
+                        return (
+                          <g key={`mr${pi}`}>
+                            {/* Param name */}
+                            <text x={ox + pw / 2} y={oy + 6} fontSize="6.5" fill="var(--color-text)" textAnchor="middle" fontWeight="600">{prof.name}</text>
+                            {/* Baseline grid */}
+                            <line x1={ox} y1={oy + ph} x2={ox + pw} y2={oy + ph} stroke="var(--color-border)" strokeWidth="0.5" />
+                            <line x1={ox} y1={oy + 10} x2={ox} y2={oy + ph} stroke="var(--color-border)" strokeWidth="0.5" />
+                            {/* Error band (confidence whiskers) */}
+                            {prof.bins.map((b, bi) => {
+                              const bx = xScale(b.center);
+                              return (
+                                <g key={`mre${bi}`}>
+                                  <line x1={bx} y1={yScale(b.mean + b.stderr)} x2={bx} y2={yScale(b.mean - b.stderr)} stroke="var(--color-primary)" strokeWidth="1.5" opacity="0.3" />
+                                  <line x1={bx - 2} y1={yScale(b.mean + b.stderr)} x2={bx + 2} y2={yScale(b.mean + b.stderr)} stroke="var(--color-primary)" strokeWidth="0.8" opacity="0.4" />
+                                  <line x1={bx - 2} y1={yScale(b.mean - b.stderr)} x2={bx + 2} y2={yScale(b.mean - b.stderr)} stroke="var(--color-primary)" strokeWidth="0.8" opacity="0.4" />
+                                </g>
+                              );
+                            })}
+                            {/* Mean line */}
+                            {prof.bins.length > 1 && (
+                              <polyline
+                                points={prof.bins.map(b => `${xScale(b.center)},${yScale(b.mean)}`).join(" ")}
+                                fill="none"
+                                stroke={prof.monotonicity > 0.8 ? "#22c55e" : "var(--color-primary)"}
+                                strokeWidth="1.5"
+                                strokeLinejoin="round"
+                              />
+                            )}
+                            {/* Mean dots */}
+                            {prof.bins.map((b, bi) => (
+                              <circle
+                                key={`mrd${bi}`}
+                                cx={xScale(b.center)}
+                                cy={yScale(b.mean)}
+                                r="2"
+                                fill={prof.monotonicity > 0.8 ? "#22c55e" : "var(--color-primary)"}
+                              />
+                            ))}
+                            {/* Monotonicity indicator */}
+                            <text x={ox + pw} y={oy + 6} fontSize="5" fill={prof.monotonicity > 0.8 ? "#22c55e" : "var(--color-text-muted)"} textAnchor="end">
+                              ρ={prof.monotonicity.toFixed(2)}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: 4, flexWrap: "wrap" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 2, background: "#22c55e", marginRight: 4, verticalAlign: "middle" }} />Monotonic (ρ&gt;0.8)</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 2, background: "var(--color-primary)", marginRight: 4, verticalAlign: "middle" }} />Non-monotonic</span>
+                      <span className="efficiency-legend-item" style={{ opacity: 0.5 }}>|: ±1 SE</span>
                     </div>
                   </div>
                 );
@@ -5646,6 +5938,139 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Batch Diversity Matrix */}
+              {suggestions && suggestions.suggestions.length >= 2 && (() => {
+                const bdSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (bdSpecs.length === 0) return null;
+                const bdSugs = suggestions.suggestions;
+                const bdN = bdSugs.length;
+
+                // Normalize each suggestion parameter to [0,1]
+                const bdNormalized = bdSugs.map(sug => {
+                  const norm: number[] = [];
+                  for (const sp of bdSpecs) {
+                    const lo = (sp as { lower: number }).lower;
+                    const hi = (sp as { upper: number }).upper;
+                    const range = hi - lo || 1;
+                    norm.push(((Number(sug[(sp as { name: string }).name]) || 0) - lo) / range);
+                  }
+                  return norm;
+                });
+
+                // Compute pairwise Euclidean distance matrix
+                const bdDistMatrix: number[][] = [];
+                let bdMaxDist = 0;
+                for (let i = 0; i < bdN; i++) {
+                  bdDistMatrix[i] = [];
+                  for (let j = 0; j < bdN; j++) {
+                    if (i === j) { bdDistMatrix[i][j] = 0; continue; }
+                    let dist = 0;
+                    for (let k = 0; k < bdNormalized[i].length; k++) {
+                      dist += (bdNormalized[i][k] - bdNormalized[j][k]) ** 2;
+                    }
+                    dist = Math.sqrt(dist);
+                    bdDistMatrix[i][j] = dist;
+                    if (dist > bdMaxDist) bdMaxDist = dist;
+                  }
+                }
+
+                // Average pairwise distance
+                let bdSumDist = 0, bdCount = 0;
+                for (let i = 0; i < bdN; i++) {
+                  for (let j = i + 1; j < bdN; j++) {
+                    bdSumDist += bdDistMatrix[i][j];
+                    bdCount++;
+                  }
+                }
+                const bdAvgDist = bdCount > 0 ? bdSumDist / bdCount : 0;
+                const bdMaxPossible = Math.sqrt(bdSpecs.length); // max dist in normalized space
+                const bdDiversityPct = bdMaxPossible > 0 ? (bdAvgDist / bdMaxPossible) * 100 : 0;
+                const bdLabel = bdDiversityPct > 60 ? "Diverse" : bdDiversityPct > 30 ? "Moderate" : "Clustered";
+                const bdLabelColor = bdDiversityPct > 60 ? "#22c55e" : bdDiversityPct > 30 ? "#f59e0b" : "#ef4444";
+
+                // SVG heatmap
+                const bdCellSize = Math.min(32, Math.floor(200 / bdN));
+                const bdPadL = 28, bdPadT = 28;
+                const bdW = bdPadL + bdN * bdCellSize + 10;
+                const bdH = bdPadT + bdN * bdCellSize + 10;
+
+                const bdColor = (d: number) => {
+                  const t = bdMaxDist > 0 ? d / bdMaxDist : 0;
+                  // Interpolate from blue (close) to green (far)
+                  const r = Math.round(34 * (1 - t) + 34 * t);
+                  const g = Math.round(130 * (1 - t) + 197 * t);
+                  const b2 = Math.round(246 * (1 - t) + 94 * t);
+                  return `rgb(${r},${g},${b2})`;
+                };
+
+                return (
+                  <div className="card" style={{ marginBottom: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <LayoutGrid size={16} style={{ color: "var(--color-primary)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Batch Diversity Matrix</h3>
+                      <span className="findings-badge" style={{ background: bdLabelColor + "18", color: bdLabelColor, marginLeft: "auto" }}>
+                        {bdLabel}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginBottom: 8 }}>
+                      Pairwise Euclidean distance (normalized) — avg {bdAvgDist.toFixed(3)}
+                    </div>
+                    <svg width={bdW} height={bdH} viewBox={`0 0 ${bdW} ${bdH}`} style={{ width: "100%", maxWidth: bdW, height: "auto" }}>
+                      {/* Column headers */}
+                      {bdSugs.map((_, i) => (
+                        <text key={`bdch${i}`} x={bdPadL + i * bdCellSize + bdCellSize / 2} y={bdPadT - 6} fontSize="7" fill="var(--color-text-muted)" textAnchor="middle">#{i + 1}</text>
+                      ))}
+                      {/* Row headers */}
+                      {bdSugs.map((_, i) => (
+                        <text key={`bdrh${i}`} x={bdPadL - 4} y={bdPadT + i * bdCellSize + bdCellSize / 2 + 3} fontSize="7" fill="var(--color-text-muted)" textAnchor="end">#{i + 1}</text>
+                      ))}
+                      {/* Cells */}
+                      {bdDistMatrix.map((row, i) =>
+                        row.map((d, j) => (
+                          <g key={`bdc${i}-${j}`}>
+                            <rect
+                              x={bdPadL + j * bdCellSize}
+                              y={bdPadT + i * bdCellSize}
+                              width={bdCellSize - 1}
+                              height={bdCellSize - 1}
+                              rx={2}
+                              fill={i === j ? "var(--color-bg-secondary)" : bdColor(d)}
+                              opacity={i === j ? 0.3 : 0.7 + 0.3 * (d / (bdMaxDist || 1))}
+                            />
+                            {bdCellSize >= 20 && (
+                              <text
+                                x={bdPadL + j * bdCellSize + (bdCellSize - 1) / 2}
+                                y={bdPadT + i * bdCellSize + (bdCellSize - 1) / 2 + 3}
+                                fontSize="6"
+                                fill={i === j ? "var(--color-text-muted)" : "white"}
+                                textAnchor="middle"
+                                fontWeight="500"
+                              >
+                                {i === j ? "—" : d.toFixed(2)}
+                              </text>
+                            )}
+                          </g>
+                        ))
+                      )}
+                      {/* Color legend */}
+                      <defs>
+                        <linearGradient id="bdGrad" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor="rgb(34,130,246)" />
+                          <stop offset="100%" stopColor="rgb(34,197,94)" />
+                        </linearGradient>
+                      </defs>
+                      <rect x={bdPadL} y={bdPadT + bdN * bdCellSize + 2} width={bdN * bdCellSize - 1} height={4} rx={2} fill="url(#bdGrad)" opacity="0.6" />
+                      <text x={bdPadL} y={bdPadT + bdN * bdCellSize + 12} fontSize="5" fill="var(--color-text-muted)">Close</text>
+                      <text x={bdPadL + bdN * bdCellSize - 1} y={bdPadT + bdN * bdCellSize + 12} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">Far</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span>{bdSpecs.length}D space, {bdN} suggestions</span>
+                      <span>diversity: {bdDiversityPct.toFixed(1)}%</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -6819,6 +7244,141 @@ export default function Workspace() {
                       <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
                         {lvWin}-trial windows
                       </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Objective Distribution Evolution */}
+              {trials.length >= 12 && (() => {
+                const deSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const deKpiKey = Object.keys(deSorted[0]?.kpis || {})[0];
+                if (!deKpiKey) return null;
+                const deN = deSorted.length;
+                const deNWindows = Math.min(8, Math.floor(deN / 3));
+                if (deNWindows < 3) return null;
+                const deWinSize = Math.floor(deN / deNWindows);
+
+                // Compute quartile stats for each window
+                const deWindows: { iter: number; q0: number; q25: number; q50: number; q75: number; q100: number }[] = [];
+                for (let w = 0; w < deNWindows; w++) {
+                  const start = w * deWinSize;
+                  const end = w === deNWindows - 1 ? deN : (w + 1) * deWinSize;
+                  const vals = deSorted.slice(start, end).map(t => t.kpis[deKpiKey] ?? 0).sort((a, b) => a - b);
+                  const qAt = (p: number) => {
+                    const idx = p * (vals.length - 1);
+                    const lo = Math.floor(idx), hi = Math.ceil(idx);
+                    return lo === hi ? vals[lo] : vals[lo] + (vals[hi] - vals[lo]) * (idx - lo);
+                  };
+                  deWindows.push({
+                    iter: Math.round((start + end) / 2),
+                    q0: vals[0],
+                    q25: qAt(0.25),
+                    q50: qAt(0.5),
+                    q75: qAt(0.75),
+                    q100: vals[vals.length - 1],
+                  });
+                }
+
+                // Global y range
+                const deYMin = Math.min(...deWindows.map(w => w.q0));
+                const deYMax = Math.max(...deWindows.map(w => w.q100));
+                const deYRange = deYMax - deYMin || 1;
+
+                // Detect shift
+                const deFirst = deWindows[0];
+                const deLast = deWindows[deWindows.length - 1];
+                const deMedianShift = deLast.q50 - deFirst.q50;
+                const deIQRFirst = deFirst.q75 - deFirst.q25 || 0.001;
+                const deIQRLast = deLast.q75 - deLast.q25 || 0.001;
+                const deNarrowing = deIQRLast < deIQRFirst * 0.7;
+                const deShiftLabel = deNarrowing ? "Converging" : Math.abs(deMedianShift) / deIQRFirst > 0.5 ? "Shifting" : "Stable";
+                const deShiftColor = deNarrowing ? "#22c55e" : Math.abs(deMedianShift) / deIQRFirst > 0.5 ? "#3b82f6" : "var(--color-text-muted)";
+
+                // SVG layout
+                const deW = 320, deH = 140, dePadL = 40, dePadR = 10, dePadT = 10, dePadB = 24;
+                const dePlotW = deW - dePadL - dePadR;
+                const dePlotH = deH - dePadT - dePadB;
+                const deXScale = (i: number) => dePadL + (i / (deNWindows - 1)) * dePlotW;
+                const deYScale = (v: number) => dePadT + dePlotH - ((v - deYMin) / deYRange) * dePlotH;
+                const deBandW = Math.max(6, dePlotW / deNWindows * 0.6);
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <BarChart2 size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Objective Distribution Evolution</h2>
+                        <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>Quartile shift across iteration windows</div>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto", background: deShiftColor + "18", color: deShiftColor }}>
+                        {deShiftLabel}
+                      </span>
+                    </div>
+                    <svg width={deW} height={deH} viewBox={`0 0 ${deW} ${deH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Y axis labels */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                        const v = deYMin + f * deYRange;
+                        return (
+                          <Fragment key={`dey${f}`}>
+                            <line x1={dePadL} y1={deYScale(v)} x2={dePadL + dePlotW} y2={deYScale(v)} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                            <text x={dePadL - 4} y={deYScale(v) + 3} fontSize="6" fill="var(--color-text-muted)" textAnchor="end">{v.toPrecision(3)}</text>
+                          </Fragment>
+                        );
+                      })}
+                      {/* Box plots for each window */}
+                      {deWindows.map((w, i) => {
+                        const x = deXScale(i);
+                        const half = deBandW / 2;
+                        return (
+                          <g key={`dew${i}`}>
+                            {/* Whisker: q0 to q25 */}
+                            <line x1={x} y1={deYScale(w.q0)} x2={x} y2={deYScale(w.q25)} stroke="var(--color-text-muted)" strokeWidth="0.8" />
+                            {/* Whisker: q75 to q100 */}
+                            <line x1={x} y1={deYScale(w.q75)} x2={x} y2={deYScale(w.q100)} stroke="var(--color-text-muted)" strokeWidth="0.8" />
+                            {/* Whisker caps */}
+                            <line x1={x - half * 0.5} y1={deYScale(w.q0)} x2={x + half * 0.5} y2={deYScale(w.q0)} stroke="var(--color-text-muted)" strokeWidth="0.8" />
+                            <line x1={x - half * 0.5} y1={deYScale(w.q100)} x2={x + half * 0.5} y2={deYScale(w.q100)} stroke="var(--color-text-muted)" strokeWidth="0.8" />
+                            {/* IQR box */}
+                            <rect
+                              x={x - half}
+                              y={deYScale(w.q75)}
+                              width={deBandW}
+                              height={Math.max(1, deYScale(w.q25) - deYScale(w.q75))}
+                              rx={2}
+                              fill={i < deNWindows / 3 ? "rgba(59,130,246,0.15)" : i < 2 * deNWindows / 3 ? "rgba(168,85,247,0.15)" : "rgba(34,197,94,0.15)"}
+                              stroke={i < deNWindows / 3 ? "#3b82f6" : i < 2 * deNWindows / 3 ? "#a855f7" : "#22c55e"}
+                              strokeWidth="1"
+                            />
+                            {/* Median line */}
+                            <line
+                              x1={x - half}
+                              y1={deYScale(w.q50)}
+                              x2={x + half}
+                              y2={deYScale(w.q50)}
+                              stroke={i < deNWindows / 3 ? "#3b82f6" : i < 2 * deNWindows / 3 ? "#a855f7" : "#22c55e"}
+                              strokeWidth="2"
+                            />
+                            {/* Window label */}
+                            <text x={x} y={deH - dePadB + 12} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle">t{w.iter}</text>
+                          </g>
+                        );
+                      })}
+                      {/* Median trend line */}
+                      <polyline
+                        points={deWindows.map((w, i) => `${deXScale(i)},${deYScale(w.q50)}`).join(" ")}
+                        fill="none"
+                        stroke="var(--color-primary)"
+                        strokeWidth="1"
+                        strokeDasharray="4,3"
+                        opacity="0.5"
+                      />
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: 4, flexWrap: "wrap" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "rgba(59,130,246,0.3)", border: "1px solid #3b82f6", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Early</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "rgba(168,85,247,0.3)", border: "1px solid #a855f7", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Mid</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "rgba(34,197,94,0.3)", border: "1px solid #22c55e", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Late</span>
+                      <span className="efficiency-legend-item" style={{ marginLeft: "auto" }}>IQR: {deIQRFirst.toPrecision(3)} → {deIQRLast.toPrecision(3)}</span>
                     </div>
                   </div>
                 );
