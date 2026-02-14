@@ -91,6 +91,10 @@ import {
   Droplets,
   BarChartHorizontal,
   Flame,
+  CircleDot,
+  Share2,
+  ScanLine,
+  Map,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3035,6 +3039,109 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Parameter Convergence Radar */}
+              {trials.length >= 12 && (() => {
+                const crSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (crSpecs.length < 3) return null;
+                const crMaxParams = Math.min(crSpecs.length, 8);
+                const crParams = crSpecs.slice(0, crMaxParams);
+                const crSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const crEarlyN = Math.max(4, Math.floor(crSorted.length * 0.3));
+                const crLateN = Math.max(4, Math.floor(crSorted.length * 0.3));
+                const crEarly = crSorted.slice(0, crEarlyN);
+                const crLate = crSorted.slice(-crLateN);
+                // Per-parameter: variance ratio = late_var / early_var
+                const crVariance = (arr: number[]) => {
+                  const m = arr.reduce((a, b) => a + b, 0) / arr.length;
+                  return arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length;
+                };
+                const crData = crParams.map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0; const hi = sp.upper ?? 1; const range = hi - lo || 1;
+                  const earlyNorm = crEarly.map(t => (Number(t.parameters[sp.name]) - lo) / range);
+                  const lateNorm = crLate.map(t => (Number(t.parameters[sp.name]) - lo) / range);
+                  const earlyVar = crVariance(earlyNorm);
+                  const lateVar = crVariance(lateNorm);
+                  const ratio = earlyVar > 1e-10 ? lateVar / earlyVar : (lateVar < 1e-10 ? 0 : 2);
+                  return { name: sp.name, ratio: Math.min(ratio, 2), converged: ratio < 0.5 };
+                });
+                const crConvergedCount = crData.filter(d => d.converged).length;
+                const crLabel = crConvergedCount === crData.length ? "Fully Converged" : crConvergedCount > crData.length / 2 ? "Converging" : "Exploring";
+                const crColor = crConvergedCount === crData.length ? "#22c55e" : crConvergedCount > crData.length / 2 ? "#eab308" : "var(--color-primary)";
+                // Radar chart
+                const crW = 200, crH = 200;
+                const crCx = crW / 2, crCy = crH / 2, crR = 70;
+                const crN = crData.length;
+                const crAngle = (i: number) => (Math.PI * 2 * i) / crN - Math.PI / 2;
+                const crPt = (i: number, r: number) => ({
+                  x: crCx + Math.cos(crAngle(i)) * r,
+                  y: crCy + Math.sin(crAngle(i)) * r,
+                });
+                // Grid rings at 0.5, 1.0, 1.5, 2.0
+                const crRings = [0.5, 1.0, 1.5, 2.0];
+                const crDataPath = crData.map((d, i) => {
+                  const p = crPt(i, (d.ratio / 2) * crR);
+                  return `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+                }).join(" ") + " Z";
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <CircleDot size={15} style={{ color: crColor }} />
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Parameter Convergence</h3>
+                      </div>
+                      <span className="findings-badge" style={{ background: crColor, color: "#fff" }}>{crLabel} ({crConvergedCount}/{crN})</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <svg width={crW} height={crH} viewBox={`0 0 ${crW} ${crH}`} style={{ maxWidth: "100%" }}>
+                        {/* Grid rings */}
+                        {crRings.map(ring => {
+                          const r = (ring / 2) * crR;
+                          const pts = Array.from({ length: crN }, (_, i) => crPt(i, r));
+                          const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") + " Z";
+                          return <path key={ring} d={d} fill="none" stroke="var(--color-border)" strokeWidth="0.5" opacity={ring === 1 ? 0.8 : 0.3} />;
+                        })}
+                        {/* Axis lines */}
+                        {crData.map((_, i) => {
+                          const p = crPt(i, crR);
+                          return <line key={i} x1={crCx} y1={crCy} x2={p.x} y2={p.y} stroke="var(--color-border)" strokeWidth="0.3" />;
+                        })}
+                        {/* 1.0 reference ring (equal variance) - dashed */}
+                        {(() => {
+                          const r = 0.5 * crR;
+                          const pts = Array.from({ length: crN }, (_, i) => crPt(i, r));
+                          const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") + " Z";
+                          return <path d={d} fill="none" stroke="#eab308" strokeWidth="0.8" strokeDasharray="3,2" opacity={0.5} />;
+                        })()}
+                        {/* Data polygon */}
+                        <path d={crDataPath} fill="var(--color-primary)" fillOpacity={0.15} stroke="var(--color-primary)" strokeWidth="1.5" />
+                        {/* Data points */}
+                        {crData.map((d, i) => {
+                          const p = crPt(i, (d.ratio / 2) * crR);
+                          return <circle key={i} cx={p.x} cy={p.y} r="3" fill={d.converged ? "#22c55e" : "var(--color-primary)"} stroke="white" strokeWidth="0.8" />;
+                        })}
+                        {/* Labels */}
+                        {crData.map((d, i) => {
+                          const p = crPt(i, crR + 14);
+                          return (
+                            <text key={i} x={p.x} y={p.y} fontSize="5.5" fill={d.converged ? "#22c55e" : "var(--color-text-muted)"} textAnchor="middle" dominantBaseline="middle" fontWeight={d.converged ? "600" : "400"}>
+                              {d.name.length > 8 ? d.name.slice(0, 7) + "…" : d.name}
+                            </text>
+                          );
+                        })}
+                        {/* Center label */}
+                        <text x={crCx} y={crCy - 4} fontSize="5" fill="var(--color-text-muted)" textAnchor="middle">variance</text>
+                        <text x={crCx} y={crCy + 4} fontSize="5" fill="var(--color-text-muted)" textAnchor="middle">ratio</text>
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: 12, justifyContent: "center", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>Inner = converged (&lt;0.5×)</span>
+                      <span style={{ color: "#eab308" }}>--- = equal (1.0×)</span>
+                      <span>Outer = diverging (&gt;1.0×)</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -4323,6 +4430,94 @@ export default function Workspace() {
                       <span>k={prK} LOO, 4 bins/param</span>
                       <span>{prBiasCount}/{prParamData.length} params with bias</span>
                       <span style={{ marginLeft: "auto" }}>Bars above/below = over/under-prediction</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Interaction Network */}
+              {trials.length >= 10 && (() => {
+                const piSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string }) => s.type === "continuous") || [];
+                if (piSpecs.length < 3) return null;
+                const piMaxP = Math.min(piSpecs.length, 8);
+                const piParams = piSpecs.slice(0, piMaxP).map((s: { name: string }) => s.name);
+                const piObjKey = Object.keys(trials[0].kpis)[0];
+                if (!piObjKey) return null;
+                const piObjVals = trials.map(t => Number(t.kpis[piObjKey]) || 0);
+                // For each pair, compute interaction: |corr(p1*p2, kpi)| - proxy for synergy
+                const piMean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+                const piCorr = (xs: number[], ys: number[]) => {
+                  const n = xs.length; const mx = piMean(xs); const my = piMean(ys);
+                  let num = 0, dx = 0, dy = 0;
+                  for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); dx += (xs[i] - mx) ** 2; dy += (ys[i] - my) ** 2; }
+                  return dx > 0 && dy > 0 ? num / Math.sqrt(dx * dy) : 0;
+                };
+                const piEdges: { a: number; b: number; strength: number }[] = [];
+                for (let i = 0; i < piParams.length; i++) {
+                  for (let j = i + 1; j < piParams.length; j++) {
+                    const v1 = trials.map(t => Number(t.parameters[piParams[i]]) || 0);
+                    const v2 = trials.map(t => Number(t.parameters[piParams[j]]) || 0);
+                    const product = v1.map((v, k) => v * v2[k]);
+                    const interaction = Math.abs(piCorr(product, piObjVals));
+                    piEdges.push({ a: i, b: j, strength: interaction });
+                  }
+                }
+                piEdges.sort((a, b) => b.strength - a.strength);
+                const piTopEdges = piEdges.slice(0, Math.min(10, piEdges.length));
+                const piMaxStr = Math.max(...piTopEdges.map(e => e.strength), 0.01);
+                const piStrongCount = piTopEdges.filter(e => e.strength > 0.3).length;
+                const piLabel = piStrongCount === 0 ? "Independent" : piStrongCount <= 3 ? "Mild Coupling" : "Strong Coupling";
+                const piColor = piStrongCount === 0 ? "#22c55e" : piStrongCount <= 3 ? "#eab308" : "#ef4444";
+                // Layout: circular
+                const piW = 240, piH = 180;
+                const piCx = piW / 2, piCy = piH / 2 + 4, piRadius = 60;
+                const piNodePos = piParams.map((_, i) => {
+                  const angle = (Math.PI * 2 * i) / piParams.length - Math.PI / 2;
+                  return { x: piCx + Math.cos(angle) * piRadius, y: piCy + Math.sin(angle) * piRadius };
+                });
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Share2 size={15} style={{ color: "var(--color-primary)" }} />
+                        <h2 style={{ margin: 0 }}>Parameter Interactions</h2>
+                      </div>
+                      <span className="findings-badge" style={{ background: piColor, color: "#fff" }}>{piLabel}</span>
+                    </div>
+                    <svg width={piW} height={piH} viewBox={`0 0 ${piW} ${piH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Edges */}
+                      {piTopEdges.map((e, i) => {
+                        const pa = piNodePos[e.a], pb = piNodePos[e.b];
+                        const norm = e.strength / piMaxStr;
+                        const sw = 0.5 + norm * 3;
+                        const opacity = 0.2 + norm * 0.6;
+                        const col = norm > 0.6 ? "#ef4444" : norm > 0.3 ? "#eab308" : "#94a3b8";
+                        return <line key={i} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y} stroke={col} strokeWidth={sw} opacity={opacity} />;
+                      })}
+                      {/* Nodes */}
+                      {piParams.map((name, i) => {
+                        const p = piNodePos[i];
+                        const myEdges = piTopEdges.filter(e => e.a === i || e.b === i);
+                        const maxConn = Math.max(...myEdges.map(e => e.strength), 0);
+                        const r = 8 + (maxConn / piMaxStr) * 6;
+                        return (
+                          <g key={i}>
+                            <circle cx={p.x} cy={p.y} r={r} fill="var(--color-primary)" opacity={0.15} stroke="var(--color-primary)" strokeWidth="1" />
+                            <circle cx={p.x} cy={p.y} r="3" fill="var(--color-primary)" />
+                            <text x={p.x} y={p.y + r + 8} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="middle" fontWeight="500">
+                              {name.length > 8 ? name.slice(0, 7) + "…" : name}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 2, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>Top {piTopEdges.length} pairs, {piStrongCount} strong (&gt;0.3)</span>
+                      <span style={{ marginLeft: "auto" }}>
+                        <span style={{ display: "inline-block", width: 14, height: 2, background: "#ef4444", marginRight: 3, verticalAlign: "middle" }} />Strong
+                        <span style={{ display: "inline-block", width: 14, height: 2, background: "#eab308", marginRight: 3, marginLeft: 8, verticalAlign: "middle" }} />Moderate
+                        <span style={{ display: "inline-block", width: 14, height: 2, background: "#94a3b8", marginRight: 3, marginLeft: 8, verticalAlign: "middle" }} />Weak
+                      </span>
                     </div>
                   </div>
                 );
@@ -6751,6 +6946,94 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Suggestion Coverage Gap */}
+              {suggestions && suggestions.suggestions.length >= 2 && trials.length >= 5 && (() => {
+                const cgSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (cgSpecs.length === 0) return null;
+                const cgMaxP = Math.min(cgSpecs.length, 6);
+                const cgParams = cgSpecs.slice(0, cgMaxP);
+                const cgBins = 8;
+                const cgData = cgParams.map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0; const hi = sp.upper ?? 1; const range = hi - lo || 1;
+                  // Trial histogram
+                  const trialHist = new Array(cgBins).fill(0);
+                  trials.forEach(t => {
+                    const v = (Number(t.parameters[sp.name]) - lo) / range;
+                    const bin = Math.min(cgBins - 1, Math.max(0, Math.floor(v * cgBins)));
+                    trialHist[bin]++;
+                  });
+                  const maxHist = Math.max(...trialHist, 1);
+                  // Suggestion positions
+                  const sugBins = suggestions.suggestions.map(sug => {
+                    const v = (Number(sug[sp.name]) - lo) / range;
+                    return Math.min(cgBins - 1, Math.max(0, Math.floor(v * cgBins)));
+                  });
+                  // Gap = bins with 0 trials AND 0 suggestions
+                  const gaps = trialHist.map((h, i) => h === 0 && !sugBins.includes(i));
+                  const gapCount = gaps.filter(Boolean).length;
+                  return { name: sp.name, trialHist, maxHist, sugBins, gaps, gapCount };
+                });
+                const cgTotalGaps = cgData.reduce((s, d) => s + d.gapCount, 0);
+                const cgTotalBins = cgData.length * cgBins;
+                const cgCoverage = ((cgTotalBins - cgTotalGaps) / cgTotalBins * 100);
+                const cgLabel = cgCoverage >= 90 ? "Well Covered" : cgCoverage >= 70 ? "Partial Gaps" : "Significant Gaps";
+                const cgColor = cgCoverage >= 90 ? "#22c55e" : cgCoverage >= 70 ? "#eab308" : "#ef4444";
+                // Small multiples
+                const cgCols = Math.min(3, cgData.length);
+                const cgCellW = 100, cgCellH = 50;
+                const cgSvgW = cgCols * cgCellW;
+                const cgRows = Math.ceil(cgData.length / cgCols);
+                const cgSvgH = cgRows * cgCellH;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <ScanLine size={15} style={{ color: "var(--color-primary)" }} />
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Coverage Gap Analysis</h3>
+                      </div>
+                      <span className="findings-badge" style={{ background: cgColor, color: "#fff" }}>{cgLabel} ({cgCoverage.toFixed(0)}%)</span>
+                    </div>
+                    <svg width={cgSvgW} height={cgSvgH} viewBox={`0 0 ${cgSvgW} ${cgSvgH}`} style={{ width: "100%", height: "auto" }}>
+                      {cgData.map((param, pi) => {
+                        const col = pi % cgCols;
+                        const row = Math.floor(pi / cgCols);
+                        const ox = col * cgCellW + 4;
+                        const oy = row * cgCellH;
+                        const barArea = cgCellW - 8;
+                        const barW = barArea / cgBins * 0.8;
+                        const barGap = barArea / cgBins;
+                        const maxBarH = cgCellH - 20;
+                        return (
+                          <g key={pi}>
+                            <text x={ox + barArea / 2} y={oy + 8} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="middle" fontWeight="500">{param.name}</text>
+                            {param.trialHist.map((h, bi) => {
+                              const bx = ox + bi * barGap + barGap / 2;
+                              const barH = (h / param.maxHist) * maxBarH;
+                              const isGap = param.gaps[bi];
+                              const hasSug = param.sugBins.includes(bi);
+                              return (
+                                <g key={bi}>
+                                  {isGap && <rect x={bx - barW / 2 - 1} y={oy + cgCellH - maxBarH - 2} width={barW + 2} height={maxBarH + 2} rx={1} fill="#ef4444" opacity={0.08} />}
+                                  <rect x={bx - barW / 2} y={oy + cgCellH - 4 - barH} width={barW} height={Math.max(barH, 0.5)} rx={1} fill={isGap ? "var(--color-border)" : "var(--color-primary)"} opacity={isGap ? 0.3 : 0.5} />
+                                  {hasSug && <circle cx={bx} cy={oy + cgCellH - 4 - barH - 4} r="2" fill="#22c55e" stroke="white" strokeWidth="0.5" />}
+                                </g>
+                              );
+                            })}
+                            <line x1={ox} y1={oy + cgCellH - 4} x2={ox + barArea} y2={oy + cgCellH - 4} stroke="var(--color-border)" strokeWidth="0.3" />
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span><span style={{ display: "inline-block", width: 10, height: 8, background: "var(--color-primary)", opacity: 0.5, marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Trial density</span>
+                      <span><span style={{ display: "inline-block", width: 6, height: 6, background: "#22c55e", marginRight: 3, verticalAlign: "middle", borderRadius: "50%" }} />Suggestion</span>
+                      <span><span style={{ display: "inline-block", width: 10, height: 8, background: "#ef4444", opacity: 0.1, marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Gap</span>
+                      <span style={{ marginLeft: "auto" }}>{cgTotalGaps} gaps across {cgData.length} params</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -8348,6 +8631,116 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Regional Value Heatmap */}
+              {trials.length >= 10 && (() => {
+                const rvSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rvSpecs.length < 2) return null;
+                const rvObjKey = Object.keys(trials[0].kpis)[0];
+                if (!rvObjKey) return null;
+                const rvObjVals = trials.map(t => Number(t.kpis[rvObjKey]) || 0);
+                // Pick top 2 params by variance
+                const rvParamVar = rvSpecs.map((sp: { name: string; lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0; const hi = sp.upper ?? 1; const range = hi - lo || 1;
+                  const vals = trials.map(t => (Number(t.parameters[sp.name]) - lo) / range);
+                  const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+                  const v = vals.reduce((s, x) => s + (x - m) ** 2, 0) / vals.length;
+                  return { spec: sp, variance: v };
+                });
+                rvParamVar.sort((a, b) => b.variance - a.variance);
+                const rvP1 = rvParamVar[0].spec as { name: string; lower?: number; upper?: number };
+                const rvP2 = rvParamVar[1].spec as { name: string; lower?: number; upper?: number };
+                const rvLo1 = rvP1.lower ?? 0, rvHi1 = rvP1.upper ?? 1;
+                const rvLo2 = rvP2.lower ?? 0, rvHi2 = rvP2.upper ?? 1;
+                // Grid: 6x6 cells
+                const rvGrid = 6;
+                const rvCells: { row: number; col: number; values: number[]; mean: number }[] = [];
+                for (let r = 0; r < rvGrid; r++) {
+                  for (let c = 0; c < rvGrid; c++) {
+                    const vals: number[] = [];
+                    trials.forEach((t, idx) => {
+                      const x = (Number(t.parameters[rvP1.name]) - rvLo1) / (rvHi1 - rvLo1 || 1);
+                      const y = (Number(t.parameters[rvP2.name]) - rvLo2) / (rvHi2 - rvLo2 || 1);
+                      const ci = Math.min(rvGrid - 1, Math.floor(x * rvGrid));
+                      const ri = Math.min(rvGrid - 1, Math.floor((1 - y) * rvGrid));
+                      if (ci === c && ri === r) vals.push(rvObjVals[idx]);
+                    });
+                    rvCells.push({ row: r, col: c, values: vals, mean: vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN });
+                  }
+                }
+                const rvFilledCells = rvCells.filter(c => !isNaN(c.mean));
+                if (rvFilledCells.length < 3) return null;
+                const rvMinKpi = Math.min(...rvFilledCells.map(c => c.mean));
+                const rvMaxKpi = Math.max(...rvFilledCells.map(c => c.mean));
+                const rvRange = rvMaxKpi - rvMinKpi || 1;
+                // Best region
+                const rvBestCell = rvFilledCells.reduce((best, c) => c.mean < best.mean ? c : best, rvFilledCells[0]);
+                const rvHotspots = rvFilledCells.filter(c => c.mean < rvMinKpi + rvRange * 0.25).length;
+                const rvLabel = rvHotspots === 1 ? "Unimodal" : rvHotspots <= 3 ? "Few Basins" : "Multi-modal";
+                const rvColor = rvHotspots === 1 ? "#22c55e" : rvHotspots <= 3 ? "var(--color-primary)" : "#a855f7";
+                // Chart
+                const rvW = 260, rvH = 220, rvPadL = 40, rvPadR = 30, rvPadT = 14, rvPadB = 30;
+                const rvPlotW = rvW - rvPadL - rvPadR;
+                const rvPlotH = rvH - rvPadT - rvPadB;
+                const rvCellW = rvPlotW / rvGrid;
+                const rvCellH = rvPlotH / rvGrid;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Map size={15} style={{ color: rvColor }} />
+                        <h2 style={{ margin: 0 }}>Regional Value Map</h2>
+                      </div>
+                      <span className="findings-badge" style={{ background: rvColor, color: "#fff" }}>{rvLabel} ({rvHotspots} hot)</span>
+                    </div>
+                    <svg width={rvW} height={rvH} viewBox={`0 0 ${rvW} ${rvH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Cells */}
+                      {rvCells.map((cell, i) => {
+                        const x = rvPadL + cell.col * rvCellW;
+                        const y = rvPadT + cell.row * rvCellH;
+                        if (isNaN(cell.mean)) {
+                          return <rect key={i} x={x} y={y} width={rvCellW} height={rvCellH} fill="var(--color-border)" opacity={0.1} stroke="var(--color-border)" strokeWidth="0.3" />;
+                        }
+                        // Green (good/low KPI) to Red (bad/high KPI) for minimization
+                        const norm = (cell.mean - rvMinKpi) / rvRange;
+                        const r = Math.round(norm * 239 + (1 - norm) * 34);
+                        const g = Math.round(norm * 68 + (1 - norm) * 197);
+                        const b = Math.round(norm * 68 + (1 - norm) * 94);
+                        const isBest = cell === rvBestCell;
+                        return (
+                          <g key={i}>
+                            <rect x={x} y={y} width={rvCellW} height={rvCellH} fill={`rgb(${r},${g},${b})`} opacity={0.7} stroke="white" strokeWidth="0.5" rx={1} />
+                            {cell.values.length > 0 && <text x={x + rvCellW / 2} y={y + rvCellH / 2 + 2} fontSize="5" fill="white" textAnchor="middle" fontWeight="500">{cell.values.length}</text>}
+                            {isBest && <rect x={x + 1} y={y + 1} width={rvCellW - 2} height={rvCellH - 2} fill="none" stroke="white" strokeWidth="1.5" rx={2} />}
+                          </g>
+                        );
+                      })}
+                      {/* Axes */}
+                      <text x={rvPadL + rvPlotW / 2} y={rvH - 4} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle">{rvP1.name}</text>
+                      <text x={8} y={rvPadT + rvPlotH / 2} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90, 8, ${rvPadT + rvPlotH / 2})`}>{rvP2.name}</text>
+                      {/* Axis ticks */}
+                      <text x={rvPadL} y={rvH - 14} fontSize="5" fill="var(--color-text-muted)" textAnchor="middle">{rvLo1.toPrecision(2)}</text>
+                      <text x={rvPadL + rvPlotW} y={rvH - 14} fontSize="5" fill="var(--color-text-muted)" textAnchor="middle">{rvHi1.toPrecision(2)}</text>
+                      <text x={rvPadL - 4} y={rvPadT + 4} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">{rvHi2.toPrecision(2)}</text>
+                      <text x={rvPadL - 4} y={rvPadT + rvPlotH} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">{rvLo2.toPrecision(2)}</text>
+                      {/* Color legend */}
+                      <defs>
+                        <linearGradient id="rvGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="rgb(239,68,68)" />
+                          <stop offset="100%" stopColor="rgb(34,197,94)" />
+                        </linearGradient>
+                      </defs>
+                      <rect x={rvW - 18} y={rvPadT} width={8} height={rvPlotH} rx={2} fill="url(#rvGrad)" opacity={0.7} />
+                      <text x={rvW - 14} y={rvPadT - 3} fontSize="4.5" fill="var(--color-text-muted)" textAnchor="middle">Worse</text>
+                      <text x={rvW - 14} y={rvPadT + rvPlotH + 8} fontSize="4.5" fill="var(--color-text-muted)" textAnchor="middle">Better</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 2, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>{rvGrid}×{rvGrid} grid, top 2 variance params</span>
+                      <span style={{ marginLeft: "auto" }}>Best: {rvMinKpi.toPrecision(3)} in ({rvBestCell.col + 1},{rvGrid - rvBestCell.row})</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Hypothesis Rejection Timeline */}
               {trials.length >= 10 && (() => {
                 const hrSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
@@ -8681,10 +9074,10 @@ export default function Workspace() {
                   const kpiKeys = Object.keys(trials[0].kpis);
 
                   // Build parameter spec lookup for range bars
-                  const specMap = new Map<string, { lower: number; upper: number }>();
+                  const specMap: Record<string, { lower: number; upper: number }> = {};
                   if (campaign.spec?.parameters) {
                     for (const s of campaign.spec.parameters) {
-                      if (s.lower != null && s.upper != null) specMap.set(s.name, { lower: s.lower, upper: s.upper });
+                      if (s.lower != null && s.upper != null) specMap[s.name] = { lower: s.lower, upper: s.upper };
                     }
                   }
 
@@ -8768,7 +9161,7 @@ export default function Workspace() {
                                       )}
                                     </td>
                                     {paramKeys.map((p) => {
-                                      const spec = specMap.get(p);
+                                      const spec = specMap[p];
                                       const val = trial.parameters[p];
                                       return (
                                         <td key={p} className="mono history-param-cell">
