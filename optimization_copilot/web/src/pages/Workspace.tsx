@@ -44,6 +44,11 @@ import {
   Star,
   Undo2,
   Activity,
+  GitCompare,
+  Sliders,
+  Crosshair,
+  CheckSquare,
+  Package,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -168,6 +173,28 @@ export default function Workspace() {
   // Parameter sentinel toggle
   const [sentinelOpen, setSentinelOpen] = useState(true);
 
+  // Trial comparison panel (History tab)
+  const [compareSet, setCompareSet] = useState<Set<string>>(new Set());
+  const [showCompareModal, setShowCompareModal] = useState(false);
+
+  // What-if analysis (Explore tab)
+  const [whatIfParam, setWhatIfParam] = useState<string | null>(null);
+  const [whatIfValue, setWhatIfValue] = useState(0.5);
+
+  // Goal tracker (Overview tab)
+  const [goals, setGoals] = useState<Array<{ id: string; name: string; target: number; direction: "minimize" | "maximize"; created: number }>>(() => {
+    if (!id) return [];
+    try { const s = localStorage.getItem(`opt-goals-${id}`); return s ? JSON.parse(s) : []; }
+    catch { return []; }
+  });
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [goalName, setGoalName] = useState("");
+  const [goalTarget, setGoalTarget] = useState("");
+  const [goalDirection, setGoalDirection] = useState<"minimize" | "maximize">("minimize");
+
+  // Batch selection (Suggestions tab)
+  const [selectedSuggestions, setSelectedSuggestions] = useState<Set<number>>(new Set());
+
   const HISTORY_PAGE_SIZE = 25;
 
   // Persist bookmarks & notes to localStorage
@@ -183,6 +210,10 @@ export default function Workspace() {
     if (!id) return;
     localStorage.setItem(`opt-cp-${id}`, JSON.stringify(checkpoints));
   }, [id, checkpoints]);
+  useEffect(() => {
+    if (!id) return;
+    localStorage.setItem(`opt-goals-${id}`, JSON.stringify(goals));
+  }, [id, goals]);
 
   const toggleBookmark = useCallback((trialId: string) => {
     setBookmarks(prev => {
@@ -307,6 +338,62 @@ export default function Workspace() {
       .catch(() => setImportance(null))
       .finally(() => setLoadingImportance(false));
   }, [id, activeTab]);
+
+  // Trial comparison toggle
+  const toggleCompare = useCallback((trialId: string) => {
+    setCompareSet(prev => {
+      const next = new Set(prev);
+      if (next.has(trialId)) { next.delete(trialId); }
+      else if (next.size < 3) { next.add(trialId); }
+      else { toast("Select up to 3 trials to compare"); }
+      return next;
+    });
+  }, [toast]);
+
+  // Goal management
+  const addGoal = () => {
+    const target = parseFloat(goalTarget);
+    if (!goalName.trim() || isNaN(target)) return;
+    setGoals(prev => [...prev, { id: `goal-${Date.now()}`, name: goalName.trim(), target, direction: goalDirection, created: Date.now() }]);
+    setGoalName("");
+    setGoalTarget("");
+    setShowGoalModal(false);
+    toast(`Goal "${goalName.trim()}" created`);
+  };
+
+  const removeGoal = (goalId: string) => {
+    setGoals(prev => prev.filter(g => g.id !== goalId));
+  };
+
+  // Batch selection toggle
+  const toggleSuggestionSelect = useCallback((idx: number) => {
+    setSelectedSuggestions(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }, []);
+
+  const handleExportSelectedCSV = useCallback(() => {
+    if (!suggestions || selectedSuggestions.size === 0) return;
+    const selected = suggestions.suggestions.filter((_, i) => selectedSuggestions.has(i));
+    const headers = Object.keys(selected[0]);
+    const csvContent = [
+      headers.join(","),
+      ...selected.map((row) => headers.map((h) => row[h] ?? "").join(",")),
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `batch-${id?.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`Exported ${selected.length} suggestions as CSV`);
+  }, [suggestions, selectedSuggestions, id, toast]);
 
   if (loading) {
     return (
@@ -946,6 +1033,119 @@ export default function Workspace() {
                 </div>
               )}
 
+              {/* Goal Tracker */}
+              <div className="card goal-tracker-card">
+                <div className="goal-tracker-header">
+                  <div className="goal-tracker-header-left">
+                    <Crosshair size={16} />
+                    <h2 style={{ margin: 0 }}>Optimization Goals</h2>
+                  </div>
+                  <button className="btn btn-sm btn-secondary" onClick={() => setShowGoalModal(true)}>
+                    + Add Goal
+                  </button>
+                </div>
+                {goals.length === 0 ? (
+                  <p className="goal-empty">Define target KPI values to track progress toward your research objectives.</p>
+                ) : (
+                  <div className="goal-list">
+                    {goals.map(goal => {
+                      const currentBest = campaign.best_kpi ?? 0;
+                      const isMinimize = goal.direction === "minimize";
+                      const progress = isMinimize
+                        ? currentBest <= goal.target ? 100 : Math.max(0, Math.min(100, (1 - (currentBest - goal.target) / Math.abs(goal.target || 1)) * 100))
+                        : currentBest >= goal.target ? 100 : Math.max(0, Math.min(100, (currentBest / Math.abs(goal.target || 1)) * 100));
+                      const reached = (isMinimize && currentBest <= goal.target) || (!isMinimize && currentBest >= goal.target);
+                      const velocity = diagnostics?.improvement_velocity ?? 0;
+                      const status = reached ? "reached" : velocity < -0.01 ? "on-track" : velocity < 0 ? "at-risk" : "behind";
+                      const remaining = !reached && velocity < -0.001
+                        ? Math.ceil(Math.abs(currentBest - goal.target) / Math.abs(velocity))
+                        : null;
+                      return (
+                        <div key={goal.id} className={`goal-item goal-item-${status}`}>
+                          <div className="goal-item-top">
+                            <span className="goal-item-name">{goal.name}</span>
+                            <span className={`goal-status-badge goal-status-${status}`}>
+                              {status === "reached" ? "Reached" : status === "on-track" ? "On Track" : status === "at-risk" ? "At Risk" : "Behind"}
+                            </span>
+                            <button className="goal-remove" onClick={() => removeGoal(goal.id)} title="Remove goal">&times;</button>
+                          </div>
+                          <div className="goal-progress-row">
+                            <span className="mono goal-current">{currentBest.toFixed(4)}</span>
+                            <div className="goal-progress-bar">
+                              <div className="goal-progress-fill" style={{ width: `${Math.min(progress, 100)}%` }} />
+                            </div>
+                            <span className="mono goal-target-val">{goal.target.toFixed(4)}</span>
+                          </div>
+                          <div className="goal-meta-row">
+                            <span>{isMinimize ? "minimize" : "maximize"} to {goal.target.toFixed(4)}</span>
+                            {remaining && <span className="goal-eta">~{remaining} iter remaining</span>}
+                            {reached && <span className="goal-eta" style={{ color: "var(--color-green)" }}>Target achieved!</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Goal Modal */}
+              {showGoalModal && (
+                <div className="shortcut-overlay" onClick={() => setShowGoalModal(false)}>
+                  <div className="shortcut-modal checkpoint-modal" onClick={(e) => e.stopPropagation()}>
+                    <div className="shortcut-modal-header">
+                      <h3>Add Optimization Goal</h3>
+                      <button className="shortcut-close" onClick={() => setShowGoalModal(false)}><span>&times;</span></button>
+                    </div>
+                    <p className="checkpoint-modal-desc">
+                      Set a target KPI value. Progress will be tracked relative to your current best result.
+                    </p>
+                    <div className="goal-modal-fields">
+                      <label className="goal-modal-label">
+                        Goal name
+                        <input
+                          type="text"
+                          className="history-note-input"
+                          placeholder="e.g., Reach ≤ -0.6 objective"
+                          value={goalName}
+                          onChange={(e) => setGoalName(e.target.value)}
+                          autoFocus
+                        />
+                      </label>
+                      <div className="goal-modal-row">
+                        <label className="goal-modal-label" style={{ flex: 1 }}>
+                          Target value
+                          <input
+                            type="number"
+                            className="history-note-input"
+                            placeholder="-0.6"
+                            step="any"
+                            value={goalTarget}
+                            onChange={(e) => setGoalTarget(e.target.value)}
+                          />
+                        </label>
+                        <label className="goal-modal-label">
+                          Direction
+                          <select
+                            className="suggestions-batch-select"
+                            value={goalDirection}
+                            onChange={(e) => setGoalDirection(e.target.value as "minimize" | "maximize")}
+                          >
+                            <option value="minimize">Minimize</option>
+                            <option value="maximize">Maximize</option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="checkpoint-modal-actions">
+                      <button className="btn btn-sm btn-secondary" onClick={() => setShowGoalModal(false)}>Cancel</button>
+                      <button className="btn btn-sm btn-primary" onClick={addGoal} disabled={!goalName.trim() || !goalTarget}>
+                        <Crosshair size={13} /> Create Goal
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Parameter Variance Sentinel */}
               {trials.length >= 5 && campaign.spec?.parameters && (() => {
                 const specs = campaign.spec.parameters.filter(s => s.type === "continuous" && s.lower != null && s.upper != null);
@@ -1278,6 +1478,143 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* What-If Analysis */}
+              {trials.length >= 5 && campaign.spec?.parameters && (() => {
+                const specs = campaign.spec.parameters.filter(s => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (specs.length === 0) return null;
+                const paramNames = specs.map(s => s.name);
+                const activeParam = whatIfParam ?? paramNames[0];
+                const activeSpec = specs.find(s => s.name === activeParam);
+                if (!activeSpec) return null;
+                const lower = activeSpec.lower!;
+                const upper = activeSpec.upper!;
+                const range = upper - lower;
+                const currentVal = lower + whatIfValue * range;
+
+                // Find nearby trials and compute local weighted average
+                const trialDistances = trials.map(t => {
+                  const pVal = Number(t.parameters[activeParam]) || 0;
+                  const normDist = Math.abs(pVal - currentVal) / range;
+                  const weight = Math.exp(-normDist * normDist * 50); // Gaussian kernel
+                  const objVal = Number(Object.values(t.kpis)[0]) || 0;
+                  return { objVal, weight, pVal, iteration: t.iteration, normDist };
+                });
+                const nearbyTrials = trialDistances.filter(t => t.normDist < 0.15).sort((a, b) => a.normDist - b.normDist);
+                const totalWeight = trialDistances.reduce((a, t) => a + t.weight, 0);
+                const predictedObj = totalWeight > 0 ? trialDistances.reduce((a, t) => a + t.objVal * t.weight, 0) / totalWeight : 0;
+                // Weighted std for confidence band
+                const weightedVariance = totalWeight > 0
+                  ? trialDistances.reduce((a, t) => a + t.weight * (t.objVal - predictedObj) ** 2, 0) / totalWeight
+                  : 0;
+                const confidence = Math.sqrt(weightedVariance);
+
+                // Mini scatter data — parameter vs objective
+                const objVals = trials.map(t => Number(Object.values(t.kpis)[0]) || 0);
+                const minObj = Math.min(...objVals);
+                const maxObj = Math.max(...objVals);
+                const objRange = maxObj - minObj || 1;
+                const scatterW = 300, scatterH = 100, pad = 4;
+
+                return (
+                  <div className="card whatif-card">
+                    <div className="whatif-header">
+                      <Sliders size={16} />
+                      <h2 style={{ margin: 0 }}>What-If Analysis</h2>
+                    </div>
+                    <p style={{ fontSize: "0.82rem", color: "var(--color-text-muted)", marginBottom: "16px" }}>
+                      Explore how changing a single parameter affects the predicted objective value, based on nearby trial data.
+                    </p>
+                    <div className="whatif-controls">
+                      <label className="whatif-label">
+                        Parameter
+                        <select
+                          className="suggestions-batch-select"
+                          value={activeParam}
+                          onChange={(e) => { setWhatIfParam(e.target.value); setWhatIfValue(0.5); }}
+                        >
+                          {paramNames.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </label>
+                      <div className="whatif-slider-group">
+                        <div className="whatif-slider-labels">
+                          <span className="mono">{lower.toFixed(3)}</span>
+                          <span className="mono whatif-current-val">{currentVal.toFixed(4)}</span>
+                          <span className="mono">{upper.toFixed(3)}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.005"
+                          value={whatIfValue}
+                          onChange={(e) => setWhatIfValue(Number(e.target.value))}
+                          className="whatif-slider"
+                        />
+                      </div>
+                    </div>
+                    <div className="whatif-results">
+                      <div className="whatif-result-box">
+                        <div className="whatif-result-label">Predicted Objective</div>
+                        <div className="whatif-result-value mono">{predictedObj.toFixed(4)}</div>
+                        <div className="whatif-result-ci mono">&plusmn; {confidence.toFixed(4)}</div>
+                      </div>
+                      <div className="whatif-result-box">
+                        <div className="whatif-result-label">Nearby Trials</div>
+                        <div className="whatif-result-value">{nearbyTrials.length}</div>
+                        <div className="whatif-result-ci">within 15% of slider</div>
+                      </div>
+                      {bestResult && (
+                        <div className="whatif-result-box">
+                          <div className="whatif-result-label">vs Current Best</div>
+                          <div className={`whatif-result-value mono ${predictedObj < (Number(Object.values(bestResult.kpis)[0]) || 0) ? "whatif-better" : "whatif-worse"}`}>
+                            {(predictedObj - (Number(Object.values(bestResult.kpis)[0]) || 0)).toFixed(4)}
+                          </div>
+                          <div className="whatif-result-ci">{predictedObj < (Number(Object.values(bestResult.kpis)[0]) || 0) ? "improvement" : "worse"}</div>
+                        </div>
+                      )}
+                    </div>
+                    {/* Mini scatter */}
+                    <svg width={scatterW} height={scatterH} viewBox={`0 0 ${scatterW} ${scatterH}`} className="whatif-scatter">
+                      {trials.map((t, i) => {
+                        const px = pad + ((Number(t.parameters[activeParam]) || 0) - lower) / range * (scatterW - 2 * pad);
+                        const py = pad + (1 - ((Number(Object.values(t.kpis)[0]) || 0) - minObj) / objRange) * (scatterH - 2 * pad);
+                        const dist = trialDistances[i].normDist;
+                        return (
+                          <circle
+                            key={i}
+                            cx={px}
+                            cy={py}
+                            r={dist < 0.15 ? 3.5 : 2}
+                            fill={dist < 0.15 ? "var(--color-primary)" : "var(--color-text-muted)"}
+                            opacity={dist < 0.15 ? 0.8 : 0.2}
+                          />
+                        );
+                      })}
+                      {/* Slider position line */}
+                      <line
+                        x1={pad + whatIfValue * (scatterW - 2 * pad)}
+                        y1={pad}
+                        x2={pad + whatIfValue * (scatterW - 2 * pad)}
+                        y2={scatterH - pad}
+                        stroke="var(--color-primary)"
+                        strokeWidth="1.5"
+                        strokeDasharray="4,3"
+                        opacity="0.6"
+                      />
+                      {/* Predicted point */}
+                      <circle
+                        cx={pad + whatIfValue * (scatterW - 2 * pad)}
+                        cy={pad + (1 - (predictedObj - minObj) / objRange) * (scatterH - 2 * pad)}
+                        r="5"
+                        fill="var(--color-primary)"
+                        stroke="white"
+                        strokeWidth="2"
+                      />
+                    </svg>
+                  </div>
+                );
+              })()}
+
               {/* Parameter-to-Parameter Correlation Heatmap */}
               {trials.length >= 5 && (() => {
                 const paramNames = Object.keys(trials[0].parameters);
@@ -1521,7 +1858,14 @@ export default function Workspace() {
                   {suggestions.suggestions.map((sug, i) => {
                     const diversity = computeDiversityScore(sug);
                     return (
-                      <div key={i} className="suggestion-card-wrapper">
+                      <div key={i} className={`suggestion-card-wrapper ${selectedSuggestions.has(i) ? "suggestion-selected" : ""}`}>
+                        <div className="suggestion-select-check" onClick={(e) => { e.stopPropagation(); toggleSuggestionSelect(i); }}>
+                          <CheckSquare
+                            size={14}
+                            className={selectedSuggestions.has(i) ? "sug-check-active" : "sug-check-idle"}
+                            fill={selectedSuggestions.has(i) ? "currentColor" : "none"}
+                          />
+                        </div>
                         {diversity !== null && (
                           <div
                             className={`diversity-badge ${diversity > 0.5 ? "diversity-high" : diversity > 0.25 ? "diversity-mid" : "diversity-low"}`}
@@ -1602,6 +1946,50 @@ export default function Workspace() {
                       })}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Batch Planner Bar */}
+              {suggestions && selectedSuggestions.size > 0 && (
+                <div className="batch-planner-bar">
+                  <div className="batch-planner-left">
+                    <Package size={15} />
+                    <span className="batch-planner-count">{selectedSuggestions.size} selected</span>
+                    {(() => {
+                      if (!suggestions || selectedSuggestions.size < 2) return null;
+                      const selected = suggestions.suggestions.filter((_, i) => selectedSuggestions.has(i));
+                      const specs = campaign.spec?.parameters?.filter(s => s.type === "continuous" && s.lower != null && s.upper != null) ?? [];
+                      if (specs.length === 0 || selected.length < 2) return null;
+                      let totalDist = 0;
+                      let pairs = 0;
+                      for (let a = 0; a < selected.length; a++) {
+                        for (let b = a + 1; b < selected.length; b++) {
+                          let sumSq = 0;
+                          for (const spec of specs) {
+                            const r = (spec.upper! - spec.lower!) || 1;
+                            sumSq += (((selected[a][spec.name] ?? 0) - (selected[b][spec.name] ?? 0)) / r) ** 2;
+                          }
+                          totalDist += Math.sqrt(sumSq / specs.length);
+                          pairs++;
+                        }
+                      }
+                      const batchDiversity = pairs > 0 ? totalDist / pairs : 0;
+                      return (
+                        <span className="batch-diversity-pill">
+                          <Activity size={11} />
+                          Batch diversity: {(batchDiversity * 100).toFixed(0)}%
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <div className="batch-planner-right">
+                    <button className="btn btn-sm btn-secondary" onClick={handleExportSelectedCSV}>
+                      <FileDown size={13} /> Export CSV
+                    </button>
+                    <button className="btn btn-sm btn-secondary" onClick={() => setSelectedSuggestions(new Set())}>
+                      Clear
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1698,6 +2086,15 @@ export default function Workspace() {
                     >
                       <FileJson size={13} /> JSON
                     </button>
+                    {compareSet.size >= 2 && (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => setShowCompareModal(true)}
+                        title="Compare selected trials"
+                      >
+                        <GitCompare size={13} /> Compare ({compareSet.size})
+                      </button>
+                    )}
                     <span className="history-sort-hint">Click headers to sort</span>
                   </div>
                 </div>
@@ -1776,6 +2173,9 @@ export default function Workspace() {
                         <table className="history-table">
                           <thead>
                             <tr>
+                              <th style={{ width: "32px", textAlign: "center", padding: "8px 2px" }} title="Select for comparison">
+                                <GitCompare size={12} />
+                              </th>
                               <th style={{ width: "36px", textAlign: "center", padding: "8px 4px" }}><Star size={13} /></th>
                               <th className="history-th-sortable" onClick={() => handleHistorySort("__iter__")}>
                                 # {historySortCol === "__iter__" && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
@@ -1807,6 +2207,13 @@ export default function Workspace() {
                                     className={`history-row-clickable ${isBest ? "history-row-best" : ""} ${isExpanded ? "history-row-expanded" : ""} ${bookmarks.has(trial.id) ? "history-row-bookmarked" : ""}`}
                                     onClick={() => setExpandedTrialId(isExpanded ? null : trial.id)}
                                   >
+                                    <td className="history-compare-cell" onClick={(e) => { e.stopPropagation(); toggleCompare(trial.id); }}>
+                                      <CheckSquare
+                                        size={13}
+                                        className={`compare-check ${compareSet.has(trial.id) ? "compare-active" : ""}`}
+                                        fill={compareSet.has(trial.id) ? "currentColor" : "none"}
+                                      />
+                                    </td>
                                     <td className="history-bookmark-cell" onClick={(e) => { e.stopPropagation(); toggleBookmark(trial.id); }}>
                                       <Star
                                         size={14}
@@ -1842,7 +2249,7 @@ export default function Workspace() {
                                   </tr>
                                   {isExpanded && (
                                     <tr className="history-detail-row">
-                                      <td colSpan={2 + paramKeys.length + kpiKeys.length}>
+                                      <td colSpan={3 + paramKeys.length + kpiKeys.length}>
                                         <div className="history-detail">
                                           <div className="history-detail-section">
                                             <span className="history-detail-label">Iteration</span>
@@ -1929,6 +2336,81 @@ export default function Workspace() {
                   <p className="empty-state">No experiments recorded yet.</p>
                 )}
               </div>
+
+              {/* Trial Comparison Modal */}
+              {showCompareModal && compareSet.size >= 2 && (() => {
+                const compareTrials = trials.filter(t => compareSet.has(t.id));
+                if (compareTrials.length < 2) return null;
+                const paramKeys2 = Object.keys(compareTrials[0].parameters);
+                const kpiKeys2 = Object.keys(compareTrials[0].kpis);
+                const bestCompareKpi = Math.min(...compareTrials.map(t => Number(Object.values(t.kpis)[0]) || 0));
+                return (
+                  <div className="shortcut-overlay" onClick={() => setShowCompareModal(false)}>
+                    <div className="compare-modal" onClick={(e) => e.stopPropagation()}>
+                      <div className="shortcut-modal-header">
+                        <h3><GitCompare size={16} /> Trial Comparison</h3>
+                        <button className="shortcut-close" onClick={() => setShowCompareModal(false)}><span>&times;</span></button>
+                      </div>
+                      <div className="compare-table-wrap">
+                        <table className="compare-table">
+                          <thead>
+                            <tr>
+                              <th className="compare-label-col">Metric</th>
+                              {compareTrials.map(t => (
+                                <th key={t.id} className={`compare-trial-col ${Number(Object.values(t.kpis)[0]) === bestCompareKpi ? "compare-best-col" : ""}`}>
+                                  Trial #{t.iteration}
+                                  {Number(Object.values(t.kpis)[0]) === bestCompareKpi && <span className="compare-best-tag">Best</span>}
+                                </th>
+                              ))}
+                              {compareTrials.length === 2 && <th className="compare-delta-col">Delta</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {kpiKeys2.map(k => {
+                              const vals = compareTrials.map(t => Number(t.kpis[k]) || 0);
+                              const best = Math.min(...vals);
+                              return (
+                                <tr key={`k-${k}`} className="compare-kpi-row">
+                                  <td className="compare-label">{k}</td>
+                                  {vals.map((v, i) => (
+                                    <td key={i} className={`mono compare-val ${v === best ? "compare-val-best" : ""}`}>
+                                      {v.toFixed(4)}
+                                    </td>
+                                  ))}
+                                  {vals.length === 2 && (
+                                    <td className={`mono compare-delta ${vals[1] - vals[0] < 0 ? "compare-delta-better" : vals[1] - vals[0] > 0 ? "compare-delta-worse" : ""}`}>
+                                      {(vals[1] - vals[0]).toFixed(4)}
+                                    </td>
+                                  )}
+                                </tr>
+                              );
+                            })}
+                            {paramKeys2.map(p => {
+                              const vals = compareTrials.map(t => Number(t.parameters[p]) || 0);
+                              return (
+                                <tr key={`p-${p}`}>
+                                  <td className="compare-label">{p}</td>
+                                  {vals.map((v, i) => (
+                                    <td key={i} className="mono compare-val">{v.toFixed(4)}</td>
+                                  ))}
+                                  {vals.length === 2 && (
+                                    <td className="mono compare-delta">{(vals[1] - vals[0]).toFixed(4)}</td>
+                                  )}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="compare-footer">
+                        <button className="btn btn-sm btn-secondary" onClick={() => { setCompareSet(new Set()); setShowCompareModal(false); }}>
+                          Clear Selection
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -3218,6 +3700,366 @@ export default function Workspace() {
           letter-spacing: 0.04em;
           color: #ef4444;
           flex-shrink: 0;
+        }
+
+        /* ── Goal Tracker ── */
+        .goal-tracker-card { }
+        .goal-tracker-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 14px;
+        }
+        .goal-tracker-header-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .goal-tracker-header-left h2 { font-size: 1rem; }
+        .goal-empty {
+          font-size: 0.85rem;
+          color: var(--color-text-muted);
+          font-style: italic;
+          margin: 0;
+        }
+        .goal-list { display: flex; flex-direction: column; gap: 10px; }
+        .goal-item {
+          padding: 12px 14px;
+          border: 1px solid var(--color-border);
+          border-radius: 10px;
+          background: var(--color-surface);
+          transition: border-color 0.2s;
+        }
+        .goal-item-reached { border-color: #22c55e; background: rgba(34, 197, 94, 0.04); }
+        .goal-item-on-track { border-color: #3b82f6; }
+        .goal-item-at-risk { border-color: #eab308; }
+        .goal-item-behind { border-color: #ef4444; }
+        .goal-item-top {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .goal-item-name {
+          font-weight: 600;
+          font-size: 0.9rem;
+          flex: 1;
+        }
+        .goal-status-badge {
+          font-size: 0.68rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          padding: 2px 8px;
+          border-radius: 8px;
+        }
+        .goal-status-reached { background: #f0fdf4; color: #166534; }
+        .goal-status-on-track { background: #eff6ff; color: #1d4ed8; }
+        .goal-status-at-risk { background: #fffbeb; color: #92400e; }
+        .goal-status-behind { background: #fef2f2; color: #991b1b; }
+        [data-theme="dark"] .goal-status-reached { background: #052e16; color: #86efac; }
+        [data-theme="dark"] .goal-status-on-track { background: #172554; color: #93c5fd; }
+        [data-theme="dark"] .goal-status-at-risk { background: #451a03; color: #fcd34d; }
+        [data-theme="dark"] .goal-status-behind { background: #450a0a; color: #fca5a5; }
+        .goal-remove {
+          background: none;
+          border: none;
+          color: var(--color-text-muted);
+          opacity: 0;
+          cursor: pointer;
+          font-size: 1rem;
+          padding: 0 4px;
+          transition: opacity 0.15s;
+        }
+        .goal-item:hover .goal-remove { opacity: 0.5; }
+        .goal-remove:hover { opacity: 1 !important; color: #ef4444; }
+        .goal-progress-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 4px;
+        }
+        .goal-current, .goal-target-val {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--color-text-muted);
+          width: 60px;
+          flex-shrink: 0;
+        }
+        .goal-target-val { text-align: right; }
+        .goal-progress-bar {
+          flex: 1;
+          height: 6px;
+          background: var(--color-border);
+          border-radius: 3px;
+          overflow: hidden;
+        }
+        .goal-progress-fill {
+          height: 100%;
+          background: var(--color-primary);
+          border-radius: 3px;
+          transition: width 0.4s ease;
+          min-width: 2px;
+        }
+        .goal-item-reached .goal-progress-fill { background: #22c55e; }
+        .goal-item-at-risk .goal-progress-fill { background: #eab308; }
+        .goal-item-behind .goal-progress-fill { background: #ef4444; }
+        .goal-meta-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.72rem;
+          color: var(--color-text-muted);
+        }
+        .goal-eta { font-weight: 500; }
+        .goal-modal-fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+        .goal-modal-label {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          font-size: 0.82rem;
+          font-weight: 500;
+          color: var(--color-text-muted);
+        }
+        .goal-modal-row { display: flex; gap: 12px; }
+
+        /* ── What-If Analysis ── */
+        .whatif-card { }
+        .whatif-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .whatif-header h2 { font-size: 1rem; }
+        .whatif-controls {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .whatif-label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.82rem;
+          font-weight: 500;
+          color: var(--color-text-muted);
+        }
+        .whatif-slider-group { display: flex; flex-direction: column; gap: 4px; }
+        .whatif-slider-labels {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.72rem;
+          color: var(--color-text-muted);
+        }
+        .whatif-current-val {
+          font-weight: 700;
+          color: var(--color-primary);
+          font-size: 0.82rem;
+        }
+        .whatif-slider {
+          width: 100%;
+          accent-color: var(--color-primary);
+          cursor: pointer;
+        }
+        .whatif-results {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+          gap: 10px;
+          margin-bottom: 16px;
+        }
+        .whatif-result-box {
+          padding: 10px 12px;
+          background: var(--color-bg);
+          border-radius: 8px;
+          text-align: center;
+        }
+        .whatif-result-label {
+          font-size: 0.72rem;
+          font-weight: 500;
+          color: var(--color-text-muted);
+          margin-bottom: 2px;
+        }
+        .whatif-result-value {
+          font-size: 1.1rem;
+          font-weight: 700;
+        }
+        .whatif-result-ci {
+          font-size: 0.68rem;
+          color: var(--color-text-muted);
+        }
+        .whatif-better { color: #22c55e; }
+        .whatif-worse { color: #ef4444; }
+        .whatif-scatter {
+          display: block;
+          width: 100%;
+          max-width: 300px;
+          background: var(--color-bg);
+          border-radius: 8px;
+          padding: 2px;
+        }
+
+        /* ── Trial Comparison ── */
+        .history-compare-cell {
+          text-align: center;
+          padding: 8px 2px !important;
+          cursor: pointer;
+          width: 32px;
+        }
+        .compare-check {
+          color: var(--color-text-muted);
+          opacity: 0.2;
+          transition: all 0.15s;
+        }
+        .compare-check:hover { opacity: 0.6; }
+        .compare-active {
+          color: var(--color-primary) !important;
+          opacity: 1 !important;
+        }
+        .compare-modal {
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: 16px;
+          padding: 24px 28px;
+          min-width: 500px;
+          max-width: 700px;
+          max-height: 80vh;
+          overflow-y: auto;
+          box-shadow: var(--shadow-lg);
+        }
+        .compare-table-wrap { overflow-x: auto; margin-bottom: 16px; }
+        .compare-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.82rem;
+        }
+        .compare-table th {
+          padding: 8px 12px;
+          font-weight: 600;
+          text-align: center;
+          border-bottom: 2px solid var(--color-border);
+          font-size: 0.78rem;
+        }
+        .compare-table td {
+          padding: 6px 12px;
+          border-bottom: 1px solid var(--color-border-subtle);
+        }
+        .compare-label-col {
+          text-align: left !important;
+          width: 100px;
+        }
+        .compare-label {
+          font-weight: 500;
+          color: var(--color-text-muted);
+          font-family: var(--font-mono);
+          font-size: 0.78rem;
+        }
+        .compare-val { text-align: center; }
+        .compare-val-best {
+          font-weight: 700;
+          color: var(--color-green);
+        }
+        .compare-best-col {
+          background: rgba(34, 197, 94, 0.06);
+        }
+        .compare-best-tag {
+          display: inline-block;
+          margin-left: 6px;
+          font-size: 0.6rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          color: #22c55e;
+          background: rgba(34, 197, 94, 0.12);
+          padding: 1px 5px;
+          border-radius: 4px;
+        }
+        .compare-delta-col {
+          width: 80px;
+          text-align: center;
+        }
+        .compare-delta {
+          text-align: center;
+          font-size: 0.78rem;
+          color: var(--color-text-muted);
+        }
+        .compare-delta-better { color: #22c55e !important; font-weight: 600; }
+        .compare-delta-worse { color: #ef4444 !important; font-weight: 600; }
+        .compare-kpi-row {
+          background: rgba(79, 110, 247, 0.03);
+        }
+        .compare-footer {
+          display: flex;
+          justify-content: flex-end;
+        }
+
+        /* ── Batch Planner ── */
+        .suggestion-select-check {
+          position: absolute;
+          top: 8px;
+          left: 8px;
+          z-index: 3;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 4px;
+          transition: background 0.15s;
+        }
+        .suggestion-select-check:hover {
+          background: var(--color-bg);
+        }
+        .sug-check-idle {
+          color: var(--color-text-muted);
+          opacity: 0.25;
+          transition: opacity 0.15s;
+        }
+        .suggestion-card-wrapper:hover .sug-check-idle {
+          opacity: 0.6;
+        }
+        .sug-check-active {
+          color: var(--color-primary);
+          opacity: 1;
+        }
+        .suggestion-selected {
+          outline: 2px solid var(--color-primary);
+          outline-offset: -1px;
+          border-radius: var(--radius-lg, 12px);
+        }
+        .batch-planner-bar {
+          position: sticky;
+          bottom: 0;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 18px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-primary);
+          border-radius: 12px;
+          box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
+          margin-top: 16px;
+          animation: fadeSlideUp 0.2s ease;
+        }
+        .batch-planner-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          color: var(--color-primary);
+          font-weight: 600;
+          font-size: 0.88rem;
+        }
+        .batch-planner-count { color: var(--color-text); }
+        .batch-diversity-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 2px 10px;
+          background: var(--color-primary-subtle, rgba(79, 110, 247, 0.08));
+          border-radius: 10px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          color: var(--color-primary);
+        }
+        .batch-planner-right {
+          display: flex;
+          gap: 8px;
         }
       `}</style>
     </div>
