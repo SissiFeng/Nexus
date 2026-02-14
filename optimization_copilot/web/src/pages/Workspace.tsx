@@ -98,6 +98,7 @@ export default function Workspace() {
   const [historyFilter, setHistoryFilter] = useState("");
   const [expandedTrialId, setExpandedTrialId] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [dismissedWarnings, setDismissedWarnings] = useState<Set<string>>(new Set());
   const HISTORY_PAGE_SIZE = 25;
 
   const handleCopyBest = useCallback((params: Record<string, number>) => {
@@ -369,6 +370,29 @@ export default function Workspace() {
     { id: "export", label: "Export", icon: Download, badge: null },
   ] as const;
 
+  // Compute data quality warnings from diagnostics
+  const dataWarnings: Array<{ id: string; level: "warning" | "error" | "info"; message: string }> = [];
+  if (diagnostics) {
+    if (diagnostics.failure_rate > 0.3) {
+      dataWarnings.push({ id: "high-failure", level: "error", message: `High failure rate detected (${(diagnostics.failure_rate * 100).toFixed(0)}%). Check parameter bounds or experimental setup.` });
+    } else if (diagnostics.failure_rate > 0.15) {
+      dataWarnings.push({ id: "mod-failure", level: "warning", message: `Elevated failure rate (${(diagnostics.failure_rate * 100).toFixed(0)}%). Some experiments are failing — review constraints.` });
+    }
+    if (diagnostics.noise_estimate > 0.5) {
+      dataWarnings.push({ id: "high-noise", level: "warning", message: `High measurement noise (${diagnostics.noise_estimate.toFixed(2)}). Consider adding replicates or smoothing.` });
+    }
+    if (diagnostics.signal_to_noise_ratio != null && diagnostics.signal_to_noise_ratio < 1.5) {
+      dataWarnings.push({ id: "low-snr", level: "warning", message: `Low signal-to-noise ratio (${diagnostics.signal_to_noise_ratio.toFixed(2)}). Optimization trends may be unreliable.` });
+    }
+    if (diagnostics.plateau_length > 20) {
+      dataWarnings.push({ id: "plateau", level: "info", message: `No improvement for ${diagnostics.plateau_length} iterations. The optimizer may have converged or needs a strategy change.` });
+    }
+  }
+  if (campaign.observations && campaign.observations.length < 5) {
+    dataWarnings.push({ id: "few-obs", level: "info", message: `Only ${campaign.observations.length} observation${campaign.observations.length === 1 ? "" : "s"} so far. Insights become more reliable after ~10 trials.` });
+  }
+  const visibleWarnings = dataWarnings.filter((w) => !dismissedWarnings.has(w.id));
+
   // Build trial data from real observations
   const trials = (campaign.observations ?? []).map((obs) => ({
     id: `trial-${obs.iteration}`,
@@ -491,6 +515,27 @@ export default function Workspace() {
             </button>
           ))}
         </div>
+
+        {/* Data Quality Warnings */}
+        {visibleWarnings.length > 0 && (
+          <div className="quality-warnings">
+            {visibleWarnings.map((w) => (
+              <div key={w.id} className={`quality-warning quality-warning-${w.level}`}>
+                <span className="quality-warning-icon">
+                  {w.level === "error" ? <AlertTriangle size={14} /> : w.level === "warning" ? <AlertTriangle size={14} /> : <Info size={14} />}
+                </span>
+                <span className="quality-warning-msg">{w.message}</span>
+                <button
+                  className="quality-warning-dismiss"
+                  onClick={() => setDismissedWarnings((prev) => new Set(prev).add(w.id))}
+                  title="Dismiss"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Tab Content */}
         <div className="workspace-content">
@@ -1623,6 +1668,95 @@ export default function Workspace() {
         .workspace-tab:hover .tab-kbd,
         .workspace-tab.active .tab-kbd {
           opacity: 0.8;
+        }
+
+        .quality-warnings {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          padding: 10px 24px;
+          background: var(--color-surface);
+          border-bottom: 1px solid var(--color-border-subtle);
+        }
+
+        .quality-warning {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px 12px;
+          border-radius: var(--radius);
+          font-size: 0.82rem;
+          font-weight: 500;
+          animation: slideDown 0.2s ease;
+        }
+
+        .quality-warning-error {
+          background: #fef2f2;
+          border: 1px solid #fca5a5;
+          color: #991b1b;
+        }
+
+        .quality-warning-warning {
+          background: #fffbeb;
+          border: 1px solid #fcd34d;
+          color: #92400e;
+        }
+
+        .quality-warning-info {
+          background: #eff6ff;
+          border: 1px solid #93c5fd;
+          color: #1e40af;
+        }
+
+        [data-theme="dark"] .quality-warning-error {
+          background: #450a0a;
+          border-color: #991b1b;
+          color: #fca5a5;
+        }
+
+        [data-theme="dark"] .quality-warning-warning {
+          background: #451a03;
+          border-color: #92400e;
+          color: #fcd34d;
+        }
+
+        [data-theme="dark"] .quality-warning-info {
+          background: #172554;
+          border-color: #1e40af;
+          color: #93c5fd;
+        }
+
+        .quality-warning-icon {
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+        }
+
+        .quality-warning-msg {
+          flex: 1;
+          line-height: 1.4;
+        }
+
+        .quality-warning-dismiss {
+          flex-shrink: 0;
+          background: none;
+          border: none;
+          color: inherit;
+          opacity: 0.4;
+          cursor: pointer;
+          font-size: 1.1rem;
+          padding: 0 4px;
+          line-height: 1;
+          transition: opacity var(--transition-fast);
+        }
+
+        .quality-warning-dismiss:hover {
+          opacity: 1;
+        }
+
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateY(-6px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         .workspace-content {
