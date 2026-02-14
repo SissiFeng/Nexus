@@ -2197,6 +2197,116 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Sample Efficiency Tracker */}
+              {trials.length >= 15 && (() => {
+                const seObjKey = Object.keys(trials[0].kpis)[0];
+                const seVals = trials.map(t => Number(t.kpis[seObjKey]) || 0);
+                // Best-so-far
+                let seBest = seVals[0];
+                const seBsf = seVals.map(v => { seBest = Math.min(seBest, v); return seBest; });
+                // Improvement per window
+                const seWinSize = Math.max(5, Math.floor(trials.length / 10));
+                const seWindows: { start: number; end: number; improvement: number; cumImprove: number }[] = [];
+                let seCumImprove = 0;
+                for (let i = 0; i < trials.length; i += seWinSize) {
+                  const end = Math.min(i + seWinSize - 1, trials.length - 1);
+                  const winImprove = Math.abs(seBsf[end] - seBsf[i]);
+                  seCumImprove += winImprove;
+                  seWindows.push({ start: i, end, improvement: winImprove, cumImprove: seCumImprove });
+                }
+                if (seWindows.length < 2) return null;
+
+                const seMaxImprove = Math.max(...seWindows.map(w => w.improvement), 0.001);
+                const seMaxCum = seWindows[seWindows.length - 1].cumImprove || 1;
+
+                const seW = 440, seH = 160, sePadL = 44, sePadR = 44, sePadT = 16, sePadB = 28;
+                const sePlotW = seW - sePadL - sePadR;
+                const sePlotH = seH - sePadT - sePadB;
+                const barW = Math.max(8, sePlotW / seWindows.length - 4);
+
+                // ROI threshold: average improvement
+                const seAvgImprove = seWindows.reduce((s, w) => s + w.improvement, 0) / seWindows.length;
+                const roiY = sePadT + sePlotH - (seAvgImprove / seMaxImprove) * sePlotH;
+
+                // Recent efficiency ratio
+                const lastThird = seWindows.slice(-Math.ceil(seWindows.length / 3));
+                const firstThird = seWindows.slice(0, Math.ceil(seWindows.length / 3));
+                const recentAvg = lastThird.reduce((s, w) => s + w.improvement, 0) / lastThird.length;
+                const earlyAvg = firstThird.reduce((s, w) => s + w.improvement, 0) / firstThird.length;
+                const efficiencyRatio = earlyAvg > 0 ? recentAvg / earlyAvg : 0;
+
+                // Cumulative improvement line
+                const cumPath = seWindows.map((w, i) => {
+                  const x = sePadL + (i + 0.5) / seWindows.length * sePlotW;
+                  const y = sePadT + sePlotH - (w.cumImprove / seMaxCum) * sePlotH;
+                  return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+                }).join(" ");
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Zap size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Sample Efficiency</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Improvement per {seWinSize}-trial window. Declining bars = diminishing returns.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto", color: efficiencyRatio < 0.3 ? "var(--color-red, #ef4444)" : efficiencyRatio < 0.7 ? "var(--color-yellow, #eab308)" : "var(--color-green, #22c55e)" }}>
+                        {(efficiencyRatio * 100).toFixed(0)}% recent efficiency
+                      </span>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={seW} height={seH} viewBox={`0 0 ${seW} ${seH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Grid */}
+                        {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                          <line key={f} x1={sePadL} y1={sePadT + (1 - f) * sePlotH} x2={sePadL + sePlotW} y2={sePadT + (1 - f) * sePlotH} stroke="var(--color-border)" strokeWidth={0.5} />
+                        ))}
+                        {/* Bars (improvement per window) */}
+                        {seWindows.map((w, i) => {
+                          const x = sePadL + (i + 0.5) / seWindows.length * sePlotW - barW / 2;
+                          const h = (w.improvement / seMaxImprove) * sePlotH;
+                          const barColor = w.improvement > seAvgImprove ? "rgba(34,197,94,0.5)" : "rgba(234,179,8,0.4)";
+                          return (
+                            <rect key={i} x={x} y={sePadT + sePlotH - h} width={barW} height={Math.max(h, 1)} fill={barColor} rx={2}>
+                              <title>Window {i + 1}: trials {w.start}–{w.end}, improvement {w.improvement.toPrecision(3)}</title>
+                            </rect>
+                          );
+                        })}
+                        {/* ROI threshold line */}
+                        <line x1={sePadL} y1={roiY} x2={sePadL + sePlotW} y2={roiY} stroke="var(--color-text-muted)" strokeWidth={1} strokeDasharray="4,3" opacity={0.5} />
+                        <text x={sePadL + sePlotW + 3} y={roiY + 3} fontSize="7" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">avg</text>
+                        {/* Cumulative improvement line (right axis) */}
+                        <path d={cumPath} fill="none" stroke="rgba(99,102,241,0.7)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                        {/* Dots on cumulative line */}
+                        {seWindows.map((w, i) => {
+                          const x = sePadL + (i + 0.5) / seWindows.length * sePlotW;
+                          const y = sePadT + sePlotH - (w.cumImprove / seMaxCum) * sePlotH;
+                          return <circle key={i} cx={x} cy={y} r={2.5} fill="rgba(99,102,241,0.8)" />;
+                        })}
+                        {/* Left Y axis label */}
+                        <text x={8} y={sePadT + sePlotH / 2} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" transform={`rotate(-90,8,${sePadT + sePlotH / 2})`}>
+                          Δ per window
+                        </text>
+                        {/* Right Y axis label */}
+                        <text x={seW - 8} y={sePadT + sePlotH / 2} textAnchor="middle" fontSize="9" fill="rgba(99,102,241,0.7)" fontFamily="var(--font-mono)" transform={`rotate(90,${seW - 8},${sePadT + sePlotH / 2})`}>
+                          Cumulative
+                        </text>
+                        {/* X axis */}
+                        <text x={sePadL + sePlotW / 2} y={seH - 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                          Trial Window
+                        </text>
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "6px", flexWrap: "wrap" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(34,197,94,0.5)", marginRight: 4, verticalAlign: "middle" }} />Above avg</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(234,179,8,0.4)", marginRight: 4, verticalAlign: "middle" }} />Below avg</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 3, background: "rgba(99,102,241,0.7)", marginRight: 4, verticalAlign: "middle" }} />Cumulative</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -2614,6 +2724,140 @@ export default function Workspace() {
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(59,130,246)", marginRight: 4, verticalAlign: "middle" }} />Better (lower)</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(255,50,50)", marginRight: 4, verticalAlign: "middle" }} />Worse (higher)</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", border: "2px dashed #fff", marginRight: 4, verticalAlign: "middle" }} />Basin center</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Prediction Residual Map */}
+              {trials.length >= 12 && (() => {
+                const prSpecs = campaign.spec?.parameters || [];
+                const prContSpecs = prSpecs.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (prContSpecs.length < 2) return null;
+                const prObjKey = Object.keys(trials[0].kpis)[0];
+                // Pick top 2 parameters by correlation with objective
+                const prObjVals = trials.map(t => Number(t.kpis[prObjKey]) || 0);
+                const prMeanObj = prObjVals.reduce((a, b) => a + b, 0) / prObjVals.length;
+                const prParamCorrs = prContSpecs.map((s: { name: string }) => {
+                  const vals = trials.map(t => Number(t.parameters[s.name]) || 0);
+                  const meanP = vals.reduce((a, b) => a + b, 0) / vals.length;
+                  let num = 0, denP = 0, denO = 0;
+                  for (let i = 0; i < vals.length; i++) {
+                    const dp = vals[i] - meanP;
+                    const doVal = prObjVals[i] - prMeanObj;
+                    num += dp * doVal;
+                    denP += dp * dp;
+                    denO += doVal * doVal;
+                  }
+                  return { name: s.name, corr: Math.abs(denP > 0 && denO > 0 ? num / Math.sqrt(denP * denO) : 0) };
+                }).sort((a: { corr: number }, b: { corr: number }) => b.corr - a.corr);
+                const prP1Name = prParamCorrs[0].name;
+                const prP2Name = prParamCorrs.length > 1 ? prParamCorrs[1].name : prParamCorrs[0].name;
+                const prSpec1 = prContSpecs.find((s: { name: string }) => s.name === prP1Name) as { name: string; lower: number; upper: number };
+                const prSpec2 = prContSpecs.find((s: { name: string }) => s.name === prP2Name) as { name: string; lower: number; upper: number };
+                if (!prSpec1 || !prSpec2) return null;
+
+                // LOO nearest-neighbor residuals
+                const pKeys = Object.keys(trials[0].parameters);
+                const prResiduals = trials.map((t, idx) => {
+                  const actual = prObjVals[idx];
+                  let bestDist = Infinity, predicted = actual;
+                  for (let j = 0; j < trials.length; j++) {
+                    if (j === idx) continue;
+                    let dist = 0;
+                    for (const k of pKeys) {
+                      const diff = (Number(t.parameters[k]) || 0) - (Number(trials[j].parameters[k]) || 0);
+                      dist += diff * diff;
+                    }
+                    if (dist < bestDist) {
+                      bestDist = dist;
+                      predicted = prObjVals[j];
+                    }
+                  }
+                  return {
+                    x: (Number(t.parameters[prP1Name]) - prSpec1.lower) / (prSpec1.upper - prSpec1.lower),
+                    y: (Number(t.parameters[prP2Name]) - prSpec2.lower) / (prSpec2.upper - prSpec2.lower),
+                    residual: actual - predicted,
+                  };
+                });
+
+                const prMaxRes = Math.max(...prResiduals.map(r => Math.abs(r.residual)), 0.001);
+                const prW = 320, prH = 240, prPadL = 44, prPadR = 16, prPadT = 16, prPadB = 32;
+                const prPlotW = prW - prPadL - prPadR;
+                const prPlotH = prH - prPadT - prPadB;
+
+                // Mean absolute residual
+                const mae = prResiduals.reduce((s, r) => s + Math.abs(r.residual), 0) / prResiduals.length;
+
+                // Bias: mean residual
+                const bias = prResiduals.reduce((s, r) => s + r.residual, 0) / prResiduals.length;
+                const biasLabel = Math.abs(bias) < mae * 0.3 ? "Balanced" : bias > 0 ? "Over-predicting" : "Under-predicting";
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <AlertTriangle size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Prediction Residuals</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Where the surrogate over/under-predicts, mapped on {prP1Name} vs {prP2Name}.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto" }}>
+                        {biasLabel}
+                      </span>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={prW} height={prH} viewBox={`0 0 ${prW} ${prH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Grid */}
+                        {[0, 0.5, 1].map(f => (
+                          <g key={f}>
+                            <line x1={prPadL + f * prPlotW} y1={prPadT} x2={prPadL + f * prPlotW} y2={prPadT + prPlotH} stroke="var(--color-border)" strokeWidth={0.5} />
+                            <line x1={prPadL} y1={prPadT + f * prPlotH} x2={prPadL + prPlotW} y2={prPadT + f * prPlotH} stroke="var(--color-border)" strokeWidth={0.5} />
+                          </g>
+                        ))}
+                        {/* Residual points */}
+                        {prResiduals.map((r, i) => {
+                          const cx = prPadL + r.x * prPlotW;
+                          const cy = prPadT + (1 - r.y) * prPlotH;
+                          const normRes = r.residual / prMaxRes;
+                          // Red = over-prediction (actual > predicted, residual > 0), Blue = under-prediction
+                          const color = normRes > 0
+                            ? `rgba(239,68,68,${Math.min(Math.abs(normRes) * 0.8 + 0.2, 1)})`
+                            : `rgba(59,130,246,${Math.min(Math.abs(normRes) * 0.8 + 0.2, 1)})`;
+                          const radius = 3 + Math.abs(normRes) * 4;
+                          return (
+                            <circle key={i} cx={cx} cy={cy} r={radius} fill={color} stroke="rgba(255,255,255,0.3)" strokeWidth={0.5}>
+                              <title>Trial {i}: {prP1Name}={Number(trials[i].parameters[prP1Name]).toPrecision(3)}, {prP2Name}={Number(trials[i].parameters[prP2Name]).toPrecision(3)}, residual={r.residual.toPrecision(3)}</title>
+                            </circle>
+                          );
+                        })}
+                        {/* Axis labels */}
+                        <text x={prPadL + prPlotW / 2} y={prH - 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                          {prP1Name}
+                        </text>
+                        <text x={10} y={prPadT + prPlotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" transform={`rotate(-90,10,${prPadT + prPlotH / 2})`}>
+                          {prP2Name}
+                        </text>
+                        {/* Tick labels */}
+                        {[0, 0.5, 1].map(f => (
+                          <g key={f}>
+                            <text x={prPadL + f * prPlotW} y={prPadT + prPlotH + 14} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                              {(prSpec1.lower + f * (prSpec1.upper - prSpec1.lower)).toPrecision(3)}
+                            </text>
+                            <text x={prPadL - 4} y={prPadT + (1 - f) * prPlotH + 3} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                              {(prSpec2.lower + f * (prSpec2.upper - prSpec2.lower)).toPrecision(3)}
+                            </text>
+                          </g>
+                        ))}
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(239,68,68,0.7)", marginRight: 4, verticalAlign: "middle" }} />Over-predicting</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(59,130,246,0.7)", marginRight: 4, verticalAlign: "middle" }} />Under-predicting</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.78rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                        MAE: {mae.toPrecision(3)}
+                      </span>
                     </div>
                   </div>
                 );
@@ -4261,6 +4505,94 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Suggestion Stability Scores */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 8 && (() => {
+                // Bootstrap stability: resample trials N times, re-rank by nearest-neighbor predicted obj
+                const ssObjKey = Object.keys(trials[0].kpis)[0];
+                const ssPKeys = Object.keys(trials[0].parameters);
+                const nBoot = 20;
+
+                const ssScores = suggestions.suggestions.map((sug) => {
+                  const sugParams = ssPKeys.map(k => Number(sug[k]) || 0);
+                  // For each bootstrap, find NN prediction and rank this suggestion
+                  const predictions: number[] = [];
+                  for (let b = 0; b < nBoot; b++) {
+                    // Resample trials with replacement
+                    const bootTrials: typeof trials = [];
+                    for (let i = 0; i < trials.length; i++) {
+                      bootTrials.push(trials[Math.floor(Math.random() * trials.length)]);
+                    }
+                    // NN prediction
+                    let bestDist = Infinity, pred = 0;
+                    for (const bt of bootTrials) {
+                      let dist = 0;
+                      for (let k = 0; k < ssPKeys.length; k++) {
+                        const diff = sugParams[k] - (Number(bt.parameters[ssPKeys[k]]) || 0);
+                        dist += diff * diff;
+                      }
+                      if (dist < bestDist) {
+                        bestDist = dist;
+                        pred = Number(bt.kpis[ssObjKey]) || 0;
+                      }
+                    }
+                    predictions.push(pred);
+                  }
+                  // Stability = 1 - (std / range)
+                  const meanPred = predictions.reduce((a, b) => a + b, 0) / nBoot;
+                  const stdPred = Math.sqrt(predictions.reduce((s, p) => s + (p - meanPred) ** 2, 0) / nBoot);
+                  const allObjVals = trials.map(t => Number(t.kpis[ssObjKey]) || 0);
+                  const objRange = Math.max(...allObjVals) - Math.min(...allObjVals) || 1;
+                  const stability = Math.max(0, Math.min(1, 1 - stdPred / (objRange * 0.5)));
+                  return { stability: Math.round(stability * 100), meanPred, stdPred };
+                });
+
+                const avgStability = ssScores.reduce((s, sc) => s + sc.stability, 0) / ssScores.length;
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Flag size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Suggestion Stability</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Bootstrap reliability of each suggestion ({nBoot} resamples). Higher = more robust.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto" }}>
+                        avg {avgStability.toFixed(0)}%
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {ssScores.map((sc, i) => {
+                        const color = sc.stability >= 80 ? "rgba(34,197,94,0.7)" : sc.stability >= 50 ? "rgba(234,179,8,0.7)" : "rgba(239,68,68,0.7)";
+                        const label = sc.stability >= 80 ? "Stable" : sc.stability >= 50 ? "Moderate" : "Unstable";
+                        return (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0" }}>
+                            <span style={{ width: 32, fontSize: "0.82rem", fontWeight: 600, color: "var(--color-text-muted)", textAlign: "right", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+                              #{i + 1}
+                            </span>
+                            <div style={{ flex: 1, height: 14, background: "var(--color-border)", borderRadius: 4, overflow: "hidden", position: "relative" }}>
+                              <div style={{ width: `${sc.stability}%`, height: "100%", background: color, borderRadius: 4, transition: "width 0.3s ease", minWidth: 2 }} />
+                            </div>
+                            <span style={{ width: 42, fontSize: "0.78rem", fontFamily: "var(--font-mono)", fontWeight: 600, color, textAlign: "right", flexShrink: 0 }}>
+                              {sc.stability}%
+                            </span>
+                            <span style={{ width: 60, fontSize: "0.72rem", color: "var(--color-text-muted)", flexShrink: 0 }}>
+                              {label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "8px", flexWrap: "wrap" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(34,197,94,0.7)", marginRight: 4, verticalAlign: "middle" }} />Stable (&ge;80%)</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(234,179,8,0.7)", marginRight: 4, verticalAlign: "middle" }} />Moderate (50-80%)</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(239,68,68,0.7)", marginRight: 4, verticalAlign: "middle" }} />Unstable (&lt;50%)</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -4997,6 +5329,110 @@ export default function Workspace() {
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(234,179,8,0.7)", marginRight: 4, verticalAlign: "middle" }} />Exploiting</span>
                       <span style={{ marginLeft: "auto", fontSize: "0.78rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
                         {explorationPct.toFixed(0)}% exploring windows
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Lock-In Detector */}
+              {trials.length >= 15 && (() => {
+                const liSpecs = campaign.spec?.parameters || [];
+                const liContSpecs = liSpecs.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (liContSpecs.length === 0) return null;
+
+                const liWinSize = Math.max(5, Math.floor(trials.length / 8));
+                const liWindows: { start: number; end: number }[] = [];
+                for (let i = 0; i <= trials.length - liWinSize; i += Math.max(1, Math.floor(liWinSize / 2))) {
+                  liWindows.push({ start: i, end: i + liWinSize - 1 });
+                }
+                if (liWindows.length < 3) return null;
+
+                // For each parameter, compute range spread in each window (normalized to [0,1])
+                const liData = liContSpecs.map((s: { name: string; type: string; lower?: number; upper?: number }) => {
+                  const fullRange = (s.upper ?? 1) - (s.lower ?? 0) || 1;
+                  const windowSpreads = liWindows.map(w => {
+                    const vals = trials.slice(w.start, w.end + 1).map(t => Number(t.parameters[s.name]) || 0);
+                    const min = Math.min(...vals);
+                    const max = Math.max(...vals);
+                    return (max - min) / fullRange;
+                  });
+                  // Lock-in detected if late spread < 30% of early spread
+                  const earlyAvg = windowSpreads.slice(0, Math.ceil(windowSpreads.length / 3)).reduce((a, b) => a + b, 0) / Math.ceil(windowSpreads.length / 3);
+                  const lateAvg = windowSpreads.slice(-Math.ceil(windowSpreads.length / 3)).reduce((a, b) => a + b, 0) / Math.ceil(windowSpreads.length / 3);
+                  const locked = earlyAvg > 0.05 && lateAvg < earlyAvg * 0.3;
+                  return { name: s.name, windowSpreads, earlyAvg, lateAvg, locked };
+                });
+
+                const lockedCount = liData.filter(d => d.locked).length;
+                const liW = 440, liH = 130, liPadL = 80, liPadR = 16, liPadT = 8, liPadB = 24;
+                const liPlotW = liW - liPadL - liPadR;
+                const liPlotH = liH - liPadT - liPadB;
+                const rowH = liPlotH / liData.length;
+
+                // Color palette for parameters
+                const liColors = ["rgba(59,130,246,0.6)", "rgba(34,197,94,0.6)", "rgba(234,179,8,0.6)", "rgba(239,68,68,0.5)", "rgba(168,85,247,0.5)", "rgba(236,72,153,0.5)", "rgba(20,184,166,0.5)", "rgba(249,115,22,0.5)"];
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <TrendingDown size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Parameter Lock-In Detector</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Sampling range evolution per parameter. Narrowing = potential premature convergence.
+                        </p>
+                      </div>
+                      {lockedCount > 0 && (
+                        <span className="findings-badge" style={{ marginLeft: "auto", color: "rgba(239,68,68,0.8)", borderColor: "rgba(239,68,68,0.3)" }}>
+                          {lockedCount} locked
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={liW} height={liH} viewBox={`0 0 ${liW} ${liH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Row backgrounds and parameter names */}
+                        {liData.map((d, pi) => (
+                          <g key={pi}>
+                            {pi % 2 === 0 && (
+                              <rect x={liPadL} y={liPadT + pi * rowH} width={liPlotW} height={rowH} fill="var(--color-border)" opacity={0.2} />
+                            )}
+                            <text x={liPadL - 6} y={liPadT + pi * rowH + rowH / 2 + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fontWeight={d.locked ? 700 : 400} fill={d.locked ? "rgba(239,68,68,0.8)" : "var(--color-text-muted)"}>
+                              {d.name.length > 10 ? d.name.slice(0, 9) + "…" : d.name}
+                              {d.locked ? " ⚠" : ""}
+                            </text>
+                          </g>
+                        ))}
+                        {/* Stream bands - spread for each parameter across windows */}
+                        {liData.map((d, pi) => {
+                          const centerY = liPadT + pi * rowH + rowH / 2;
+                          const maxSpread = Math.max(...d.windowSpreads, 0.01);
+                          const halfH = (rowH * 0.4);
+                          const topPath = d.windowSpreads.map((sp, wi) => {
+                            const x = liPadL + (wi / (liWindows.length - 1)) * liPlotW;
+                            const y = centerY - (sp / maxSpread) * halfH;
+                            return `${wi === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+                          }).join(" ");
+                          const bottomPath = d.windowSpreads.map((_sp, wi) => {
+                            const x = liPadL + ((liWindows.length - 1 - wi) / (liWindows.length - 1)) * liPlotW;
+                            const y = centerY + (d.windowSpreads[liWindows.length - 1 - wi] / maxSpread) * halfH;
+                            return `L${x.toFixed(1)},${y.toFixed(1)}`;
+                          }).join(" ");
+                          return (
+                            <path key={pi} d={`${topPath} ${bottomPath} Z`} fill={liColors[pi % liColors.length]} opacity={0.7} />
+                          );
+                        })}
+                        {/* X axis */}
+                        <text x={liPadL + liPlotW / 2} y={liH - 2} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                          Window →
+                        </text>
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 20, height: 8, background: "rgba(59,130,246,0.4)", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Wide spread</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 6, height: 8, background: "rgba(239,68,68,0.5)", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Narrowing</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                        ⚠ = locked in (late spread &lt; 30% of early)
                       </span>
                     </div>
                   </div>
