@@ -6,6 +6,7 @@ interface UseCampaignResult {
   loading: boolean;
   error: string | null;
   refresh: () => void;
+  lastUpdated: number | null;
 }
 
 export function useCampaign(
@@ -15,6 +16,7 @@ export function useCampaign(
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -22,6 +24,7 @@ export function useCampaign(
       const data = await fetchCampaign(id);
       setCampaign(data);
       setError(null);
+      setLastUpdated(Date.now());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch campaign");
     } finally {
@@ -37,5 +40,5 @@ export function useCampaign(
     return () => clearInterval(interval);
   }, [load, autoRefreshMs]);
 
-  return { campaign, loading, error, refresh: load };
+  return { campaign, loading, error, refresh: load, lastUpdated };
 }

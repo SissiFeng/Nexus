@@ -11,6 +11,8 @@ interface SuggestionCardProps {
   rationale?: string;
   explorationScore?: number;
   phase?: string;
+  bestParams?: Record<string, number>;
+  bestObjective?: number;
   onAccept?: () => void;
   onModify?: () => void;
   onReject?: () => void;
@@ -98,11 +100,14 @@ export default function SuggestionCard({
   rationale,
   explorationScore,
   phase,
+  bestParams,
+  bestObjective,
   onAccept,
   onModify,
   onReject,
 }: SuggestionCardProps) {
   const [showRationale, setShowRationale] = useState(index === 1);
+  const [showComparison, setShowComparison] = useState(false);
 
   // Get parameter specs map
   const specsMap = new Map(
@@ -279,6 +284,58 @@ export default function SuggestionCard({
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Comparison to current best */}
+      {bestParams && Object.keys(bestParams).length > 0 && (
+        <div className="sug-comparison">
+          <button
+            className="sug-comparison-toggle"
+            onClick={() => setShowComparison(!showComparison)}
+          >
+            <Target size={14} />
+            <span>vs Current Best</span>
+            {bestObjective !== undefined && predictedValue !== undefined && (
+              <span className="sug-comparison-delta" style={{
+                color: predictedValue <= bestObjective ? 'var(--color-green)' : 'var(--color-text-muted)'
+              }}>
+                {predictedValue <= bestObjective ? 'Better' : `+${(predictedValue - bestObjective).toFixed(4)}`}
+              </span>
+            )}
+            {showComparison ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          {showComparison && (
+            <div className="sug-comparison-content">
+              <div className="sug-comparison-grid">
+                <div className="sug-comparison-header">
+                  <span>Parameter</span>
+                  <span>Suggestion</span>
+                  <span>Best</span>
+                  <span>Delta</span>
+                </div>
+                {Object.entries(suggestion).map(([key, sugVal]) => {
+                  const bestVal = bestParams[key];
+                  if (bestVal === undefined) return null;
+                  const delta = sugVal - bestVal;
+                  const spec = specsMap.get(key);
+                  const range = spec ? (spec.upper ?? 1) - (spec.lower ?? 0) : 1;
+                  const pctChange = range > 0 ? (delta / range) * 100 : 0;
+                  return (
+                    <div key={key} className="sug-comparison-row">
+                      <span className="sug-comparison-name">{key}</span>
+                      <span className="mono sug-comparison-val">{sugVal.toFixed(3)}</span>
+                      <span className="mono sug-comparison-val" style={{ opacity: 0.6 }}>{bestVal.toFixed(3)}</span>
+                      <span className={`mono sug-comparison-delta-val ${Math.abs(pctChange) > 20 ? 'sug-comparison-big-change' : ''}`}>
+                        {delta > 0 ? '+' : ''}{delta.toFixed(3)}
+                        <span className="sug-comparison-pct">({pctChange > 0 ? '+' : ''}{pctChange.toFixed(0)}%)</span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -529,6 +586,86 @@ export default function SuggestionCard({
         }
         .sug-rationale-factors li:last-child {
           margin-bottom: 0;
+        }
+        .sug-comparison {
+          margin-top: 14px;
+          border-top: 1px solid var(--color-border);
+          padding-top: 12px;
+        }
+        .sug-comparison-toggle {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: none;
+          border: none;
+          color: var(--color-text-muted);
+          font-size: 0.82rem;
+          font-weight: 500;
+          cursor: pointer;
+          padding: 4px 0;
+          transition: color 0.15s;
+          font-family: inherit;
+        }
+        .sug-comparison-toggle:hover {
+          color: var(--color-primary);
+        }
+        .sug-comparison-delta {
+          font-size: 0.72rem;
+          font-weight: 600;
+          margin-left: auto;
+          margin-right: 4px;
+        }
+        .sug-comparison-content {
+          margin-top: 10px;
+          animation: fadeIn 0.2s ease;
+        }
+        .sug-comparison-grid {
+          font-size: 0.78rem;
+        }
+        .sug-comparison-header {
+          display: grid;
+          grid-template-columns: 1.5fr 1fr 1fr 1.2fr;
+          gap: 6px;
+          padding: 6px 8px;
+          font-weight: 600;
+          color: var(--color-text-muted);
+          text-transform: uppercase;
+          font-size: 0.68rem;
+          letter-spacing: 0.05em;
+          border-bottom: 1px solid var(--color-border);
+        }
+        .sug-comparison-row {
+          display: grid;
+          grid-template-columns: 1.5fr 1fr 1fr 1.2fr;
+          gap: 6px;
+          padding: 5px 8px;
+          border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+        }
+        .sug-comparison-row:last-child {
+          border-bottom: none;
+        }
+        .sug-comparison-name {
+          font-weight: 500;
+          color: var(--color-text);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .sug-comparison-val {
+          font-size: 0.78rem;
+        }
+        .sug-comparison-delta-val {
+          font-size: 0.78rem;
+          color: var(--color-text-muted);
+        }
+        .sug-comparison-big-change {
+          color: var(--color-primary);
+          font-weight: 600;
+        }
+        .sug-comparison-pct {
+          font-size: 0.68rem;
+          opacity: 0.7;
+          margin-left: 3px;
         }
       `}</style>
     </div>

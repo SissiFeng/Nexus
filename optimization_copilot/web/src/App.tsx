@@ -10,9 +10,11 @@ import DemoGallery from "./pages/DemoGallery";
 import Workspace from "./pages/Workspace";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ThemeToggle from "./components/ThemeToggle";
+import { ToastProvider } from "./components/Toast";
 
 function App() {
   return (
+    <ToastProvider>
     <div className="app">
       <nav className="nav-bar">
         <div className="nav-brand">
@@ -58,6 +60,7 @@ function App() {
         </ErrorBoundary>
       </main>
     </div>
+    </ToastProvider>
   );
 }
 

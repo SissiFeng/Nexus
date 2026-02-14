@@ -36,8 +36,10 @@ import {
   TrendingDown,
   Hash,
   Home,
+  RefreshCw,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
+import { useToast } from "../components/Toast";
 import { ChatPanel } from "../components/ChatPanel";
 import PhaseTimeline from "../components/PhaseTimeline";
 import RealConvergencePlot from "../components/ConvergencePlot";
@@ -74,7 +76,8 @@ const DIAGNOSTIC_TOOLTIPS: Record<string, string> = {
 
 export default function Workspace() {
   const { id } = useParams<{ id: string }>();
-  const { campaign, loading, error, refresh } = useCampaign(id);
+  const { campaign, loading, error, refresh, lastUpdated } = useCampaign(id);
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<
     "overview" | "explore" | "suggestions" | "insights" | "history" | "export"
   >("overview");
@@ -100,8 +103,9 @@ export default function Workspace() {
     navigator.clipboard.writeText(JSON.stringify(params, null, 2)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      toast("Parameters copied to clipboard");
     });
-  }, []);
+  }, [toast]);
 
   const handleHistorySort = useCallback((col: string) => {
     if (historySortCol === col) {
@@ -192,8 +196,10 @@ export default function Workspace() {
     try {
       const data = await fetchSuggestions(id, batchSize);
       setSuggestions(data);
+      toast(`Generated ${data.suggestions.length} suggestions`);
     } catch (err) {
       console.error("Failed to generate suggestions:", err);
+      toast("Failed to generate suggestions", "error");
     } finally {
       setLoadingSuggestions(false);
     }
@@ -216,6 +222,7 @@ export default function Workspace() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    toast("Suggestions exported as CSV");
   };
 
   /** Smart advisor: analyze diagnostics and suggest next steps */
@@ -307,8 +314,10 @@ export default function Workspace() {
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
+      toast(`Exported as ${format.toUpperCase()}`);
     } catch (err) {
       console.error("Export failed:", err);
+      toast("Export failed", "error");
     }
   };
 
@@ -361,6 +370,7 @@ export default function Workspace() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    toast(`History exported (${trials.length} trials)`);
   };
 
   return (
@@ -385,6 +395,12 @@ export default function Workspace() {
               </span>
               <span>Iteration: {campaign.iteration}</span>
               <span>Trials: {campaign.total_trials}</span>
+              {lastUpdated && (
+                <span className="workspace-refresh-indicator" title="Auto-refreshes every 5s">
+                  <RefreshCw size={11} className="refresh-spin" />
+                  <span>Live</span>
+                </span>
+              )}
             </div>
           </div>
           <div className="workspace-actions">
@@ -392,14 +408,14 @@ export default function Workspace() {
               <>
                 <button
                   className="btn btn-sm btn-secondary workspace-action-btn"
-                  onClick={async () => { await pauseCampaign(id); refresh(); }}
+                  onClick={async () => { await pauseCampaign(id); refresh(); toast("Campaign paused"); }}
                   title="Pause campaign"
                 >
                   <Pause size={14} /> Pause
                 </button>
                 <button
                   className="btn btn-sm btn-danger-outline workspace-action-btn"
-                  onClick={async () => { await stopCampaign(id); refresh(); }}
+                  onClick={async () => { await stopCampaign(id); refresh(); toast("Campaign stopped", "warning"); }}
                   title="Stop campaign"
                 >
                   <Square size={14} /> Stop
@@ -409,7 +425,7 @@ export default function Workspace() {
             {campaign.status === "paused" && (
               <button
                 className="btn btn-sm btn-primary workspace-action-btn"
-                onClick={async () => { await resumeCampaign(id); refresh(); }}
+                onClick={async () => { await resumeCampaign(id); refresh(); toast("Campaign resumed"); }}
                 title="Resume campaign"
               >
                 <Play size={14} /> Resume
@@ -884,6 +900,8 @@ export default function Workspace() {
                       predictedValue={suggestions.predicted_values?.[i]}
                       predictedUncertainty={suggestions.predicted_uncertainties?.[i]}
                       phase={suggestions.phase}
+                      bestParams={bestResult?.parameters}
+                      bestObjective={bestResult ? Object.values(bestResult.kpis)[0] : undefined}
                     />
                   ))}
                 </div>
@@ -1332,6 +1350,28 @@ export default function Workspace() {
           gap: 12px;
           align-items: center;
           font-size: 0.85rem;
+        }
+
+        .workspace-refresh-indicator {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          color: var(--color-green);
+          background: rgba(22, 179, 100, 0.08);
+          padding: 2px 8px;
+          border-radius: 10px;
+          letter-spacing: 0.03em;
+        }
+
+        .refresh-spin {
+          animation: refreshPulse 3s ease-in-out infinite;
+        }
+
+        @keyframes refreshPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
         }
 
         .workspace-tabs {
