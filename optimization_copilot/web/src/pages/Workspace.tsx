@@ -2031,6 +2031,95 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Cumulative Regret Curve */}
+              {trials.length >= 10 && (() => {
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const vals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                // Assume minimize: regret = value - bestPossible; use running best as proxy
+                const globalBest = Math.min(...vals);
+                // cumulative regret for BO
+                let cumRegret = 0;
+                const boRegret = vals.map(v => { cumRegret += Math.max(0, v - globalBest); return cumRegret; });
+                // random baseline: average regret per trial * iteration
+                const avgVal = vals.reduce((a, b) => a + b, 0) / vals.length;
+                const avgRegretPerTrial = Math.max(0, avgVal - globalBest);
+                const randomRegret = vals.map((_, i) => avgRegretPerTrial * (i + 1));
+
+                const maxR = Math.max(boRegret[boRegret.length - 1], randomRegret[randomRegret.length - 1], 1);
+                const W = 400, H = 180, padL = 52, padR = 16, padT = 28, padB = 32;
+                const plotW = W - padL - padR, plotH = H - padT - padB;
+                const n = vals.length;
+
+                const toX = (i: number) => padL + (i / (n - 1)) * plotW;
+                const toY = (v: number) => padT + (1 - v / maxR) * plotH;
+
+                const boPath = boRegret.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ");
+                const randPath = randomRegret.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ");
+
+                // Find divergence point: where BO regret drops significantly below random
+                let divergeIdx = -1;
+                for (let i = 3; i < n; i++) {
+                  if (randomRegret[i] > 0 && boRegret[i] / randomRegret[i] < 0.7) { divergeIdx = i; break; }
+                }
+
+                const savings = maxR > 0 ? ((1 - boRegret[n - 1] / randomRegret[n - 1]) * 100) : 0;
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <TrendingDown size={16} style={{ color: "var(--color-primary)" }} />
+                        <h2 style={{ margin: 0 }}>Cumulative Regret</h2>
+                      </div>
+                      <span className="findings-badge" style={{ background: savings > 30 ? "var(--color-green-bg)" : savings > 10 ? "var(--color-yellow-bg)" : "var(--color-red-bg)", color: savings > 30 ? "var(--color-green)" : savings > 10 ? "var(--color-yellow)" : "var(--color-red)" }}>
+                        {savings > 0 ? `${savings.toFixed(0)}% less regret` : "No improvement"}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Cumulative distance from optimal. Lower is better. Dashed = random baseline.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Y-axis labels */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                        <Fragment key={f}>
+                          <line x1={padL} y1={padT + (1 - f) * plotH} x2={padL + plotW} y2={padT + (1 - f) * plotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="2,3" />
+                          <text x={padL - 6} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                            {(f * maxR).toFixed(1)}
+                          </text>
+                        </Fragment>
+                      ))}
+                      {/* X-axis label */}
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)">Trials</text>
+                      {/* Random baseline (dashed) */}
+                      <path d={randPath} fill="none" stroke="var(--color-text-muted)" strokeWidth="1.5" strokeDasharray="5,3" opacity="0.6" />
+                      {/* BO regret (solid) */}
+                      <path d={boPath} fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Fill between random and BO */}
+                      <path
+                        d={`${boPath} L${toX(n - 1).toFixed(1)},${toY(randomRegret[n - 1]).toFixed(1)} ${randomRegret.slice().reverse().map((v, i) => `L${toX(n - 1 - i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ")} Z`}
+                        fill="var(--color-primary)"
+                        opacity="0.07"
+                      />
+                      {/* Divergence marker */}
+                      {divergeIdx >= 0 && (
+                        <>
+                          <line x1={toX(divergeIdx)} y1={padT} x2={toX(divergeIdx)} y2={padT + plotH} stroke="var(--color-green)" strokeWidth="1" strokeDasharray="3,2" opacity="0.6" />
+                          <text x={toX(divergeIdx) + 4} y={padT + 10} fontSize="8" fill="var(--color-green)" fontFamily="var(--font-mono)">diverge</text>
+                        </>
+                      )}
+                      {/* End markers */}
+                      <circle cx={toX(n - 1)} cy={toY(boRegret[n - 1])} r="3" fill="var(--color-primary)" />
+                      <circle cx={toX(n - 1)} cy={toY(randomRegret[n - 1])} r="3" fill="var(--color-text-muted)" opacity="0.6" />
+                    </svg>
+                    {/* Legend */}
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 2, background: "var(--color-primary)", marginRight: 4, verticalAlign: "middle" }} />BO</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 2, background: "var(--color-text-muted)", marginRight: 4, verticalAlign: "middle", borderTop: "1px dashed var(--color-text-muted)" }} />Random</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -2193,6 +2282,102 @@ export default function Workspace() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Boundary Saturation */}
+              {trials.length >= 8 && (() => {
+                const specs = campaign.spec?.parameters || [];
+                const bsData = specs
+                  .filter((s: { name: string; lower?: number; upper?: number }) => s.lower != null && s.upper != null && s.upper! > s.lower!)
+                  .map((s: { name: string; lower?: number; upper?: number }) => {
+                    const vals = trials.map(t => Number(t.parameters[s.name]) || 0);
+                    const range = s.upper! - s.lower!;
+                    const margin = range * 0.05; // 5% of range = "at boundary"
+                    const lowerHits = vals.filter(v => v <= s.lower! + margin).length;
+                    const upperHits = vals.filter(v => v >= s.upper! - margin).length;
+                    const lowerPct = lowerHits / trials.length;
+                    const upperPct = upperHits / trials.length;
+                    // Temporal trend: split into halves and check if recent has more boundary hits
+                    const half = Math.floor(vals.length / 2);
+                    const earlyLower = vals.slice(0, half).filter(v => v <= s.lower! + margin).length / Math.max(half, 1);
+                    const lateLower = vals.slice(half).filter(v => v <= s.lower! + margin).length / Math.max(vals.length - half, 1);
+                    const earlyUpper = vals.slice(0, half).filter(v => v >= s.upper! - margin).length / Math.max(half, 1);
+                    const lateUpper = vals.slice(half).filter(v => v >= s.upper! - margin).length / Math.max(vals.length - half, 1);
+                    return { name: s.name, lowerPct, upperPct, total: lowerPct + upperPct, lowerTrend: lateLower - earlyLower, upperTrend: lateUpper - earlyUpper };
+                  })
+                  .filter((d: { total: number }) => d.total > 0)
+                  .sort((a: { total: number }, b: { total: number }) => b.total - a.total);
+
+                if (bsData.length === 0) return null;
+
+                type BsItem = { name: string; lowerPct: number; upperPct: number; total: number; lowerTrend: number; upperTrend: number };
+                const bsTyped = bsData as BsItem[];
+                const W = 380, rowH = 28, padL = 90, padR = 16, padT = 24, padB = 8;
+                const barW = W - padL - padR;
+                const H = padT + bsTyped.length * rowH + padB;
+                const maxPct = Math.max(...bsTyped.map(d => Math.max(d.lowerPct, d.upperPct)), 0.05);
+
+                const satColor = (pct: number) => {
+                  if (pct > 0.2) return "rgba(239,68,68,0.7)";
+                  if (pct > 0.1) return "rgba(234,179,8,0.6)";
+                  if (pct > 0) return "rgba(59,130,246,0.4)";
+                  return "transparent";
+                };
+
+                const warningCount = bsTyped.filter(d => d.lowerPct > 0.15 || d.upperPct > 0.15).length;
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <AlertTriangle size={16} style={{ color: warningCount > 0 ? "var(--color-yellow)" : "var(--color-text-muted)" }} />
+                        <h2 style={{ margin: 0 }}>Boundary Saturation</h2>
+                      </div>
+                      {warningCount > 0 && (
+                        <span className="findings-badge" style={{ background: "var(--color-yellow-bg)", color: "var(--color-yellow)" }}>
+                          {warningCount} param{warningCount > 1 ? "s" : ""} at bounds
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      How often trials land near parameter boundaries. High saturation suggests expanding the search range.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Column headers */}
+                      <text x={padL + barW * 0.25} y={14} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">Lower</text>
+                      <text x={padL + barW * 0.75} y={14} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">Upper</text>
+                      {bsTyped.map((d, i) => {
+                        const y = padT + i * rowH;
+                        const lBarW = (d.lowerPct / maxPct) * (barW / 2 - 8);
+                        const uBarW = (d.upperPct / maxPct) * (barW / 2 - 8);
+                        return (
+                          <Fragment key={d.name}>
+                            {/* Param label */}
+                            <text x={padL - 6} y={y + rowH / 2 + 3} textAnchor="end" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text-primary)" style={{ fontWeight: 500 }}>
+                              {d.name.length > 10 ? d.name.slice(0, 10) + "…" : d.name}
+                            </text>
+                            {/* Lower bar */}
+                            <rect x={padL} y={y + 4} width={Math.max(lBarW, 0)} height={rowH - 8} rx="3" fill={satColor(d.lowerPct)} />
+                            {d.lowerPct > 0 && (
+                              <text x={padL + lBarW + 4} y={y + rowH / 2 + 3} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                                {(d.lowerPct * 100).toFixed(0)}%{d.lowerTrend > 0.05 ? " ↑" : d.lowerTrend < -0.05 ? " ↓" : ""}
+                              </text>
+                            )}
+                            {/* Divider */}
+                            <line x1={padL + barW / 2} y1={y + 2} x2={padL + barW / 2} y2={y + rowH - 2} stroke="var(--color-border)" strokeWidth="0.5" />
+                            {/* Upper bar */}
+                            <rect x={padL + barW / 2 + 4} y={y + 4} width={Math.max(uBarW, 0)} height={rowH - 8} rx="3" fill={satColor(d.upperPct)} />
+                            {d.upperPct > 0 && (
+                              <text x={padL + barW / 2 + 4 + uBarW + 4} y={y + rowH / 2 + 3} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                                {(d.upperPct * 100).toFixed(0)}%{d.upperTrend > 0.05 ? " ↑" : d.upperTrend < -0.05 ? " ↓" : ""}
+                              </text>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </svg>
                   </div>
                 );
               })()}
@@ -3628,6 +3813,81 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* EI Decomposition View */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const objVals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                const bestSoFar = Math.min(...objVals);
+                const meanObj = objVals.reduce((a, b) => a + b, 0) / objVals.length;
+                const stdObj = Math.sqrt(objVals.reduce((a, v) => a + (v - meanObj) ** 2, 0) / objVals.length) || 1;
+
+                // For each suggestion, estimate exploitation (predicted improvement) and exploration (novelty/uncertainty)
+                const eiData = suggestions.suggestions.map((sug, idx) => {
+                  const params = Object.values(sug).map(Number);
+                  // Exploitation: predicted improvement based on nearest neighbor interpolation
+                  let minDist = Infinity;
+                  let nearestVal = meanObj;
+                  for (const t of trials) {
+                    const tParams = Object.values(t.parameters).map(Number);
+                    const dist = Math.sqrt(tParams.reduce((sum, v, i) => sum + (v - (params[i] || 0)) ** 2, 0));
+                    if (dist < minDist) { minDist = dist; nearestVal = Number(t.kpis[objKey]) || 0; }
+                  }
+                  const exploitation = Math.max(0, bestSoFar - nearestVal + stdObj * 0.3) / (stdObj * 2);
+                  // Exploration: average distance to all trials (normalized)
+                  const avgDist = trials.reduce((sum, t) => {
+                    const tParams = Object.values(t.parameters).map(Number);
+                    return sum + Math.sqrt(tParams.reduce((s, v, i) => s + (v - (params[i] || 0)) ** 2, 0));
+                  }, 0) / trials.length;
+                  const maxPossibleDist = stdObj * Math.sqrt(params.length) * 3;
+                  const exploration = Math.min(avgDist / (maxPossibleDist || 1), 1);
+                  return { idx: idx + 1, exploitation: Math.min(exploitation, 1), exploration: Math.min(exploration, 1), total: exploitation + exploration };
+                });
+
+                const maxTotal = Math.max(...eiData.map(d => d.total), 0.01);
+                const barH = 18, gap = 6;
+                const W = 380, padL = 42, padR = 16;
+                const barW = W - padL - padR;
+                const H = eiData.length * (barH + gap) + 40;
+
+                return (
+                  <div className="card" style={{ marginBottom: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                      <BarChart2 size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Acquisition Decomposition</h2>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Each suggestion's acquisition value split into exploitation (predicted improvement) and exploration (uncertainty/novelty).
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {eiData.map((d, i) => {
+                        const y = 24 + i * (barH + gap);
+                        const exploitW = (d.exploitation / maxTotal) * barW;
+                        const exploreW = (d.exploration / maxTotal) * barW;
+                        return (
+                          <Fragment key={i}>
+                            <text x={padL - 6} y={y + barH / 2 + 3} textAnchor="end" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                              #{d.idx}
+                            </text>
+                            {/* Exploitation bar */}
+                            <rect x={padL} y={y} width={Math.max(exploitW, 1)} height={barH} rx="3" fill="rgba(34,197,94,0.55)" />
+                            {/* Exploration bar */}
+                            <rect x={padL + exploitW} y={y} width={Math.max(exploreW, 1)} height={barH} rx="3" fill="rgba(59,130,246,0.5)" />
+                            {/* Value label */}
+                            <text x={padL + exploitW + exploreW + 4} y={y + barH / 2 + 3} fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                              {d.total.toFixed(2)}
+                            </text>
+                          </Fragment>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(34,197,94,0.55)", marginRight: 4, verticalAlign: "middle" }} />Exploitation</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(59,130,246,0.5)", marginRight: 4, verticalAlign: "middle" }} />Exploration</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -4147,6 +4407,103 @@ export default function Workspace() {
                             n={cs.count} · best={cs.bestObj.toFixed(4)} · avg={cs.meanObj.toFixed(4)}
                           </span>
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Fidelity-Aware Trial Timeline */}
+              {trials.length >= 8 && (() => {
+                const ftObjKey = Object.keys(trials[0].kpis)[0];
+                const ftObjVals = trials.map(t => Number(t.kpis[ftObjKey]) || 0);
+                const ftMinObj = Math.min(...ftObjVals), ftMaxObj = Math.max(...ftObjVals);
+                const ftObjRange = ftMaxObj - ftMinObj || 1;
+                // Infer fidelity from trial position and objective variance
+                // Heuristic: early trials = low fidelity (exploration), mid = medium, late = high (exploitation)
+                const ftTiers = trials.map((_t, i) => {
+                  if (i < trials.length * 0.3) return "low";
+                  if (i < trials.length * 0.7) return "medium";
+                  return "high";
+                });
+
+                const tierConfig: Record<string, { color: string; label: string; order: number }> = {
+                  low: { color: "rgba(147,197,253,0.7)", label: "Low Fidelity", order: 0 },
+                  medium: { color: "rgba(59,130,246,0.7)", label: "Medium Fidelity", order: 1 },
+                  high: { color: "rgba(30,64,175,0.85)", label: "High Fidelity", order: 2 },
+                };
+
+                const W = 420, H = 200, padL = 52, padR = 16, padT = 28, padB = 32;
+                const plotW = W - padL - padR, plotH = H - padT - padB;
+                const n = trials.length;
+
+                const ftToX = (i: number) => padL + (i / Math.max(n - 1, 1)) * plotW;
+                const ftToY = (v: number) => padT + (1 - (v - ftMinObj) / ftObjRange) * plotH;
+
+                // Running best line
+                let ftRunBest = ftObjVals[0];
+                const ftBestLine = ftObjVals.map(v => { ftRunBest = Math.min(ftRunBest, v); return ftRunBest; });
+                const ftBestPath = ftBestLine.map((v, i) => `${i === 0 ? "M" : "L"}${ftToX(i).toFixed(1)},${ftToY(v).toFixed(1)}`).join(" ");
+
+                const tierCounts = Object.entries(tierConfig).map(([k, cfg]) => ({
+                  ...cfg, key: k, count: ftTiers.filter(t => t === k).length,
+                })).filter(tc => tc.count > 0).sort((a, b) => a.order - b.order);
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <Layers size={16} style={{ color: "var(--color-primary)" }} />
+                        <h2 style={{ margin: 0 }}>Fidelity Timeline</h2>
+                      </div>
+                      <span style={{ fontSize: "0.75rem", fontFamily: "var(--font-mono)", color: "var(--color-text-muted)" }}>
+                        {tierCounts.map(tc => `${tc.count} ${tc.key}`).join(" · ")}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Trial performance colored by inferred fidelity level. Bold line tracks the running best.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Grid */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                        <Fragment key={f}>
+                          <line x1={padL} y1={padT + (1 - f) * plotH} x2={padL + plotW} y2={padT + (1 - f) * plotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="2,3" />
+                          <text x={padL - 6} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                            {(ftMinObj + f * ftObjRange).toFixed(2)}
+                          </text>
+                        </Fragment>
+                      ))}
+                      {/* X-axis */}
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)">Trial Index</text>
+                      {/* Running best line */}
+                      <path d={ftBestPath} fill="none" stroke="var(--color-primary)" strokeWidth="1.5" strokeDasharray="4,2" opacity="0.5" />
+                      {/* Data points */}
+                      {trials.map((t, i) => {
+                        const tier = ftTiers[i];
+                        const cfg = tierConfig[tier] || tierConfig.medium;
+                        return (
+                          <circle
+                            key={i}
+                            cx={ftToX(i)}
+                            cy={ftToY(ftObjVals[i])}
+                            r={tier === "high" ? 4 : tier === "medium" ? 3.5 : 3}
+                            fill={cfg.color}
+                            stroke="white"
+                            strokeWidth="0.5"
+                            opacity="0.85"
+                          >
+                            <title>Trial #{t.iteration}: {ftObjKey}={ftObjVals[i].toFixed(4)} ({tier} fidelity)</title>
+                          </circle>
+                        );
+                      })}
+                    </svg>
+                    {/* Legend */}
+                    <div style={{ display: "flex", gap: "14px", marginTop: "4px" }}>
+                      {tierCounts.map(tc => (
+                        <span key={tc.key} className="efficiency-legend-item">
+                          <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: tc.color, marginRight: 4, verticalAlign: "middle" }} />
+                          {tc.label}
+                        </span>
                       ))}
                     </div>
                   </div>
