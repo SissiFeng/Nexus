@@ -2120,6 +2120,83 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Dominated Region / Best-so-far Area */}
+              {trials.length >= 10 && (() => {
+                const drObjKey = Object.keys(trials[0].kpis)[0];
+                const drVals = trials.map(t => Number(t.kpis[drObjKey]) || 0);
+                let drBest = drVals[0];
+                const drBestLine = drVals.map(v => { drBest = Math.min(drBest, v); return drBest; });
+                const drMin = Math.min(...drVals), drMax = Math.max(...drVals);
+                const drRange = drMax - drMin || 1;
+
+                const W = 400, H = 160, padL = 52, padR = 16, padT = 24, padB = 28;
+                const plotW = W - padL - padR, plotH = H - padT - padB;
+                const n = drVals.length;
+                const toX = (i: number) => padL + (i / (n - 1)) * plotW;
+                const toY = (v: number) => padT + (1 - (v - drMin) / drRange) * plotH;
+
+                // Best-so-far line path
+                const bsfPath = drBestLine.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ");
+                // Area under best-so-far (dominated region)
+                const areaPath = `${bsfPath} L${toX(n - 1).toFixed(1)},${(padT + plotH).toFixed(1)} L${padL},${(padT + plotH).toFixed(1)} Z`;
+
+                // Dominated area ratio (how much of the objective range is dominated)
+                const dominatedPct = drRange > 0 ? ((drMax - drBestLine[n - 1]) / drRange * 100) : 0;
+
+                // Milestones: when best improved
+                const milestones: { idx: number; val: number }[] = [];
+                for (let i = 1; i < n; i++) {
+                  if (drBestLine[i] < drBestLine[i - 1]) milestones.push({ idx: i, val: drBestLine[i] });
+                }
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <Flag size={16} style={{ color: "var(--color-primary)" }} />
+                        <h2 style={{ margin: 0 }}>Dominated Region</h2>
+                      </div>
+                      <span className="findings-badge" style={{ background: "var(--color-green-bg)", color: "var(--color-green)" }}>
+                        {dominatedPct.toFixed(0)}% dominated
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Shaded area shows the dominated region below worst outcome. More shading = more progress.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Y-axis */}
+                      {[0, 0.5, 1].map(f => (
+                        <Fragment key={f}>
+                          <line x1={padL} y1={padT + (1 - f) * plotH} x2={padL + plotW} y2={padT + (1 - f) * plotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="2,3" />
+                          <text x={padL - 6} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                            {(drMin + f * drRange).toFixed(3)}
+                          </text>
+                        </Fragment>
+                      ))}
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)">Trials</text>
+                      {/* Dominated area fill */}
+                      <path d={areaPath} fill="var(--color-primary)" opacity="0.12" />
+                      {/* Best-so-far line */}
+                      <path d={bsfPath} fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" />
+                      {/* Trial dots */}
+                      {drVals.map((v, i) => (
+                        <circle key={i} cx={toX(i)} cy={toY(v)} r="1.5" fill="var(--color-text-muted)" opacity="0.3" />
+                      ))}
+                      {/* Milestone markers */}
+                      {milestones.slice(-5).map((m, i) => (
+                        <Fragment key={i}>
+                          <circle cx={toX(m.idx)} cy={toY(m.val)} r="3.5" fill="var(--color-primary)" stroke="white" strokeWidth="1" />
+                        </Fragment>
+                      ))}
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                      <span>{milestones.length} improvement{milestones.length !== 1 ? "s" : ""}</span>
+                      <span>Best at trial #{milestones.length > 0 ? milestones[milestones.length - 1].idx : 0}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -2378,6 +2455,166 @@ export default function Workspace() {
                         );
                       })}
                     </svg>
+                  </div>
+                );
+              })()}
+
+              {/* Local Optima Basin Map */}
+              {trials.length >= 12 && (() => {
+                const loSpecs = campaign.spec?.parameters || [];
+                const loContSpecs = loSpecs.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (loContSpecs.length < 2) return null;
+                // Pick top 2 parameters by variance
+                const loParamVars = loContSpecs.map((s: { name: string; lower?: number; upper?: number }) => {
+                  const vals = trials.map(t => Number(t.parameters[s.name]) || 0);
+                  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+                  const variance = vals.reduce((a, v) => a + (v - mean) ** 2, 0) / vals.length;
+                  return { ...s, variance };
+                }).sort((a: { variance: number }, b: { variance: number }) => b.variance - a.variance);
+                const loP1 = loParamVars[0] as { name: string; lower: number; upper: number };
+                const loP2 = loParamVars[1] as { name: string; lower: number; upper: number };
+                const loObjKey = Object.keys(trials[0].kpis)[0];
+                const loObjVals = trials.map(t => Number(t.kpis[loObjKey]) || 0);
+                const loMin = Math.min(...loObjVals);
+                const loMax = Math.max(...loObjVals);
+                const loRange = loMax - loMin || 1;
+
+                // Grid-based landscape approximation using IDW interpolation
+                const loW = 320, loH = 220, loPad = 40;
+                const plotW = loW - 2 * loPad, plotH = loH - 2 * loPad;
+                const gridN = 16;
+                const loTrialPts = trials.map((t, i) => ({
+                  x: (Number(t.parameters[loP1.name]) - loP1.lower) / (loP1.upper - loP1.lower),
+                  y: (Number(t.parameters[loP2.name]) - loP2.lower) / (loP2.upper - loP2.lower),
+                  z: loObjVals[i],
+                }));
+
+                // IDW interpolation on grid
+                const loGrid: number[][] = [];
+                for (let gy = 0; gy < gridN; gy++) {
+                  loGrid[gy] = [];
+                  for (let gx = 0; gx < gridN; gx++) {
+                    const px = (gx + 0.5) / gridN;
+                    const py = (gy + 0.5) / gridN;
+                    let wSum = 0, vSum = 0;
+                    for (const pt of loTrialPts) {
+                      const dist = Math.sqrt((px - pt.x) ** 2 + (py - pt.y) ** 2) + 0.001;
+                      const w = 1 / (dist * dist);
+                      wSum += w;
+                      vSum += w * pt.z;
+                    }
+                    loGrid[gy][gx] = vSum / wSum;
+                  }
+                }
+
+                // Find local minima in grid
+                const loBasins: { gx: number; gy: number; val: number }[] = [];
+                for (let gy = 1; gy < gridN - 1; gy++) {
+                  for (let gx = 1; gx < gridN - 1; gx++) {
+                    const v = loGrid[gy][gx];
+                    const neighbors = [loGrid[gy-1][gx], loGrid[gy+1][gx], loGrid[gy][gx-1], loGrid[gy][gx+1]];
+                    if (neighbors.every(n => v <= n)) {
+                      loBasins.push({ gx, gy, val: v });
+                    }
+                  }
+                }
+                loBasins.sort((a, b) => a.val - b.val);
+                const topBasins = loBasins.slice(0, 5);
+
+                // Color function: blue (good) to red (bad)
+                const loColor = (v: number) => {
+                  const t = loRange > 0 ? (v - loMin) / loRange : 0.5;
+                  const r = Math.round(59 + t * 196);
+                  const g = Math.round(130 - t * 80);
+                  const b = Math.round(246 - t * 196);
+                  return `rgb(${r},${g},${b})`;
+                };
+
+                const cellW = plotW / gridN;
+                const cellH = plotH / gridN;
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Layers size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Local Optima Basin Map</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          IDW-interpolated landscape showing {loP1.name} vs {loP2.name}. Cooler = better.
+                        </p>
+                      </div>
+                      {topBasins.length > 0 && (
+                        <span className="findings-badge" style={{ marginLeft: "auto" }}>
+                          {topBasins.length} basin{topBasins.length !== 1 ? "s" : ""} found
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={loW} height={loH} viewBox={`0 0 ${loW} ${loH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Heatmap cells */}
+                        {loGrid.flatMap((row, gy) =>
+                          row.map((v, gx) => (
+                            <rect
+                              key={`${gy}-${gx}`}
+                              x={loPad + gx * cellW}
+                              y={loPad + gy * cellH}
+                              width={cellW + 0.5}
+                              height={cellH + 0.5}
+                              fill={loColor(v)}
+                              opacity={0.75}
+                            />
+                          ))
+                        )}
+                        {/* Trial points */}
+                        {loTrialPts.map((pt, i) => (
+                          <circle
+                            key={i}
+                            cx={loPad + pt.x * plotW}
+                            cy={loPad + pt.y * plotH}
+                            r={3}
+                            fill="none"
+                            stroke="rgba(255,255,255,0.7)"
+                            strokeWidth={1}
+                          />
+                        ))}
+                        {/* Basin markers */}
+                        {topBasins.map((b, i) => {
+                          const bx = loPad + (b.gx + 0.5) / gridN * plotW;
+                          const by = loPad + (b.gy + 0.5) / gridN * plotH;
+                          return (
+                            <g key={i}>
+                              <circle cx={bx} cy={by} r={8} fill="none" stroke="#fff" strokeWidth={2} strokeDasharray="3,2" />
+                              <text x={bx} y={by + 4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#fff">
+                                {i + 1}
+                              </text>
+                            </g>
+                          );
+                        })}
+                        {/* Axes labels */}
+                        <text x={loPad + plotW / 2} y={loH - 4} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                          {loP1.name}
+                        </text>
+                        <text x={10} y={loPad + plotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" transform={`rotate(-90,10,${loPad + plotH / 2})`}>
+                          {loP2.name}
+                        </text>
+                        {/* Axis ticks */}
+                        {[0, 0.5, 1].map(f => (
+                          <g key={f}>
+                            <text x={loPad + f * plotW} y={loPad + plotH + 14} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                              {(loP1.lower + f * (loP1.upper - loP1.lower)).toPrecision(3)}
+                            </text>
+                            <text x={loPad - 4} y={loPad + (1 - f) * plotH + 3} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                              {(loP2.lower + f * (loP2.upper - loP2.lower)).toPrecision(3)}
+                            </text>
+                          </g>
+                        ))}
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "6px", flexWrap: "wrap" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(59,130,246)", marginRight: 4, verticalAlign: "middle" }} />Better (lower)</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(255,50,50)", marginRight: 4, verticalAlign: "middle" }} />Worse (higher)</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", border: "2px dashed #fff", marginRight: 4, verticalAlign: "middle" }} />Basin center</span>
+                    </div>
                   </div>
                 );
               })()}
@@ -3888,6 +4125,142 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Surrogate Calibration Scatter */}
+              {suggestions && suggestions.predicted_values && trials.length >= 8 && (() => {
+                // Compare predicted vs actual for past trials via leave-one-out style
+                // Use last N trials as "test" points: compare actual to nearest-neighbor predicted
+                const scObjKey = Object.keys(trials[0].kpis)[0];
+                const scN = Math.min(trials.length, 40);
+                const scTrials = trials.slice(-scN);
+                const scActual = scTrials.map(t => Number(t.kpis[scObjKey]) || 0);
+                // Approximate predictions using LOO nearest-neighbor from remaining trials
+                const scPredicted = scTrials.map((t, idx) => {
+                  const others = trials.filter((_, j) => j !== trials.length - scN + idx);
+                  if (others.length === 0) return scActual[idx];
+                  const pKeys = Object.keys(t.parameters);
+                  let bestDist = Infinity, bestVal = scActual[idx];
+                  for (const o of others) {
+                    let dist = 0;
+                    for (const k of pKeys) {
+                      const diff = (Number(t.parameters[k]) || 0) - (Number(o.parameters[k]) || 0);
+                      dist += diff * diff;
+                    }
+                    if (dist < bestDist) {
+                      bestDist = dist;
+                      bestVal = Number(o.kpis[scObjKey]) || 0;
+                    }
+                  }
+                  return bestVal;
+                });
+
+                const allVals = [...scActual, ...scPredicted];
+                const scMin = Math.min(...allVals);
+                const scMax = Math.max(...allVals);
+                const scRange = scMax - scMin || 1;
+                const scW = 280, scH = 260, scPadL = 48, scPadR = 16, scPadT = 16, scPadB = 36;
+                const scPlotW = scW - scPadL - scPadR;
+                const scPlotH = scH - scPadT - scPadB;
+                const toSX = (v: number) => scPadL + ((v - scMin) / scRange) * scPlotW;
+                const toSY = (v: number) => scPadT + scPlotH - ((v - scMin) / scRange) * scPlotH;
+
+                // R² calculation
+                const meanActual = scActual.reduce((a, b) => a + b, 0) / scActual.length;
+                const ssTot = scActual.reduce((s, v) => s + (v - meanActual) ** 2, 0);
+                const ssRes = scActual.reduce((s, v, i) => s + (v - scPredicted[i]) ** 2, 0);
+                const r2 = ssTot > 0 ? 1 - ssRes / ssTot : 0;
+
+                // RMSE
+                const rmse = Math.sqrt(ssRes / scActual.length);
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <BarChart2 size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Surrogate Calibration</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Predicted vs actual comparison for last {scN} trials (LOO nearest-neighbor).
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto" }}>
+                        R² = {r2.toFixed(3)}
+                      </span>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={scW} height={scH} viewBox={`0 0 ${scW} ${scH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Grid lines */}
+                        {[0, 0.25, 0.5, 0.75, 1].map(f => {
+                          const v = scMin + f * scRange;
+                          return (
+                            <g key={f}>
+                              <line x1={toSX(v)} y1={scPadT} x2={toSX(v)} y2={scPadT + scPlotH} stroke="var(--color-border)" strokeWidth={0.5} />
+                              <line x1={scPadL} y1={toSY(v)} x2={scPadL + scPlotW} y2={toSY(v)} stroke="var(--color-border)" strokeWidth={0.5} />
+                            </g>
+                          );
+                        })}
+                        {/* Perfect calibration line */}
+                        <line
+                          x1={toSX(scMin)} y1={toSY(scMin)}
+                          x2={toSX(scMax)} y2={toSY(scMax)}
+                          stroke="var(--color-text-muted)"
+                          strokeWidth={1.5}
+                          strokeDasharray="6,3"
+                          opacity={0.5}
+                        />
+                        {/* Data points */}
+                        {scActual.map((actual, i) => {
+                          const pred = scPredicted[i];
+                          const error = Math.abs(actual - pred) / scRange;
+                          const pointColor = error < 0.1 ? "rgba(34,197,94,0.7)" : error < 0.25 ? "rgba(234,179,8,0.7)" : "rgba(239,68,68,0.7)";
+                          return (
+                            <circle
+                              key={i}
+                              cx={toSX(pred)}
+                              cy={toSY(actual)}
+                              r={4}
+                              fill={pointColor}
+                              stroke="rgba(255,255,255,0.4)"
+                              strokeWidth={0.5}
+                            >
+                              <title>Trial {scN - scActual.length + i + 1}: pred={pred.toPrecision(4)}, actual={actual.toPrecision(4)}</title>
+                            </circle>
+                          );
+                        })}
+                        {/* Axes */}
+                        <text x={scPadL + scPlotW / 2} y={scH - 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                          Predicted
+                        </text>
+                        <text x={10} y={scPadT + scPlotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" transform={`rotate(-90,10,${scPadT + scPlotH / 2})`}>
+                          Actual
+                        </text>
+                        {/* Axis tick labels */}
+                        {[0, 0.5, 1].map(f => {
+                          const v = scMin + f * scRange;
+                          return (
+                            <g key={f}>
+                              <text x={toSX(v)} y={scPadT + scPlotH + 14} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                                {v.toPrecision(3)}
+                              </text>
+                              <text x={scPadL - 4} y={toSY(v) + 3} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                                {v.toPrecision(3)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(34,197,94,0.7)", marginRight: 4, verticalAlign: "middle" }} />&lt;10% error</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(234,179,8,0.7)", marginRight: 4, verticalAlign: "middle" }} />10-25% error</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(239,68,68,0.7)", marginRight: 4, verticalAlign: "middle" }} />&gt;25% error</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.78rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                        RMSE: {rmse.toPrecision(3)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -4505,6 +4878,126 @@ export default function Workspace() {
                           {tc.label}
                         </span>
                       ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Trial Diversity Timeline */}
+              {trials.length >= 10 && (() => {
+                // Measure pairwise diversity over sliding windows
+                const tdObjKey = Object.keys(trials[0].kpis)[0];
+                const pKeys = Object.keys(trials[0].parameters);
+                const windowSize = Math.max(3, Math.floor(trials.length / 8));
+                const tdWindows: { start: number; end: number; diversity: number; meanObj: number }[] = [];
+
+                // Normalize parameter values for distance calculation
+                const tdParamRanges = pKeys.map(k => {
+                  const vals = trials.map(t => Number(t.parameters[k]) || 0);
+                  const min = Math.min(...vals);
+                  const max = Math.max(...vals);
+                  return { k, min, range: max - min || 1 };
+                });
+
+                for (let i = 0; i <= trials.length - windowSize; i += Math.max(1, Math.floor(windowSize / 2))) {
+                  const windowTrials = trials.slice(i, i + windowSize);
+                  // Average pairwise distance (normalized)
+                  let totalDist = 0, pairs = 0;
+                  for (let a = 0; a < windowTrials.length; a++) {
+                    for (let b = a + 1; b < windowTrials.length; b++) {
+                      let dist = 0;
+                      for (const pr of tdParamRanges) {
+                        const diff = ((Number(windowTrials[a].parameters[pr.k]) || 0) - (Number(windowTrials[b].parameters[pr.k]) || 0)) / pr.range;
+                        dist += diff * diff;
+                      }
+                      totalDist += Math.sqrt(dist / pKeys.length);
+                      pairs++;
+                    }
+                  }
+                  const diversity = pairs > 0 ? totalDist / pairs : 0;
+                  const meanObj = windowTrials.reduce((s, t) => s + (Number(t.kpis[tdObjKey]) || 0), 0) / windowTrials.length;
+                  tdWindows.push({ start: i, end: i + windowSize - 1, diversity, meanObj });
+                }
+
+                if (tdWindows.length < 3) return null;
+
+                const tdW = 440, tdH = 140, tdPadL = 44, tdPadR = 16, tdPadT = 16, tdPadB = 28;
+                const tdPlotW = tdW - tdPadL - tdPadR;
+                const tdPlotH = tdH - tdPadT - tdPadB;
+                const tdDivs = tdWindows.map(w => w.diversity);
+                const tdMaxDiv = Math.max(...tdDivs);
+                const tdMinDiv = Math.min(...tdDivs);
+                const tdDivRange = tdMaxDiv - tdMinDiv || 1;
+
+                const toTdX = (i: number) => tdPadL + (i / (tdWindows.length - 1)) * tdPlotW;
+                const toTdY = (d: number) => tdPadT + tdPlotH - ((d - tdMinDiv) / tdDivRange) * tdPlotH;
+
+                const tdLinePath = tdWindows.map((w, i) => `${i === 0 ? "M" : "L"}${toTdX(i).toFixed(1)},${toTdY(w.diversity).toFixed(1)}`).join(" ");
+                const tdAreaPath = `${tdLinePath} L${toTdX(tdWindows.length - 1)},${tdPadT + tdPlotH} L${tdPadL},${tdPadT + tdPlotH} Z`;
+
+                // Detect exploration vs exploitation phases
+                const tdMidDiv = (tdMaxDiv + tdMinDiv) / 2;
+                const explorationPct = (tdWindows.filter(w => w.diversity > tdMidDiv).length / tdWindows.length * 100);
+
+                // Trend: compare first vs last third
+                const thirdN = Math.max(1, Math.floor(tdWindows.length / 3));
+                const earlyDiv = tdWindows.slice(0, thirdN).reduce((s, w) => s + w.diversity, 0) / thirdN;
+                const lateDiv = tdWindows.slice(-thirdN).reduce((s, w) => s + w.diversity, 0) / thirdN;
+                const divTrend = lateDiv > earlyDiv * 1.05 ? "expanding" : lateDiv < earlyDiv * 0.95 ? "contracting" : "stable";
+                const divTrendColor = divTrend === "expanding" ? "var(--color-blue)" : divTrend === "contracting" ? "rgba(234,179,8,0.8)" : "var(--color-text-muted)";
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Layers size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Trial Diversity Timeline</h2>
+                        <p className="stat-label" style={{ margin: 0, textTransform: "none" }}>
+                          Pairwise parameter diversity across sliding windows of {windowSize} trials.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto", color: divTrendColor, borderColor: divTrendColor }}>
+                        {divTrend === "expanding" ? "↑" : divTrend === "contracting" ? "↓" : "→"} {divTrend}
+                      </span>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={tdW} height={tdH} viewBox={`0 0 ${tdW} ${tdH}`} style={{ display: "block", margin: "0 auto" }}>
+                        {/* Grid */}
+                        {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                          <line key={f} x1={tdPadL} y1={tdPadT + (1 - f) * tdPlotH} x2={tdPadL + tdPlotW} y2={tdPadT + (1 - f) * tdPlotH} stroke="var(--color-border)" strokeWidth={0.5} />
+                        ))}
+                        {/* Area fill */}
+                        <path d={tdAreaPath} fill="rgba(99,102,241,0.12)" />
+                        {/* Line */}
+                        <path d={tdLinePath} fill="none" stroke="rgba(99,102,241,0.7)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                        {/* Midline (exploration threshold) */}
+                        <line x1={tdPadL} y1={toTdY(tdMidDiv)} x2={tdPadL + tdPlotW} y2={toTdY(tdMidDiv)} stroke="var(--color-text-muted)" strokeWidth={0.8} strokeDasharray="4,3" opacity={0.4} />
+                        <text x={tdPadL + tdPlotW + 2} y={toTdY(tdMidDiv) + 3} fontSize="7" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">mid</text>
+                        {/* Window dots */}
+                        {tdWindows.map((w, i) => (
+                          <circle key={i} cx={toTdX(i)} cy={toTdY(w.diversity)} r={2.5} fill={w.diversity > tdMidDiv ? "rgba(99,102,241,0.8)" : "rgba(234,179,8,0.7)"} />
+                        ))}
+                        {/* Axis labels */}
+                        <text x={tdPadL + tdPlotW / 2} y={tdH - 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                          Window
+                        </text>
+                        <text x={8} y={tdPadT + tdPlotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" fontFamily="var(--font-mono)" transform={`rotate(-90,8,${tdPadT + tdPlotH / 2})`}>
+                          Diversity
+                        </text>
+                        {/* Y-axis ticks */}
+                        {[0, 0.5, 1].map(f => (
+                          <text key={f} x={tdPadL - 4} y={tdPadT + (1 - f) * tdPlotH + 3} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                            {(tdMinDiv + f * tdDivRange).toFixed(2)}
+                          </text>
+                        ))}
+                      </svg>
+                    </div>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(99,102,241,0.8)", marginRight: 4, verticalAlign: "middle" }} />Exploring</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "rgba(234,179,8,0.7)", marginRight: 4, verticalAlign: "middle" }} />Exploiting</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.78rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                        {explorationPct.toFixed(0)}% exploring windows
+                      </span>
                     </div>
                   </div>
                 );
