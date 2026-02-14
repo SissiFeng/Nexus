@@ -107,6 +107,10 @@ import {
   ShieldAlert,
   Fingerprint,
   BrainCircuit,
+  Locate,
+  Mountain,
+  LineChart,
+  Workflow,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3456,6 +3460,78 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Search Concentration — Batch 21 */}
+              {trials.length >= 8 && (() => {
+                const scSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (scSpecs.length < 2) return null;
+                const scSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const scParams = scSpecs.slice(0, 2);
+                const scN = 8;
+                // Build density grid: count trials per cell
+                const scGrid: number[][] = Array.from({ length: scN }, () => Array(scN).fill(0));
+                scSorted.forEach(t => {
+                  const xSpec = scParams[0];
+                  const ySpec = scParams[1];
+                  const xv = t.parameters[xSpec.name];
+                  const yv = t.parameters[ySpec.name];
+                  if (xv == null || yv == null) return;
+                  const xi = Math.min(scN - 1, Math.max(0, Math.floor(((xv - xSpec.lower!) / (xSpec.upper! - xSpec.lower!)) * scN)));
+                  const yi = Math.min(scN - 1, Math.max(0, Math.floor(((yv - ySpec.lower!) / (ySpec.upper! - ySpec.lower!)) * scN)));
+                  scGrid[yi][xi]++;
+                });
+                const scMax = Math.max(1, ...scGrid.flat());
+                // Compute Gini coefficient for concentration
+                const scFlat = scGrid.flat().sort((a, b) => a - b);
+                const scTotal = scFlat.reduce((s, v) => s + v, 0);
+                let scGiniNum = 0;
+                scFlat.forEach((v, i) => { scGiniNum += (2 * (i + 1) - scFlat.length - 1) * v; });
+                const scGini = scTotal > 0 ? scGiniNum / (scFlat.length * scTotal) : 0;
+                // Fraction of cells with zero trials
+                const scEmptyFrac = scFlat.filter(v => v === 0).length / scFlat.length;
+                const scBadge = scGini < 0.3 ? "Well Spread" : scGini < 0.55 ? "Moderate" : "Concentrated";
+                const scBadgeColor = scGini < 0.3 ? "var(--color-green, #22c55e)" : scGini < 0.55 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const scCellSize = 22;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Locate size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Search Concentration</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: scBadgeColor + "18", color: scBadgeColor }}>{scBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                      <svg width={scCellSize * scN + 2} height={scCellSize * scN + 2} style={{ flexShrink: 0 }}>
+                        {scGrid.map((row, yi) => row.map((count, xi) => {
+                          const norm = count / scMax;
+                          const r = Math.round(240 - norm * 180);
+                          const g = Math.round(240 - norm * 60);
+                          const b = Math.round(240 - norm * 180);
+                          return (
+                            <rect key={`sc-${yi}-${xi}`} x={xi * scCellSize + 1} y={yi * scCellSize + 1} width={scCellSize - 1} height={scCellSize - 1} rx={2} fill={count === 0 ? "var(--color-bg-secondary, #f8f9fa)" : `rgb(${r},${g},${b})`} stroke="var(--color-border)" strokeWidth={0.3}>
+                              <title>{scParams[0].name}[{xi}] × {scParams[1].name}[{yi}]: {count} trials</title>
+                            </rect>
+                          );
+                        }))}
+                      </svg>
+                      <div style={{ flex: 1, fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                        <div style={{ marginBottom: "6px" }}>
+                          <span style={{ fontWeight: 600, color: "var(--color-text)" }}>Gini: {scGini.toFixed(2)}</span>
+                          <span style={{ marginLeft: "8px" }}>(0 = uniform, 1 = all in one cell)</span>
+                        </div>
+                        <div style={{ marginBottom: "4px" }}>Empty cells: {(scEmptyFrac * 100).toFixed(0)}% of grid</div>
+                        <div style={{ marginBottom: "4px" }}>Peak density: {scMax} trials in hottest cell</div>
+                        <div style={{ fontSize: "0.73rem", fontStyle: "italic", marginTop: "6px" }}>
+                          {scGini > 0.55 ? "Search is concentrated in a few regions — consider increasing exploration." : scGini > 0.3 ? "Moderate spread — some regions under-explored." : "Good coverage across the search space."}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>{scParams[0].name} →</span>
+                      <span>↓ {scParams[1].name}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -5148,6 +5224,96 @@ export default function Workspace() {
                       <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "rgb(240,40,40)" }} /> risky</span>
                       <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: "white", border: "1px solid var(--color-text)" }} /> trials</span>
                       <span style={{ marginLeft: "auto" }}>{erHighRisk}/{erCells.length} high-risk</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Feasibility Landscape — Batch 21 */}
+              {trials.length >= 6 && (() => {
+                const flSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (flSpecs.length < 2) return null;
+                const flSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const flParams = flSpecs.slice(0, 2);
+                const flN = 8;
+                // Each cell tracks success/failure counts
+                const flSuccess: number[][] = Array.from({ length: flN }, () => Array(flN).fill(0));
+                const flFail: number[][] = Array.from({ length: flN }, () => Array(flN).fill(0));
+                flSorted.forEach(t => {
+                  const xv = t.parameters[flParams[0].name];
+                  const yv = t.parameters[flParams[1].name];
+                  if (xv == null || yv == null) return;
+                  const xi = Math.min(flN - 1, Math.max(0, Math.floor(((xv - flParams[0].lower!) / (flParams[0].upper! - flParams[0].lower!)) * flN)));
+                  const yi = Math.min(flN - 1, Math.max(0, Math.floor(((yv - flParams[1].lower!) / (flParams[1].upper! - flParams[1].lower!)) * flN)));
+                  const kpiVal = Object.values(t.kpis)[0];
+                  if (kpiVal != null && !isNaN(kpiVal) && (t.status as string) !== "failed") {
+                    flSuccess[yi][xi]++;
+                  } else {
+                    flFail[yi][xi]++;
+                  }
+                });
+                // Feasibility score per cell = success / (success + fail), or -1 if no data
+                const flScores = flSuccess.map((row, yi) => row.map((s, xi) => {
+                  const total = s + flFail[yi][xi];
+                  return total > 0 ? s / total : -1;
+                }));
+                // Overall feasibility
+                const flCellsWithData = flScores.flat().filter(v => v >= 0);
+                const flAvgFeasibility = flCellsWithData.length > 0 ? flCellsWithData.reduce((a, b) => a + b, 0) / flCellsWithData.length : 1;
+                const flInfeasibleFrac = flCellsWithData.filter(v => v < 0.5).length / Math.max(1, flCellsWithData.length);
+                const flBadge = flInfeasibleFrac < 0.1 ? "Mostly Feasible" : flInfeasibleFrac < 0.3 ? "Some Risks" : "Many Infeasible";
+                const flBadgeColor = flInfeasibleFrac < 0.1 ? "var(--color-green, #22c55e)" : flInfeasibleFrac < 0.3 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const flCell = 22;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Mountain size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Feasibility Landscape</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: flBadgeColor + "18", color: flBadgeColor }}>{flBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                      <svg width={flCell * flN + 2} height={flCell * flN + 2} style={{ flexShrink: 0 }}>
+                        {flScores.map((row, yi) => row.map((score, xi) => {
+                          let fill: string;
+                          if (score < 0) {
+                            fill = "var(--color-bg-secondary, #f1f5f9)";
+                          } else {
+                            // Green (feasible) to Red (infeasible)
+                            const r = Math.round(34 + (1 - score) * 205);
+                            const g = Math.round(197 - (1 - score) * 130);
+                            const b = Math.round(94 - (1 - score) * 26);
+                            fill = `rgb(${r},${g},${b})`;
+                          }
+                          const total = flSuccess[yi][xi] + flFail[yi][xi];
+                          return (
+                            <rect key={`fl-${yi}-${xi}`} x={xi * flCell + 1} y={yi * flCell + 1} width={flCell - 1} height={flCell - 1} rx={2} fill={fill} stroke="var(--color-border)" strokeWidth={0.3}>
+                              <title>{flParams[0].name}[{xi}] × {flParams[1].name}[{yi}]: {score >= 0 ? `${(score * 100).toFixed(0)}% feasible (${total} trials)` : "No data"}</title>
+                            </rect>
+                          );
+                        }))}
+                      </svg>
+                      <div style={{ flex: 1, fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                        <div style={{ marginBottom: "6px" }}>
+                          <span style={{ fontWeight: 600, color: "var(--color-text)" }}>Avg Feasibility: {(flAvgFeasibility * 100).toFixed(0)}%</span>
+                        </div>
+                        <div style={{ marginBottom: "4px" }}>Risky cells: {(flInfeasibleFrac * 100).toFixed(0)}% with &lt;50% success</div>
+                        <div style={{ marginBottom: "4px" }}>Coverage: {flCellsWithData.length}/{flN * flN} cells explored</div>
+                        <div style={{ display: "flex", gap: "6px", marginTop: "8px", flexWrap: "wrap" }}>
+                          {[["#22c55e", "Feasible"], ["#ef4444", "Infeasible"], ["var(--color-bg-secondary, #f1f5f9)", "No data"]].map(([c, l]) => (
+                            <span key={l} style={{ display: "flex", alignItems: "center", gap: "3px", fontSize: "0.7rem" }}>
+                              <span style={{ width: 8, height: 8, borderRadius: 2, background: c, display: "inline-block", border: "0.5px solid var(--color-border)" }} />
+                              {l}
+                            </span>
+                          ))}
+                        </div>
+                        <div style={{ fontSize: "0.73rem", fontStyle: "italic", marginTop: "6px" }}>
+                          {flInfeasibleFrac > 0.3 ? "Many infeasible regions detected — constraints may be active." : flInfeasibleFrac > 0.1 ? "Some risky zones — watch for constraint violations." : "Largely feasible space — good for aggressive exploration."}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>{flParams[0].name} →</span>
+                      <span>↓ {flParams[1].name}</span>
                     </div>
                   </div>
                 );
@@ -7985,6 +8151,107 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Prediction Track Record — Batch 21 */}
+              {suggestions && trials.length >= 5 && (() => {
+                // Compare past suggestions' predicted values with actual outcomes
+                const ptSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (ptSpecs.length === 0) return null;
+                const ptSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // For each trial, compute how close it is to the "centroid" of previous suggestions
+                // and track the actual KPI improvement
+                const ptRecords: { iteration: number; predicted_rank: number; actual_rank: number; kpi: number }[] = [];
+                const ptKpis = ptSorted.map(t => Object.values(t.kpis)[0] ?? 0);
+                const ptBestSoFar: number[] = [];
+                let ptRunningBest = -Infinity;
+                ptKpis.forEach(k => {
+                  ptRunningBest = Math.max(ptRunningBest, k);
+                  ptBestSoFar.push(ptRunningBest);
+                });
+                // Build rank-based accuracy: for each window of 5 trials, rank by predicted vs actual KPI
+                const ptWindowSize = Math.min(5, ptSorted.length);
+                for (let i = ptWindowSize; i <= ptSorted.length - ptWindowSize; i += ptWindowSize) {
+                  const ptWindow = ptSorted.slice(i, i + ptWindowSize);
+                  const ptPrevWindow = ptSorted.slice(i - ptWindowSize, i);
+                  // "Predicted" rank: based on distance from previous best trial's params
+                  const ptBestPrev = ptPrevWindow.reduce((best, t) => (Object.values(t.kpis)[0] ?? 0) > (Object.values(best.kpis)[0] ?? 0) ? t : best, ptPrevWindow[0]);
+                  const ptDistances = ptWindow.map(t => {
+                    let d = 0;
+                    ptSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                      const range = (s.upper ?? 1) - (s.lower ?? 0);
+                      const diff = ((t.parameters[s.name] ?? 0) - (ptBestPrev.parameters[s.name] ?? 0)) / (range || 1);
+                      d += diff * diff;
+                    });
+                    return Math.sqrt(d);
+                  });
+                  const ptPredRanks = ptDistances.map((d, idx) => ({ d, idx })).sort((a, b) => a.d - b.d).map((item, rank) => ({ idx: item.idx, rank: rank + 1 }));
+                  const ptActualKpis = ptWindow.map(t => Object.values(t.kpis)[0] ?? 0);
+                  const ptActualRanks = ptActualKpis.map((k, idx) => ({ k, idx })).sort((a, b) => b.k - a.k).map((item, rank) => ({ idx: item.idx, rank: rank + 1 }));
+                  ptPredRanks.forEach(pr => {
+                    const ar = ptActualRanks.find(a => a.idx === pr.idx);
+                    ptRecords.push({ iteration: ptWindow[pr.idx].iteration, predicted_rank: pr.rank, actual_rank: ar?.rank ?? pr.rank, kpi: ptActualKpis[pr.idx] });
+                  });
+                }
+                if (ptRecords.length < 3) return null;
+                // Rank correlation (Spearman) across all records
+                const ptN2 = ptRecords.length;
+                const ptDiffSq = ptRecords.reduce((s, r) => s + (r.predicted_rank - r.actual_rank) ** 2, 0);
+                const ptSpearman = 1 - (6 * ptDiffSq) / (ptN2 * (ptN2 * ptN2 - 1));
+                const ptAccurate = ptRecords.filter(r => Math.abs(r.predicted_rank - r.actual_rank) <= 1).length;
+                const ptAccuracy = ptAccurate / ptRecords.length;
+                const ptBadge = ptAccuracy > 0.6 ? "Accurate" : ptAccuracy > 0.35 ? "Mixed" : "Unreliable";
+                const ptBadgeColor = ptAccuracy > 0.6 ? "var(--color-green, #22c55e)" : ptAccuracy > 0.35 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Scatter plot: predicted rank vs actual rank
+                const ptW = 180, ptH = 140, ptPad = 24;
+                const ptMaxRank = Math.max(...ptRecords.map(r => Math.max(r.predicted_rank, r.actual_rank)));
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <LineChart size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Prediction Track Record</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: ptBadgeColor + "18", color: ptBadgeColor }}>{ptBadge} ({(ptAccuracy * 100).toFixed(0)}%)</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                      <svg width={ptW} height={ptH} style={{ flexShrink: 0 }}>
+                        {/* Perfect prediction line */}
+                        <line x1={ptPad} y1={ptH - ptPad} x2={ptW - 8} y2={ptPad - 4} stroke="var(--color-border)" strokeWidth={1} strokeDasharray="3,3" />
+                        {/* Points */}
+                        {ptRecords.map((r, i) => {
+                          const x = ptPad + ((r.predicted_rank - 1) / Math.max(1, ptMaxRank - 1)) * (ptW - ptPad - 8);
+                          const y = (ptH - ptPad) - ((r.actual_rank - 1) / Math.max(1, ptMaxRank - 1)) * (ptH - ptPad - 4);
+                          const accurate = Math.abs(r.predicted_rank - r.actual_rank) <= 1;
+                          return (
+                            <circle key={`pt-${i}`} cx={x} cy={y} r={3.5} fill={accurate ? "var(--color-green, #22c55e)" : "var(--color-red, #ef4444)"} opacity={0.7}>
+                              <title>Pred rank: {r.predicted_rank}, Actual rank: {r.actual_rank}, KPI: {r.kpi.toFixed(4)}</title>
+                            </circle>
+                          );
+                        })}
+                        {/* Axis labels */}
+                        <text x={ptW / 2} y={ptH - 2} textAnchor="middle" fontSize={9} fill="var(--color-text-muted)">Predicted Rank</text>
+                        <text x={4} y={ptH / 2} textAnchor="middle" fontSize={9} fill="var(--color-text-muted)" transform={`rotate(-90,4,${ptH / 2})`}>Actual Rank</text>
+                      </svg>
+                      <div style={{ flex: 1, fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                        <div style={{ marginBottom: "6px" }}>
+                          <span style={{ fontWeight: 600, color: "var(--color-text)" }}>Spearman ρ: {ptSpearman.toFixed(2)}</span>
+                        </div>
+                        <div style={{ marginBottom: "4px" }}>Within ±1 rank: {ptAccurate}/{ptRecords.length} ({(ptAccuracy * 100).toFixed(0)}%)</div>
+                        <div style={{ marginBottom: "4px" }}>Windows evaluated: {Math.floor(ptRecords.length / ptWindowSize)}</div>
+                        <div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
+                          {[["var(--color-green, #22c55e)", "±1 rank"], ["var(--color-red, #ef4444)", ">1 rank off"]].map(([c, l]) => (
+                            <span key={l} style={{ display: "flex", alignItems: "center", gap: "3px", fontSize: "0.7rem" }}>
+                              <span style={{ width: 7, height: 7, borderRadius: "50%", background: c, display: "inline-block" }} />
+                              {l}
+                            </span>
+                          ))}
+                        </div>
+                        <div style={{ fontSize: "0.73rem", fontStyle: "italic", marginTop: "6px" }}>
+                          {ptAccuracy > 0.6 ? "Model predictions are well-calibrated — trust suggested rankings." : ptAccuracy > 0.35 ? "Mixed accuracy — treat predictions as rough guidance." : "Predictions are unreliable — consider more exploration."}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -10024,6 +10291,90 @@ export default function Workspace() {
                       <span style={{ display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 8, height: 8, borderRadius: 1, background: "#94a3b8" }} /> low info</span>
                       <span style={{ display: "flex", alignItems: "center", gap: 3 }}><span style={{ width: 16, height: 2, background: "#3b82f6" }} /> cumulative</span>
                       <span style={{ marginLeft: "auto" }}>{ivHighInfo}/{ivValues.length} informative</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Efficiency Trajectory — Batch 21 */}
+              {trials.length >= 8 && (() => {
+                const etSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const etKpis = etSorted.map(t => Object.values(t.kpis)[0] ?? 0);
+                // Cumulative best and efficiency metric
+                let etBest = -Infinity;
+                const etCumBest: number[] = [];
+                const etImprovements: boolean[] = [];
+                etKpis.forEach(k => {
+                  const improved = k > etBest;
+                  if (improved) etBest = k;
+                  etCumBest.push(etBest);
+                  etImprovements.push(improved);
+                });
+                // Rolling efficiency: fraction of recent trials that improved the best
+                const etWin = 5;
+                const etEfficiency: number[] = [];
+                for (let i = 0; i < etKpis.length; i++) {
+                  const start = Math.max(0, i - etWin + 1);
+                  const window = etImprovements.slice(start, i + 1);
+                  etEfficiency.push(window.filter(Boolean).length / window.length);
+                }
+                // Cumulative efficiency: total improvements / total trials
+                const etTotalImprove = etImprovements.filter(Boolean).length;
+                const etCumEfficiency = etTotalImprove / etKpis.length;
+                // Trend: compare recent vs early efficiency
+                const etRecentWindow = Math.min(Math.floor(etKpis.length / 3), 10);
+                const etRecentEff = etEfficiency.slice(-etRecentWindow).reduce((s, v) => s + v, 0) / etRecentWindow;
+                const etEarlyEff = etEfficiency.slice(0, etRecentWindow).reduce((s, v) => s + v, 0) / etRecentWindow;
+                const etTrend = etRecentEff - etEarlyEff;
+                const etBadge = etCumEfficiency > 0.25 ? "Efficient" : etCumEfficiency > 0.12 ? "Normal" : "Diminishing";
+                const etBadgeColor = etCumEfficiency > 0.25 ? "var(--color-green, #22c55e)" : etCumEfficiency > 0.12 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Chart dimensions
+                const etW = 260, etH = 100, etPadL = 4, etPadR = 4, etPadT = 8, etPadB = 16;
+                const etPlotW = etW - etPadL - etPadR;
+                const etPlotH = etH - etPadT - etPadB;
+                // Efficiency curve
+                const etEffPoints = etEfficiency.map((e, i) => ({
+                  x: etPadL + (i / Math.max(1, etEfficiency.length - 1)) * etPlotW,
+                  y: etPadT + (1 - e) * etPlotH,
+                }));
+                const etEffPath = etEffPoints.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                // Improvement markers
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Workflow size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Efficiency Trajectory</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: etBadgeColor + "18", color: etBadgeColor }}>{etBadge}</span>
+                    </div>
+                    <svg width={etW} height={etH} style={{ width: "100%", maxWidth: etW }}>
+                      {/* Grid lines */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                        <line key={`et-g-${v}`} x1={etPadL} y1={etPadT + (1 - v) * etPlotH} x2={etW - etPadR} y2={etPadT + (1 - v) * etPlotH} stroke="var(--color-border)" strokeWidth={0.4} strokeDasharray={v === 0 ? "none" : "2,3"} />
+                      ))}
+                      {/* Efficiency curve */}
+                      <path d={etEffPath} fill="none" stroke="var(--color-primary)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Improvement ticks */}
+                      {etImprovements.map((imp, i) => {
+                        if (!imp) return null;
+                        const x = etPadL + (i / Math.max(1, etKpis.length - 1)) * etPlotW;
+                        return <line key={`et-imp-${i}`} x1={x} y1={etH - etPadB + 2} x2={x} y2={etH - etPadB + 7} stroke="var(--color-green, #22c55e)" strokeWidth={1.5} />;
+                      })}
+                      {/* X axis label */}
+                      <text x={etW / 2} y={etH - 1} textAnchor="middle" fontSize={8} fill="var(--color-text-muted)">Trial Index</text>
+                      {/* Y labels */}
+                      <text x={etW - 2} y={etPadT + 3} textAnchor="end" fontSize={7} fill="var(--color-text-muted)">100%</text>
+                      <text x={etW - 2} y={etPadT + etPlotH + 3} textAnchor="end" fontSize={7} fill="var(--color-text-muted)">0%</text>
+                    </svg>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      <span>Overall: <strong style={{ color: "var(--color-text)" }}>{(etCumEfficiency * 100).toFixed(0)}%</strong> ({etTotalImprove}/{etKpis.length})</span>
+                      <span>Recent: <strong style={{ color: etRecentEff > etEarlyEff ? "var(--color-green, #22c55e)" : "var(--color-red, #ef4444)" }}>{(etRecentEff * 100).toFixed(0)}%</strong></span>
+                      <span>Trend: <strong style={{ color: etTrend > 0 ? "var(--color-green, #22c55e)" : "var(--color-red, #ef4444)" }}>{etTrend > 0 ? "+" : ""}{(etTrend * 100).toFixed(0)}pp</strong></span>
+                    </div>
+                    <div style={{ fontSize: "0.73rem", fontStyle: "italic", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {etTrend > 0.05 ? "Efficiency improving — optimization is accelerating." : etTrend > -0.05 ? "Steady efficiency — normal optimization trajectory." : "Efficiency declining — consider changing strategy or stopping."}
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px", marginTop: "3px" }}>
+                        <span style={{ width: 10, height: 2, background: "var(--color-green, #22c55e)", display: "inline-block" }} /> = improvement found
+                      </span>
                     </div>
                   </div>
                 );
