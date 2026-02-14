@@ -85,6 +85,9 @@ import {
   ScatterChart,
   AlignVerticalJustifyStart,
   LayoutGrid,
+  Wind,
+  Magnet,
+  Focus,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -2810,6 +2813,129 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Uncertainty Evolution Ribbon */}
+              {trials.length >= 15 && (() => {
+                const ueSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const ueKpiKey = Object.keys(ueSorted[0]?.kpis || {})[0];
+                if (!ueKpiKey) return null;
+                const ueN = ueSorted.length;
+                const ueK = Math.min(5, ueN - 1);
+                const ueWinSize = Math.max(5, Math.floor(ueN / 10));
+
+                // For each window, compute average k-NN LOO variance as uncertainty proxy
+                const ueWindows: { iter: number; uncertainty: number; bestSoFar: number }[] = [];
+                let ueBest = Infinity;
+                for (let w = 0; w < ueN - ueWinSize + 1; w += Math.max(1, Math.floor(ueWinSize / 2))) {
+                  const winTrials = ueSorted.slice(w, w + ueWinSize);
+                  // Compute k-NN LOO variance for each point in window
+                  let varSum = 0;
+                  for (let i = 0; i < winTrials.length; i++) {
+                    const pKeys = Object.keys(winTrials[i].parameters);
+                    const dists: { d: number; v: number }[] = [];
+                    for (let j = 0; j < winTrials.length; j++) {
+                      if (j === i) continue;
+                      let dist = 0;
+                      for (const pk of pKeys) {
+                        const diff = (Number(winTrials[i].parameters[pk]) || 0) - (Number(winTrials[j].parameters[pk]) || 0);
+                        dist += diff * diff;
+                      }
+                      dists.push({ d: Math.sqrt(dist), v: winTrials[j].kpis[ueKpiKey] ?? 0 });
+                    }
+                    dists.sort((a, b) => a.d - b.d);
+                    const neighbors = dists.slice(0, ueK);
+                    const nMean = neighbors.reduce((s, n) => s + n.v, 0) / neighbors.length;
+                    const nVar = neighbors.reduce((s, n) => s + (n.v - nMean) ** 2, 0) / neighbors.length;
+                    varSum += nVar;
+                  }
+                  const avgVar = varSum / winTrials.length;
+                  // Track best so far
+                  for (const t of winTrials) {
+                    const v = t.kpis[ueKpiKey] ?? 0;
+                    if (v < ueBest) ueBest = v;
+                  }
+                  ueWindows.push({ iter: w + Math.floor(ueWinSize / 2), uncertainty: avgVar, bestSoFar: ueBest });
+                }
+
+                if (ueWindows.length < 3) return null;
+
+                const ueMaxUnc = Math.max(...ueWindows.map(w => w.uncertainty)) || 0.001;
+                const ueMinUnc = Math.min(...ueWindows.map(w => w.uncertainty));
+
+                // Trend: is uncertainty decreasing?
+                const ueFirst3 = ueWindows.slice(0, 3).reduce((s, w) => s + w.uncertainty, 0) / 3;
+                const ueLast3 = ueWindows.slice(-3).reduce((s, w) => s + w.uncertainty, 0) / 3;
+                const ueReduction = ueFirst3 > 0 ? ((ueFirst3 - ueLast3) / ueFirst3) * 100 : 0;
+                const ueLabel = ueReduction > 30 ? "Converging" : ueReduction > 10 ? "Narrowing" : ueReduction > -10 ? "Stable" : "Diverging";
+                const ueLabelColor = ueReduction > 30 ? "#22c55e" : ueReduction > 10 ? "#3b82f6" : ueReduction > -10 ? "var(--color-text-muted)" : "#ef4444";
+
+                // SVG
+                const ueW = 300, ueH = 120, uePadL = 36, uePadR = 10, uePadT = 10, uePadB = 20;
+                const uePlotW = ueW - uePadL - uePadR;
+                const uePlotH = ueH - uePadT - uePadB;
+                const ueXScale = (i: number) => uePadL + (i / (ueWindows.length - 1)) * uePlotW;
+                const ueYScale = (v: number) => uePadT + uePlotH - ((v - ueMinUnc) / (ueMaxUnc - ueMinUnc || 1)) * uePlotH;
+
+                // Build ribbon path (upper = uncertainty, lower = 0 baseline)
+                const ueUpperPath = ueWindows.map((w, i) => `${i === 0 ? "M" : "L"}${ueXScale(i).toFixed(1)},${ueYScale(w.uncertainty).toFixed(1)}`).join(" ");
+                const ueLowerPath = [...ueWindows].reverse().map((_, i) => `L${ueXScale(ueWindows.length - 1 - i).toFixed(1)},${(uePadT + uePlotH).toFixed(1)}`).join(" ");
+                const ueRibbonPath = `${ueUpperPath} ${ueLowerPath} Z`;
+
+                return (
+                  <div className="card" style={{ marginBottom: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Wind size={16} style={{ color: "var(--color-primary)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Uncertainty Evolution</h3>
+                      <span className="findings-badge" style={{ background: ueLabelColor + "18", color: ueLabelColor, marginLeft: "auto" }}>
+                        {ueLabel}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginBottom: 8 }}>
+                      Rolling k-NN LOO variance — {ueReduction > 0 ? `${ueReduction.toFixed(0)}% reduction` : `${Math.abs(ueReduction).toFixed(0)}% increase`}
+                    </div>
+                    <svg width={ueW} height={ueH} viewBox={`0 0 ${ueW} ${ueH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Grid */}
+                      {[0, 0.5, 1].map(f => {
+                        const v = ueMinUnc + f * (ueMaxUnc - ueMinUnc);
+                        return (
+                          <Fragment key={`ueg${f}`}>
+                            <line x1={uePadL} y1={ueYScale(v)} x2={uePadL + uePlotW} y2={ueYScale(v)} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                            <text x={uePadL - 4} y={ueYScale(v) + 3} fontSize="6" fill="var(--color-text-muted)" textAnchor="end">{v.toPrecision(2)}</text>
+                          </Fragment>
+                        );
+                      })}
+                      {/* Ribbon fill */}
+                      <path d={ueRibbonPath} fill="url(#ueGrad)" opacity="0.3" />
+                      <defs>
+                        <linearGradient id="ueGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#ef4444" />
+                          <stop offset="50%" stopColor="#f59e0b" />
+                          <stop offset="100%" stopColor="#22c55e" />
+                        </linearGradient>
+                      </defs>
+                      {/* Upper line */}
+                      <polyline
+                        points={ueWindows.map((w, i) => `${ueXScale(i)},${ueYScale(w.uncertainty)}`).join(" ")}
+                        fill="none"
+                        stroke={ueLabelColor}
+                        strokeWidth="1.5"
+                        strokeLinejoin="round"
+                      />
+                      {/* Dots */}
+                      {ueWindows.map((w, i) => (
+                        <circle key={`ued${i}`} cx={ueXScale(i)} cy={ueYScale(w.uncertainty)} r="2" fill={ueLabelColor} />
+                      ))}
+                      {/* X axis label */}
+                      <text x={uePadL + uePlotW / 2} y={ueH - 2} fontSize="6.5" fill="var(--color-text-muted)" textAnchor="middle">Iteration Window</text>
+                      <text x={6} y={uePadT + uePlotH / 2} fontSize="6.5" fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90, 6, ${uePadT + uePlotH / 2})`}>Local Variance</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span>k={ueK} neighbors, {ueWinSize}-trial windows</span>
+                      <span>{ueWindows.length} windows</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -3866,6 +3992,128 @@ export default function Workspace() {
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 2, background: "var(--color-primary)", marginRight: 4, verticalAlign: "middle" }} />Non-monotonic</span>
                       <span className="efficiency-legend-item" style={{ opacity: 0.5 }}>|: ±1 SE</span>
                     </div>
+                  </div>
+                );
+              })()}
+
+              {/* Gradient Consistency Heatmap */}
+              {trials.length >= 12 && (() => {
+                const gcSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (gcSpecs.length === 0) return null;
+                const gcKpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!gcKpiKey) return null;
+                const gcSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const gcN = gcSorted.length;
+                const gcParams = gcSpecs.slice(0, 8);
+                const gcNWin = Math.min(8, Math.floor(gcN / 4));
+                if (gcNWin < 3) return null;
+                const gcWinSize = Math.floor(gcN / gcNWin);
+
+                // For each window and parameter, compute gradient sign consistency
+                // via correlation between parameter values and KPI in that window
+                const gcGrid: number[][] = []; // [param][window] → correlation
+                for (let pi = 0; pi < gcParams.length; pi++) {
+                  gcGrid[pi] = [];
+                  const pName = (gcParams[pi] as { name: string }).name;
+                  for (let wi = 0; wi < gcNWin; wi++) {
+                    const start = wi * gcWinSize;
+                    const end = wi === gcNWin - 1 ? gcN : (wi + 1) * gcWinSize;
+                    const win = gcSorted.slice(start, end);
+                    const xs = win.map(t => Number(t.parameters[pName]) || 0);
+                    const ys = win.map(t => t.kpis[gcKpiKey] ?? 0);
+                    const n2 = xs.length;
+                    const mx = xs.reduce((a, b) => a + b, 0) / n2;
+                    const my = ys.reduce((a, b) => a + b, 0) / n2;
+                    let cov = 0, sx = 0, sy = 0;
+                    for (let k = 0; k < n2; k++) {
+                      cov += (xs[k] - mx) * (ys[k] - my);
+                      sx += (xs[k] - mx) ** 2;
+                      sy += (ys[k] - my) ** 2;
+                    }
+                    const denom = Math.sqrt(sx * sy);
+                    gcGrid[pi][wi] = denom > 0 ? cov / denom : 0;
+                  }
+                }
+
+                // Count consistent parameters (same sign gradient in >75% of windows)
+                const gcConsistent = gcGrid.filter(row => {
+                  const signs = row.map(v => Math.sign(v));
+                  const posCount = signs.filter(s => s > 0).length;
+                  const negCount = signs.filter(s => s < 0).length;
+                  return Math.max(posCount, negCount) / row.length > 0.75;
+                }).length;
+
+                // SVG heatmap
+                const gcCellW = Math.min(28, Math.floor(180 / gcNWin));
+                const gcCellH = 18;
+                const gcPadL = 70, gcPadT = 20;
+                const gcW = gcPadL + gcNWin * gcCellW + 10;
+                const gcH = gcPadT + gcParams.length * gcCellH + 16;
+
+                const gcColor = (v: number) => {
+                  // -1 (red) → 0 (white) → +1 (green)
+                  if (v > 0) {
+                    const t = Math.min(v, 1);
+                    return `rgba(34,197,94,${(t * 0.7 + 0.1).toFixed(2)})`;
+                  } else {
+                    const t = Math.min(-v, 1);
+                    return `rgba(239,68,68,${(t * 0.7 + 0.1).toFixed(2)})`;
+                  }
+                };
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Magnet size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Gradient Consistency</h2>
+                        <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>Local correlation sign stability over time</div>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto" }}>
+                        {gcConsistent}/{gcParams.length} consistent
+                      </span>
+                    </div>
+                    <svg width={gcW} height={gcH} viewBox={`0 0 ${gcW} ${gcH}`} style={{ width: "100%", maxWidth: gcW, height: "auto" }}>
+                      {/* Column headers */}
+                      {Array.from({ length: gcNWin }, (_, wi) => (
+                        <text key={`gch${wi}`} x={gcPadL + wi * gcCellW + gcCellW / 2} y={gcPadT - 5} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle">W{wi + 1}</text>
+                      ))}
+                      {/* Rows */}
+                      {gcParams.map((spec: { name: string }, pi: number) => (
+                        <g key={`gcr${pi}`}>
+                          <text x={gcPadL - 4} y={gcPadT + pi * gcCellH + gcCellH / 2 + 3} fontSize="7" fill="var(--color-text)" textAnchor="end" style={{ fontFamily: "var(--font-mono)" }}>{spec.name.length > 10 ? spec.name.slice(0, 9) + "…" : spec.name}</text>
+                          {gcGrid[pi].map((v, wi) => (
+                            <g key={`gcc${pi}-${wi}`}>
+                              <rect
+                                x={gcPadL + wi * gcCellW}
+                                y={gcPadT + pi * gcCellH}
+                                width={gcCellW - 1}
+                                height={gcCellH - 1}
+                                rx={2}
+                                fill={gcColor(v)}
+                              />
+                              {gcCellW >= 20 && (
+                                <text
+                                  x={gcPadL + wi * gcCellW + (gcCellW - 1) / 2}
+                                  y={gcPadT + pi * gcCellH + (gcCellH - 1) / 2 + 3}
+                                  fontSize="6"
+                                  fill={Math.abs(v) > 0.5 ? "white" : "var(--color-text-muted)"}
+                                  textAnchor="middle"
+                                  fontWeight="500"
+                                >
+                                  {v > 0 ? "+" : ""}{v.toFixed(2)}
+                                </text>
+                              )}
+                            </g>
+                          ))}
+                        </g>
+                      ))}
+                      {/* Legend */}
+                      <rect x={gcPadL} y={gcPadT + gcParams.length * gcCellH + 4} width={20} height={6} rx={2} fill="rgba(239,68,68,0.6)" />
+                      <text x={gcPadL + 24} y={gcPadT + gcParams.length * gcCellH + 10} fontSize="5.5" fill="var(--color-text-muted)">Negative</text>
+                      <rect x={gcPadL + 60} y={gcPadT + gcParams.length * gcCellH + 4} width={20} height={6} rx={2} fill="rgba(34,197,94,0.6)" />
+                      <text x={gcPadL + 84} y={gcPadT + gcParams.length * gcCellH + 10} fontSize="5.5" fill="var(--color-text-muted)">Positive</text>
+                    </svg>
                   </div>
                 );
               })()}
@@ -6071,6 +6319,137 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Novelty-Proximity Scatter */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const npSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (npSpecs.length === 0) return null;
+                const npKpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!npKpiKey) return null;
+                const npK = Math.min(5, trials.length - 1);
+
+                // Normalize all trial parameters
+                const npNormTrial = (params: Record<string, number>) => {
+                  return npSpecs.map((sp: { name: string; type: string; lower?: number; upper?: number }) => {
+                    const lo = sp.lower ?? 0;
+                    const hi = sp.upper ?? 1;
+                    const range = hi - lo || 1;
+                    return ((Number(params[sp.name]) || 0) - lo) / range;
+                  });
+                };
+                const npTrialNorms = trials.map(t => npNormTrial(t.parameters));
+
+                // For each suggestion: compute min distance to any prior trial + local variance (uncertainty proxy)
+                const npPoints = suggestions.suggestions.map((sug, si) => {
+                  const sugNorm = npSpecs.map((sp: { name: string; type: string; lower?: number; upper?: number }) => {
+                    const lo = sp.lower ?? 0;
+                    const hi = sp.upper ?? 1;
+                    const range = hi - lo || 1;
+                    return ((Number(sug[sp.name]) || 0) - lo) / range;
+                  });
+
+                  // Min distance to prior
+                  let minDist = Infinity;
+                  const dists: { d: number; kpi: number }[] = [];
+                  for (let j = 0; j < npTrialNorms.length; j++) {
+                    let dist = 0;
+                    for (let k = 0; k < sugNorm.length; k++) {
+                      dist += (sugNorm[k] - npTrialNorms[j][k]) ** 2;
+                    }
+                    dist = Math.sqrt(dist);
+                    if (dist < minDist) minDist = dist;
+                    dists.push({ d: dist, kpi: trials[j].kpis[npKpiKey] ?? 0 });
+                  }
+
+                  // Local variance from k nearest neighbors
+                  dists.sort((a, b) => a.d - b.d);
+                  const neighbors = dists.slice(0, npK);
+                  const nMean = neighbors.reduce((s, n) => s + n.kpi, 0) / neighbors.length;
+                  const localVar = neighbors.reduce((s, n) => s + (n.kpi - nMean) ** 2, 0) / neighbors.length;
+
+                  return { idx: si, minDist, localVar };
+                });
+
+                const npMaxDist = Math.max(...npPoints.map(p => p.minDist)) || 1;
+                const npMaxVar = Math.max(...npPoints.map(p => p.localVar)) || 0.001;
+                const npMedDist = npMaxDist / 2;
+                const npMedVar = npMaxVar / 2;
+
+                // Classify
+                const npExploit = npPoints.filter(p => p.minDist < npMedDist && p.localVar < npMedVar).length;
+                const npExplore = npPoints.filter(p => p.minDist >= npMedDist).length;
+
+                // SVG
+                const npW = 260, npH = 180, npPadL = 40, npPadR = 10, npPadT = 14, npPadB = 24;
+                const npPlotW = npW - npPadL - npPadR;
+                const npPlotH = npH - npPadT - npPadB;
+                const npXScale = (d: number) => npPadL + (d / npMaxDist) * npPlotW;
+                const npYScale = (v: number) => npPadT + npPlotH - (v / npMaxVar) * npPlotH;
+
+                const npColors = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4", "#f97316", "#ec4899"];
+
+                return (
+                  <div className="card" style={{ marginBottom: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Focus size={16} style={{ color: "var(--color-primary)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Novelty vs. Proximity</h3>
+                      <span className="findings-badge" style={{ marginLeft: "auto" }}>
+                        {npExploit} exploit / {npExplore} explore
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginBottom: 8 }}>
+                      Distance to nearest prior vs local uncertainty
+                    </div>
+                    <svg width={npW} height={npH} viewBox={`0 0 ${npW} ${npH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Quadrant backgrounds */}
+                      <rect x={npPadL} y={npPadT} width={npPlotW / 2} height={npPlotH / 2} fill="rgba(34,197,94,0.04)" />
+                      <rect x={npPadL + npPlotW / 2} y={npPadT} width={npPlotW / 2} height={npPlotH / 2} fill="rgba(239,68,68,0.04)" />
+                      <rect x={npPadL} y={npPadT + npPlotH / 2} width={npPlotW / 2} height={npPlotH / 2} fill="rgba(59,130,246,0.04)" />
+                      <rect x={npPadL + npPlotW / 2} y={npPadT + npPlotH / 2} width={npPlotW / 2} height={npPlotH / 2} fill="rgba(168,85,247,0.04)" />
+                      {/* Quadrant labels */}
+                      <text x={npPadL + npPlotW * 0.25} y={npPadT + 10} fontSize="6" fill="rgba(34,197,94,0.6)" textAnchor="middle" fontWeight="500">Local Risk</text>
+                      <text x={npPadL + npPlotW * 0.75} y={npPadT + 10} fontSize="6" fill="rgba(239,68,68,0.6)" textAnchor="middle" fontWeight="500">Wild Card</text>
+                      <text x={npPadL + npPlotW * 0.25} y={npPadT + npPlotH - 4} fontSize="6" fill="rgba(59,130,246,0.6)" textAnchor="middle" fontWeight="500">Exploitation</text>
+                      <text x={npPadL + npPlotW * 0.75} y={npPadT + npPlotH - 4} fontSize="6" fill="rgba(168,85,247,0.6)" textAnchor="middle" fontWeight="500">Safe Explore</text>
+                      {/* Grid dividers */}
+                      <line x1={npPadL + npPlotW / 2} y1={npPadT} x2={npPadL + npPlotW / 2} y2={npPadT + npPlotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="4,4" />
+                      <line x1={npPadL} y1={npPadT + npPlotH / 2} x2={npPadL + npPlotW} y2={npPadT + npPlotH / 2} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="4,4" />
+                      {/* Y axis labels */}
+                      <text x={npPadL - 4} y={npPadT + 4} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">High</text>
+                      <text x={npPadL - 4} y={npPadT + npPlotH + 3} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">Low</text>
+                      {/* X axis labels */}
+                      <text x={npPadL} y={npH - 4} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="start">Near</text>
+                      <text x={npPadL + npPlotW} y={npH - 4} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">Far</text>
+                      <text x={npPadL + npPlotW / 2} y={npH - 4} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle">Distance to Nearest Prior</text>
+                      <text x={6} y={npPadT + npPlotH / 2} fontSize="6" fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90, 6, ${npPadT + npPlotH / 2})`}>Local Variance</text>
+                      {/* Suggestion points */}
+                      {npPoints.map((p, i) => (
+                        <g key={`np${i}`}>
+                          <circle
+                            cx={npXScale(p.minDist)}
+                            cy={npYScale(p.localVar)}
+                            r="5"
+                            fill={npColors[i % npColors.length]}
+                            opacity="0.7"
+                            stroke="white"
+                            strokeWidth="1"
+                          />
+                          <text
+                            x={npXScale(p.minDist)}
+                            y={npYScale(p.localVar) + 2.5}
+                            fontSize="5"
+                            fill="white"
+                            textAnchor="middle"
+                            fontWeight="700"
+                          >
+                            {i + 1}
+                          </text>
+                        </g>
+                      ))}
+                    </svg>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -7379,6 +7758,168 @@ export default function Workspace() {
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "rgba(168,85,247,0.3)", border: "1px solid #a855f7", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Mid</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 8, background: "rgba(34,197,94,0.3)", border: "1px solid #22c55e", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Late</span>
                       <span className="efficiency-legend-item" style={{ marginLeft: "auto" }}>IQR: {deIQRFirst.toPrecision(3)} → {deIQRLast.toPrecision(3)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Landscape Conditioning Timeline */}
+              {trials.length >= 15 && (() => {
+                const lcSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (lcSpecs.length < 2) return null;
+                const lcKpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!lcKpiKey) return null;
+                const lcSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const lcN = lcSorted.length;
+                const lcD = Math.min(lcSpecs.length, 6);
+                const lcNWin = Math.min(8, Math.floor(lcN / 5));
+                if (lcNWin < 3) return null;
+                const lcWinSize = Math.floor(lcN / lcNWin);
+
+                // For each window, fit local quadratic: compute variance in each parameter direction
+                // and cross-variance. Condition number proxy = max_eigenvalue / min_eigenvalue
+                // Simplified: use ratio of max to min parameter variance as conditioning proxy
+                const lcWindows: { iter: number; condNum: number; effRank: number }[] = [];
+                for (let wi = 0; wi < lcNWin; wi++) {
+                  const start = wi * lcWinSize;
+                  const end = wi === lcNWin - 1 ? lcN : (wi + 1) * lcWinSize;
+                  const win = lcSorted.slice(start, end);
+
+                  // Compute parameter variance in each dimension (normalized)
+                  const dimVars: number[] = [];
+                  for (let d = 0; d < lcD; d++) {
+                    const pName = (lcSpecs[d] as { name: string; lower: number; upper: number }).name;
+                    const lo = (lcSpecs[d] as { lower: number }).lower;
+                    const hi = (lcSpecs[d] as { upper: number }).upper;
+                    const range = hi - lo || 1;
+                    const vals = win.map(t => ((Number(t.parameters[pName]) || 0) - lo) / range);
+                    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+                    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
+                    dimVars.push(variance);
+                  }
+
+                  // Also include KPI variance weighted by parameter correlations
+                  const kpiVals = win.map(t => t.kpis[lcKpiKey] ?? 0);
+                  const kpiMean = kpiVals.reduce((a, b) => a + b, 0) / kpiVals.length;
+                  const kpiVar = kpiVals.reduce((s, v) => s + (v - kpiMean) ** 2, 0) / kpiVals.length;
+
+                  // Compute parameter-KPI correlations to estimate effective rank
+                  const corrAbs: number[] = [];
+                  for (let d = 0; d < lcD; d++) {
+                    const pName = (lcSpecs[d] as { name: string; lower: number; upper: number }).name;
+                    const lo = (lcSpecs[d] as { lower: number }).lower;
+                    const hi = (lcSpecs[d] as { upper: number }).upper;
+                    const range = hi - lo || 1;
+                    const xs = win.map(t => ((Number(t.parameters[pName]) || 0) - lo) / range);
+                    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+                    let cov = 0, sx = 0;
+                    for (let k = 0; k < xs.length; k++) {
+                      cov += (xs[k] - mx) * (kpiVals[k] - kpiMean);
+                      sx += (xs[k] - mx) ** 2;
+                    }
+                    const corr = sx > 0 && kpiVar > 0 ? Math.abs(cov / (Math.sqrt(sx * kpiVals.reduce((s, v) => s + (v - kpiMean) ** 2, 0)) || 1)) : 0;
+                    corrAbs.push(corr);
+                  }
+
+                  // Condition number proxy: max dim variance / min dim variance
+                  const maxVar = Math.max(...dimVars);
+                  const minVar = Math.min(...dimVars.filter(v => v > 0)) || 0.001;
+                  const condNum = maxVar / minVar;
+
+                  // Effective rank: count dimensions with |corr| > 0.15
+                  const effRank = corrAbs.filter(c => c > 0.15).length;
+
+                  lcWindows.push({ iter: start + Math.floor(lcWinSize / 2), condNum, effRank });
+                }
+
+                const lcMaxCond = Math.max(...lcWindows.map(w => w.condNum));
+                const lcMaxRank = lcD;
+
+                // Trend
+                const lcFirst = lcWindows[0].condNum;
+                const lcLast = lcWindows[lcWindows.length - 1].condNum;
+                const lcCondTrend = lcLast < lcFirst * 0.7 ? "Improving" : lcLast > lcFirst * 1.3 ? "Worsening" : "Stable";
+                const lcCondColor = lcCondTrend === "Improving" ? "#22c55e" : lcCondTrend === "Worsening" ? "#ef4444" : "var(--color-text-muted)";
+
+                // SVG
+                const lcW = 320, lcH = 140, lcPadL = 40, lcPadR = 36, lcPadT = 10, lcPadB = 24;
+                const lcPlotW = lcW - lcPadL - lcPadR;
+                const lcPlotH = lcH - lcPadT - lcPadB;
+                const lcXScale = (i: number) => lcPadL + (i / (lcNWin - 1)) * lcPlotW;
+                const lcYCond = (v: number) => lcPadT + lcPlotH - (Math.min(v, lcMaxCond) / lcMaxCond) * lcPlotH;
+                const lcYRank = (v: number) => lcPadT + lcPlotH - (v / lcMaxRank) * lcPlotH;
+
+                // Build condition area path
+                const lcCondUpper = lcWindows.map((w, i) => `${i === 0 ? "M" : "L"}${lcXScale(i).toFixed(1)},${lcYCond(w.condNum).toFixed(1)}`).join(" ");
+                const lcCondLower = [...lcWindows].reverse().map((_, i) => `L${lcXScale(lcNWin - 1 - i).toFixed(1)},${(lcPadT + lcPlotH).toFixed(1)}`).join(" ");
+                const lcCondArea = `${lcCondUpper} ${lcCondLower} Z`;
+
+                return (
+                  <div className="card" style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <Activity size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <div>
+                        <h2 style={{ margin: 0 }}>Landscape Conditioning</h2>
+                        <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>Condition number + effective rank over time</div>
+                      </div>
+                      <span className="findings-badge" style={{ marginLeft: "auto", background: lcCondColor + "18", color: lcCondColor }}>
+                        {lcCondTrend}
+                      </span>
+                    </div>
+                    <svg width={lcW} height={lcH} viewBox={`0 0 ${lcW} ${lcH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Y axis grids (condition) */}
+                      {[0, 0.5, 1].map(f => {
+                        const v = f * lcMaxCond;
+                        return (
+                          <Fragment key={`lcg${f}`}>
+                            <line x1={lcPadL} y1={lcYCond(v)} x2={lcPadL + lcPlotW} y2={lcYCond(v)} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                            <text x={lcPadL - 4} y={lcYCond(v) + 3} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">{v.toFixed(1)}</text>
+                          </Fragment>
+                        );
+                      })}
+                      {/* Right Y axis labels (rank) */}
+                      {[0, Math.floor(lcMaxRank / 2), lcMaxRank].map(r => (
+                        <text key={`lcr${r}`} x={lcPadL + lcPlotW + 4} y={lcYRank(r) + 3} fontSize="5.5" fill="#a855f7" textAnchor="start">{r}</text>
+                      ))}
+                      {/* Condition area */}
+                      <path d={lcCondArea} fill="rgba(249,115,22,0.12)" />
+                      <polyline
+                        points={lcWindows.map((w, i) => `${lcXScale(i)},${lcYCond(w.condNum)}`).join(" ")}
+                        fill="none"
+                        stroke="#f97316"
+                        strokeWidth="1.5"
+                        strokeLinejoin="round"
+                      />
+                      {/* Condition dots */}
+                      {lcWindows.map((w, i) => (
+                        <circle key={`lcd${i}`} cx={lcXScale(i)} cy={lcYCond(w.condNum)} r="2.5" fill="#f97316" />
+                      ))}
+                      {/* Effective rank step line */}
+                      {lcWindows.map((w, i) => {
+                        if (i === 0) return null;
+                        const prev = lcWindows[i - 1];
+                        return (
+                          <g key={`lcrl${i}`}>
+                            <line x1={lcXScale(i - 1)} y1={lcYRank(prev.effRank)} x2={lcXScale(i)} y2={lcYRank(prev.effRank)} stroke="#a855f7" strokeWidth="1.5" strokeDasharray="4,3" />
+                            <line x1={lcXScale(i)} y1={lcYRank(prev.effRank)} x2={lcXScale(i)} y2={lcYRank(w.effRank)} stroke="#a855f7" strokeWidth="1.5" strokeDasharray="4,3" />
+                          </g>
+                        );
+                      })}
+                      {/* Rank dots */}
+                      {lcWindows.map((w, i) => (
+                        <circle key={`lcrd${i}`} cx={lcXScale(i)} cy={lcYRank(w.effRank)} r="2" fill="#a855f7" />
+                      ))}
+                      {/* X axis */}
+                      {lcWindows.map((w, i) => (
+                        <text key={`lcx${i}`} x={lcXScale(i)} y={lcH - lcPadB + 12} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="middle">t{w.iter}</text>
+                      ))}
+                      {/* Axis labels */}
+                      <text x={8} y={lcPadT + lcPlotH / 2} fontSize="6" fill="#f97316" textAnchor="middle" transform={`rotate(-90, 8, ${lcPadT + lcPlotH / 2})`}>Condition #</text>
+                      <text x={lcW - 4} y={lcPadT + lcPlotH / 2} fontSize="6" fill="#a855f7" textAnchor="middle" transform={`rotate(90, ${lcW - 4}, ${lcPadT + lcPlotH / 2})`}>Eff. Rank</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: 4, flexWrap: "wrap" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 3, background: "#f97316", marginRight: 4, verticalAlign: "middle", borderRadius: 2 }} />Condition #</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 0, borderTop: "2px dashed #a855f7", marginRight: 4, verticalAlign: "middle" }} />Eff. Rank (/{lcD}D)</span>
                     </div>
                   </div>
                 );
