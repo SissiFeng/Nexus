@@ -42,6 +42,8 @@ import {
   Rocket,
   Target,
   Star,
+  Undo2,
+  Activity,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -149,6 +151,23 @@ export default function Workspace() {
     catch { return {}; }
   });
   const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
+
+  // Rejected suggestion stack (max 5)
+  const [rejectedSuggestions, setRejectedSuggestions] = useState<Array<{ suggestion: Record<string, number>; index: number; timestamp: number }>>([]);
+  const [showRejectedStack, setShowRejectedStack] = useState(false);
+
+  // Convergence checkpoints
+  const [checkpoints, setCheckpoints] = useState<Array<{ id: string; title: string; iteration: number; bestKpi: number; phase: string; timestamp: number }>>(() => {
+    if (!id) return [];
+    try { const s = localStorage.getItem(`opt-cp-${id}`); return s ? JSON.parse(s) : []; }
+    catch { return []; }
+  });
+  const [showCheckpointModal, setShowCheckpointModal] = useState(false);
+  const [checkpointTitle, setCheckpointTitle] = useState("");
+
+  // Parameter sentinel toggle
+  const [sentinelOpen, setSentinelOpen] = useState(true);
+
   const HISTORY_PAGE_SIZE = 25;
 
   // Persist bookmarks & notes to localStorage
@@ -160,6 +179,10 @@ export default function Workspace() {
     if (!id) return;
     localStorage.setItem(`opt-notes-${id}`, JSON.stringify(trialNotes));
   }, [id, trialNotes]);
+  useEffect(() => {
+    if (!id) return;
+    localStorage.setItem(`opt-cp-${id}`, JSON.stringify(checkpoints));
+  }, [id, checkpoints]);
 
   const toggleBookmark = useCallback((trialId: string) => {
     setBookmarks(prev => {
@@ -179,6 +202,19 @@ export default function Workspace() {
       return { ...prev, [trialId]: note };
     });
   }, []);
+
+  const handleRejectSuggestion = useCallback((sug: Record<string, number>, index: number) => {
+    setRejectedSuggestions(prev => {
+      const next = [{ suggestion: sug, index, timestamp: Date.now() }, ...prev];
+      return next.slice(0, 5);
+    });
+    toast(`Suggestion #${index} rejected`);
+  }, [toast]);
+
+  const handleReconsider = useCallback((idx: number) => {
+    setRejectedSuggestions(prev => prev.filter((_, i) => i !== idx));
+    toast("Suggestion reconsidered");
+  }, [toast]);
 
   const handleCopyBest = useCallback((params: Record<string, number>) => {
     navigator.clipboard.writeText(JSON.stringify(params, null, 2)).then(() => {
@@ -519,6 +555,47 @@ export default function Workspace() {
       })
     : null;
 
+  const addCheckpoint = () => {
+    if (!campaign || !checkpointTitle.trim()) return;
+    const cp = {
+      id: `cp-${Date.now()}`,
+      title: checkpointTitle.trim(),
+      iteration: campaign.iteration,
+      bestKpi: campaign.best_kpi ?? 0,
+      phase: campaign.phases[campaign.phases.length - 1]?.name ?? "unknown",
+      timestamp: Date.now(),
+    };
+    setCheckpoints(prev => [...prev, cp]);
+    setCheckpointTitle("");
+    setShowCheckpointModal(false);
+    toast(`Checkpoint "${cp.title}" saved`);
+  };
+
+  const removeCheckpoint = (cpId: string) => {
+    setCheckpoints(prev => prev.filter(cp => cp.id !== cpId));
+  };
+
+  // Compute diversity score for a suggestion (avg normalized distance to last 3 trials)
+  const computeDiversityScore = (sug: Record<string, number>): number | null => {
+    if (trials.length < 3 || !campaign.spec?.parameters) return null;
+    const specs = campaign.spec.parameters.filter(s => s.type === "continuous" && s.lower != null && s.upper != null);
+    if (specs.length === 0) return null;
+    const recent = [...trials].sort((a, b) => b.iteration - a.iteration).slice(0, 3);
+    let totalDist = 0;
+    for (const trial of recent) {
+      let sumSq = 0;
+      for (const spec of specs) {
+        const range = (spec.upper! - spec.lower!);
+        if (range <= 0) continue;
+        const normSug = ((sug[spec.name] ?? 0) - spec.lower!) / range;
+        const normTrial = (Number(trial.parameters[spec.name]) - spec.lower!) / range;
+        sumSq += (normSug - normTrial) ** 2;
+      }
+      totalDist += Math.sqrt(sumSq / specs.length);
+    }
+    return totalDist / recent.length;
+  };
+
   const handleExportHistoryCSV = () => {
     if (trials.length === 0) return;
     const paramKeys = Object.keys(trials[0].parameters);
@@ -794,6 +871,147 @@ export default function Workspace() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                );
+              })()}
+
+              {/* Checkpoint Controls */}
+              <div className="checkpoint-controls">
+                <button className="btn btn-sm btn-secondary" onClick={() => setShowCheckpointModal(true)}>
+                  <Flag size={13} /> Create Checkpoint
+                </button>
+                {checkpoints.length > 0 && (
+                  <span className="checkpoint-count">{checkpoints.length} checkpoint{checkpoints.length !== 1 ? "s" : ""}</span>
+                )}
+              </div>
+
+              {/* Checkpoint Modal */}
+              {showCheckpointModal && (
+                <div className="shortcut-overlay" onClick={() => setShowCheckpointModal(false)}>
+                  <div className="shortcut-modal checkpoint-modal" onClick={(e) => e.stopPropagation()}>
+                    <div className="shortcut-modal-header">
+                      <h3>Create Checkpoint</h3>
+                      <button className="shortcut-close" onClick={() => setShowCheckpointModal(false)}>
+                        <span>&times;</span>
+                      </button>
+                    </div>
+                    <p className="checkpoint-modal-desc">
+                      Capture the current campaign state as a checkpoint for future reference.
+                    </p>
+                    <div className="checkpoint-modal-snapshot">
+                      <div className="checkpoint-snapshot-row">
+                        <span>Iteration</span><span className="mono">{campaign.iteration}</span>
+                      </div>
+                      <div className="checkpoint-snapshot-row">
+                        <span>Best KPI</span><span className="mono">{campaign.best_kpi?.toFixed(4) ?? "—"}</span>
+                      </div>
+                      <div className="checkpoint-snapshot-row">
+                        <span>Phase</span><span>{campaign.phases[campaign.phases.length - 1]?.name ?? "—"}</span>
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      className="history-note-input checkpoint-title-input"
+                      placeholder="Checkpoint name (e.g., 'Tightened bounds on X')"
+                      value={checkpointTitle}
+                      onChange={(e) => setCheckpointTitle(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && checkpointTitle.trim()) addCheckpoint(); }}
+                      autoFocus
+                    />
+                    <div className="checkpoint-modal-actions">
+                      <button className="btn btn-sm btn-secondary" onClick={() => setShowCheckpointModal(false)}>Cancel</button>
+                      <button className="btn btn-sm btn-primary" onClick={addCheckpoint} disabled={!checkpointTitle.trim()}>
+                        <Flag size={13} /> Save Checkpoint
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Saved Checkpoints List */}
+              {checkpoints.length > 0 && (
+                <div className="checkpoint-list">
+                  {checkpoints.map((cp) => (
+                    <div key={cp.id} className="checkpoint-item">
+                      <div className="checkpoint-dot" />
+                      <div className="checkpoint-info">
+                        <span className="checkpoint-title">{cp.title}</span>
+                        <span className="checkpoint-meta">
+                          Iter {cp.iteration} &middot; Best {cp.bestKpi.toFixed(4)} &middot; {cp.phase} &middot; {new Date(cp.timestamp).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <button className="checkpoint-remove" onClick={() => removeCheckpoint(cp.id)} title="Remove checkpoint">&times;</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Parameter Variance Sentinel */}
+              {trials.length >= 5 && campaign.spec?.parameters && (() => {
+                const specs = campaign.spec.parameters.filter(s => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (specs.length === 0) return null;
+                const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const recentN = Math.min(15, chrono.length);
+                const recent = chrono.slice(-recentN);
+
+                const paramStats = specs.map(s => {
+                  const vals = recent.map(t => Number(t.parameters[s.name]) || 0);
+                  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+                  const variance = vals.reduce((a, v) => a + (v - mean) ** 2, 0) / vals.length;
+                  const range = (s.upper! - s.lower!);
+                  const normalizedStd = range > 0 ? Math.sqrt(variance) / range : 0;
+                  const isCollapsed = normalizedStd < 0.05;
+                  return { name: s.name, normalizedStd, isCollapsed, vals: chrono.slice(-15).map(t => Number(t.parameters[s.name]) || 0), lower: s.lower!, upper: s.upper! };
+                });
+
+                const collapsedCount = paramStats.filter(p => p.isCollapsed).length;
+
+                return (
+                  <div className={`card sentinel-card ${collapsedCount > 0 ? "sentinel-alert" : ""}`}>
+                    <div className="sentinel-header" onClick={() => setSentinelOpen(s => !s)} style={{ cursor: "pointer" }}>
+                      <div className="sentinel-header-left">
+                        <Activity size={16} />
+                        <h2 style={{ margin: 0 }}>Parameter Variance Sentinel</h2>
+                        {collapsedCount > 0 && (
+                          <span className="sentinel-alert-badge">{collapsedCount} collapsed</span>
+                        )}
+                      </div>
+                      {sentinelOpen ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+                    </div>
+                    {sentinelOpen && (
+                      <div className="sentinel-body">
+                        <p className="sentinel-desc">
+                          Monitoring recent {recentN}-trial variance for each parameter. Low variance may indicate parameter collapse.
+                        </p>
+                        {paramStats.map(p => {
+                          const sparkW = 56, sparkH = 18, pad = 1;
+                          const min = Math.min(...p.vals);
+                          const max = Math.max(...p.vals);
+                          const range = max - min || 1;
+                          const points = p.vals.map((v, i) => ({
+                            x: pad + (i / Math.max(1, p.vals.length - 1)) * (sparkW - 2 * pad),
+                            y: pad + (1 - (v - min) / range) * (sparkH - 2 * pad),
+                          }));
+                          const d = points.map((pt, i) => `${i === 0 ? "M" : "L"}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+                          const sparkColor = p.isCollapsed ? "#ef4444" : p.normalizedStd < 0.15 ? "#eab308" : "#22c55e";
+                          return (
+                            <div key={p.name} className={`sentinel-row ${p.isCollapsed ? "sentinel-row-alert" : ""}`}>
+                              <span className="sentinel-param-name mono">{p.name}</span>
+                              <svg width={sparkW} height={sparkH} viewBox={`0 0 ${sparkW} ${sparkH}`} style={{ flexShrink: 0 }}>
+                                <path d={d} fill="none" stroke={sparkColor} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                              <div className="sentinel-variance-bar">
+                                <div className="sentinel-variance-fill" style={{ width: `${Math.min(p.normalizedStd * 100 / 0.5, 100)}%`, background: sparkColor }} />
+                              </div>
+                              <span className="sentinel-std mono" style={{ color: sparkColor }}>
+                                {(p.normalizedStd * 100).toFixed(1)}%
+                              </span>
+                              {p.isCollapsed && <span className="sentinel-warn-tag">Collapsed</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -1300,28 +1518,90 @@ export default function Workspace() {
               {/* Suggestion Cards */}
               {suggestions && (
                 <div className="suggestions-grid">
-                  {suggestions.suggestions.map((sug, i) => (
-                    <RealSuggestionCard
-                      key={i}
-                      index={i + 1}
-                      suggestion={sug}
-                      parameterSpecs={
-                        campaign.spec?.parameters ??
-                        Object.keys(sug).map((name) => ({
-                          name,
-                          type: "continuous" as const,
-                          lower: 0,
-                          upper: 1,
-                        }))
-                      }
-                      objectiveName={campaign.objective_names?.[0] ?? "Objective"}
-                      predictedValue={suggestions.predicted_values?.[i]}
-                      predictedUncertainty={suggestions.predicted_uncertainties?.[i]}
-                      phase={suggestions.phase}
-                      bestParams={bestResult?.parameters}
-                      bestObjective={bestResult ? Object.values(bestResult.kpis)[0] : undefined}
-                    />
-                  ))}
+                  {suggestions.suggestions.map((sug, i) => {
+                    const diversity = computeDiversityScore(sug);
+                    return (
+                      <div key={i} className="suggestion-card-wrapper">
+                        {diversity !== null && (
+                          <div
+                            className={`diversity-badge ${diversity > 0.5 ? "diversity-high" : diversity > 0.25 ? "diversity-mid" : "diversity-low"}`}
+                            title={`Diversity: ${(diversity * 100).toFixed(0)}% — ${diversity > 0.5 ? "Highly exploratory" : diversity > 0.25 ? "Moderately novel" : "Close to recent trials"}`}
+                          >
+                            <Activity size={11} />
+                            {diversity > 0.5 ? "Explore" : diversity > 0.25 ? "Balanced" : "Refine"}
+                          </div>
+                        )}
+                        <RealSuggestionCard
+                          index={i + 1}
+                          suggestion={sug}
+                          parameterSpecs={
+                            campaign.spec?.parameters ??
+                            Object.keys(sug).map((name) => ({
+                              name,
+                              type: "continuous" as const,
+                              lower: 0,
+                              upper: 1,
+                            }))
+                          }
+                          objectiveName={campaign.objective_names?.[0] ?? "Objective"}
+                          predictedValue={suggestions.predicted_values?.[i]}
+                          predictedUncertainty={suggestions.predicted_uncertainties?.[i]}
+                          phase={suggestions.phase}
+                          bestParams={bestResult?.parameters}
+                          bestObjective={bestResult ? Object.values(bestResult.kpis)[0] : undefined}
+                          onReject={() => handleRejectSuggestion(sug, i + 1)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Rejected Suggestions Stack */}
+              {rejectedSuggestions.length > 0 && (
+                <div className="rejected-stack">
+                  <button
+                    className="rejected-stack-toggle"
+                    onClick={() => setShowRejectedStack(s => !s)}
+                  >
+                    <Undo2 size={14} />
+                    <span>Recently Rejected ({rejectedSuggestions.length})</span>
+                    {showRejectedStack ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+                  </button>
+                  {showRejectedStack && (
+                    <div className="rejected-stack-list">
+                      {rejectedSuggestions.map((r, idx) => {
+                        const paramEntries = Object.entries(r.suggestion).slice(0, 4);
+                        return (
+                          <div key={r.timestamp} className="rejected-item">
+                            <div className="rejected-item-header">
+                              <span className="rejected-item-index">#{r.index}</span>
+                              <span className="rejected-item-time">
+                                {new Date(r.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                              <button
+                                className="btn btn-sm btn-secondary rejected-reconsider-btn"
+                                onClick={() => handleReconsider(idx)}
+                              >
+                                <Undo2 size={12} /> Reconsider
+                              </button>
+                            </div>
+                            <div className="rejected-item-params">
+                              {paramEntries.map(([k, v]) => (
+                                <span key={k} className="rejected-param">
+                                  <span className="rejected-param-name">{k}</span>
+                                  <span className="mono">{typeof v === "number" ? v.toFixed(3) : String(v)}</span>
+                                </span>
+                              ))}
+                              {Object.keys(r.suggestion).length > 4 && (
+                                <span className="rejected-param-more">+{Object.keys(r.suggestion).length - 4} more</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2593,6 +2873,351 @@ export default function Workspace() {
           .workspace-tab .tab-badge {
             display: inline-flex;
           }
+        }
+
+        /* ── Diversity badges ── */
+        .suggestion-card-wrapper {
+          position: relative;
+        }
+        .diversity-badge {
+          position: absolute;
+          top: -6px;
+          right: 12px;
+          z-index: 2;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 2px 10px;
+          font-size: 0.68rem;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          border-radius: 10px;
+          text-transform: uppercase;
+        }
+        .diversity-high {
+          background: #dbeafe;
+          color: #1d4ed8;
+          border: 1px solid #93c5fd;
+        }
+        .diversity-mid {
+          background: #fef3c7;
+          color: #92400e;
+          border: 1px solid #fcd34d;
+        }
+        .diversity-low {
+          background: #f0fdf4;
+          color: #166534;
+          border: 1px solid #86efac;
+        }
+        [data-theme="dark"] .diversity-high {
+          background: #1e3a5f;
+          color: #93c5fd;
+          border-color: #1d4ed8;
+        }
+        [data-theme="dark"] .diversity-mid {
+          background: #451a03;
+          color: #fcd34d;
+          border-color: #92400e;
+        }
+        [data-theme="dark"] .diversity-low {
+          background: #052e16;
+          color: #86efac;
+          border-color: #166534;
+        }
+
+        /* ── Rejected suggestion stack ── */
+        .rejected-stack {
+          margin-top: 16px;
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg, 12px);
+          background: var(--color-surface);
+          overflow: hidden;
+        }
+        .rejected-stack-toggle {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding: 12px 16px;
+          background: none;
+          border: none;
+          font-size: 0.85rem;
+          font-weight: 500;
+          color: var(--color-text-muted);
+          cursor: pointer;
+          font-family: inherit;
+          transition: color 0.15s, background 0.15s;
+        }
+        .rejected-stack-toggle:hover {
+          color: var(--color-text);
+          background: var(--color-bg);
+        }
+        .rejected-stack-list {
+          border-top: 1px solid var(--color-border);
+          animation: fadeSlideUp 0.2s ease;
+        }
+        .rejected-item {
+          padding: 12px 16px;
+          border-bottom: 1px solid var(--color-border-subtle);
+        }
+        .rejected-item:last-child {
+          border-bottom: none;
+        }
+        .rejected-item-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 6px;
+        }
+        .rejected-item-index {
+          font-weight: 700;
+          font-size: 0.88rem;
+          color: var(--color-text-muted);
+        }
+        .rejected-item-time {
+          font-size: 0.72rem;
+          color: var(--color-text-muted);
+          opacity: 0.6;
+        }
+        .rejected-reconsider-btn {
+          margin-left: auto;
+          font-size: 0.72rem !important;
+          padding: 3px 10px !important;
+        }
+        .rejected-item-params {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          font-size: 0.78rem;
+        }
+        .rejected-param {
+          display: flex;
+          gap: 4px;
+          padding: 2px 8px;
+          background: var(--color-bg);
+          border-radius: 6px;
+        }
+        .rejected-param-name {
+          color: var(--color-text-muted);
+          font-weight: 500;
+        }
+        .rejected-param-more {
+          color: var(--color-text-muted);
+          font-size: 0.72rem;
+          padding: 2px 6px;
+          opacity: 0.6;
+        }
+
+        /* ── Checkpoint styles ── */
+        .checkpoint-controls {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .checkpoint-count {
+          font-size: 0.78rem;
+          color: var(--color-text-muted);
+        }
+        .checkpoint-modal {
+          min-width: 380px;
+        }
+        .checkpoint-modal-desc {
+          font-size: 0.85rem;
+          color: var(--color-text-muted);
+          margin: 0 0 16px;
+          line-height: 1.5;
+        }
+        .checkpoint-modal-snapshot {
+          background: var(--color-bg);
+          border-radius: 8px;
+          padding: 12px 14px;
+          margin-bottom: 16px;
+        }
+        .checkpoint-snapshot-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.82rem;
+          padding: 4px 0;
+        }
+        .checkpoint-snapshot-row + .checkpoint-snapshot-row {
+          border-top: 1px solid var(--color-border-subtle);
+        }
+        .checkpoint-title-input {
+          width: 100%;
+          max-width: 100%;
+          margin-bottom: 16px;
+          padding: 8px 12px;
+        }
+        .checkpoint-modal-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+        }
+        .checkpoint-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          margin-bottom: 16px;
+          background: var(--color-surface);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg, 12px);
+          padding: 8px;
+        }
+        .checkpoint-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px 10px;
+          border-radius: 8px;
+          transition: background 0.15s;
+        }
+        .checkpoint-item:hover {
+          background: var(--color-bg);
+        }
+        .checkpoint-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: var(--color-primary);
+          flex-shrink: 0;
+        }
+        .checkpoint-info {
+          flex: 1;
+          min-width: 0;
+        }
+        .checkpoint-title {
+          display: block;
+          font-size: 0.85rem;
+          font-weight: 600;
+          color: var(--color-text);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .checkpoint-meta {
+          display: block;
+          font-size: 0.72rem;
+          color: var(--color-text-muted);
+          margin-top: 2px;
+        }
+        .checkpoint-remove {
+          background: none;
+          border: none;
+          color: var(--color-text-muted);
+          opacity: 0;
+          cursor: pointer;
+          font-size: 1rem;
+          padding: 2px 6px;
+          transition: opacity 0.15s, color 0.15s;
+        }
+        .checkpoint-item:hover .checkpoint-remove {
+          opacity: 0.5;
+        }
+        .checkpoint-remove:hover {
+          opacity: 1 !important;
+          color: #ef4444;
+        }
+
+        /* ── Parameter Variance Sentinel ── */
+        .sentinel-card {
+          transition: border-color 0.3s;
+        }
+        .sentinel-alert {
+          border-color: #fca5a5 !important;
+        }
+        .sentinel-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+        .sentinel-header-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .sentinel-header-left h2 {
+          font-size: 1rem;
+        }
+        .sentinel-alert-badge {
+          display: inline-flex;
+          padding: 2px 8px;
+          font-size: 0.68rem;
+          font-weight: 700;
+          border-radius: 8px;
+          background: #fef2f2;
+          color: #dc2626;
+          border: 1px solid #fca5a5;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        [data-theme="dark"] .sentinel-alert-badge {
+          background: #450a0a;
+          color: #fca5a5;
+          border-color: #991b1b;
+        }
+        .sentinel-desc {
+          font-size: 0.82rem;
+          color: var(--color-text-muted);
+          margin: 0 0 14px;
+        }
+        .sentinel-body {
+          animation: fadeSlideUp 0.2s ease;
+        }
+        .sentinel-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 6px 0;
+          border-bottom: 1px solid var(--color-border-subtle);
+        }
+        .sentinel-row:last-child {
+          border-bottom: none;
+        }
+        .sentinel-row-alert {
+          background: rgba(239, 68, 68, 0.04);
+          margin: 0 -12px;
+          padding: 6px 12px;
+          border-radius: 6px;
+        }
+        .sentinel-param-name {
+          width: 100px;
+          font-size: 0.78rem;
+          font-weight: 500;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+        .sentinel-variance-bar {
+          flex: 1;
+          height: 5px;
+          background: var(--color-border);
+          border-radius: 3px;
+          overflow: hidden;
+        }
+        .sentinel-variance-fill {
+          height: 100%;
+          border-radius: 3px;
+          transition: width 0.4s ease;
+          min-width: 2px;
+        }
+        .sentinel-std {
+          width: 45px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          text-align: right;
+          flex-shrink: 0;
+        }
+        .sentinel-warn-tag {
+          font-size: 0.62rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #ef4444;
+          flex-shrink: 0;
         }
       `}</style>
     </div>
