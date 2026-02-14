@@ -68,6 +68,10 @@ import {
   GitBranch,
   BoxSelect,
   Compass,
+  Volume2,
+  Ruler,
+  Circle,
+  Minimize2,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -2307,6 +2311,81 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Noise-Signal Decomposition Gauge */}
+              {trials.length >= 10 && (() => {
+                const nsObjKey = Object.keys(trials[0].kpis)[0];
+                const nsVals = trials.map(t => Number(t.kpis[nsObjKey]) || 0);
+                const nsMean = nsVals.reduce((a, b) => a + b, 0) / nsVals.length;
+                const nsGlobalVar = nsVals.reduce((a, v) => a + (v - nsMean) ** 2, 0) / nsVals.length;
+                // Estimate noise: average local variance from k nearest neighbors
+                const nsParamKeys = Object.keys(trials[0].parameters);
+                const nsNormTrials = trials.map(t => nsParamKeys.map(k => Number(t.parameters[k]) || 0));
+                const nsK = Math.min(5, Math.floor(trials.length / 3));
+                let nsNoiseSum = 0;
+                for (let i = 0; i < trials.length; i++) {
+                  const nsDists = nsNormTrials.map((nt, j) => ({
+                    j,
+                    d: nt.reduce((s, v, dim) => s + (v - nsNormTrials[i][dim]) ** 2, 0),
+                  })).filter(x => x.j !== i).sort((a, b) => a.d - b.d).slice(0, nsK);
+                  const nsNeighVals = nsDists.map(x => nsVals[x.j]);
+                  const nsLocalMean = nsNeighVals.reduce((a, b) => a + b, 0) / nsNeighVals.length;
+                  nsNoiseSum += nsNeighVals.reduce((a, v) => a + (v - nsLocalMean) ** 2, 0) / nsNeighVals.length;
+                }
+                const nsNoiseVar = nsNoiseSum / trials.length;
+                const nsSignalVar = Math.max(0, nsGlobalVar - nsNoiseVar);
+                const nsRatio = nsGlobalVar > 0 ? nsNoiseVar / nsGlobalVar : 0;
+                const nsSnr = nsNoiseVar > 0 ? nsSignalVar / nsNoiseVar : 99;
+                const nsStatus = nsRatio < 0.3 ? "Signal-dominant" : nsRatio < 0.6 ? "Moderate noise" : "Noise-dominant";
+                const nsColor = nsRatio < 0.3 ? "#22c55e" : nsRatio < 0.6 ? "#eab308" : "#ef4444";
+                const nsW = 300, nsH = 120, nsPad = 20;
+                const nsBarW = 30, nsBarH = nsH - 2 * nsPad;
+                const nsBarX = nsPad + 40;
+                const nsBarY = nsPad;
+                const nsFillH = nsBarH * Math.min(nsRatio, 1);
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "8px" }}>
+                      <Volume2 size={16} style={{ color: "var(--color-primary)", marginTop: 2 }} />
+                      <div style={{ flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Noise-Signal Decomposition</h2>
+                        <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                          Ratio of measurement noise to total objective variance.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ background: nsColor + "22", color: nsColor, border: `1px solid ${nsColor}44` }}>
+                        SNR: {nsSnr.toFixed(1)}
+                      </span>
+                    </div>
+                    <svg width={nsW} height={nsH} viewBox={`0 0 ${nsW} ${nsH}`} role="img" aria-label="Noise-signal gauge" style={{ display: "block", margin: "0 auto" }}>
+                      {/* Gauge background */}
+                      <rect x={nsBarX} y={nsBarY} width={nsBarW} height={nsBarH} rx={4} fill="var(--color-border)" />
+                      {/* Noise fill (from bottom) */}
+                      <rect x={nsBarX} y={nsBarY + nsBarH - nsFillH} width={nsBarW} height={nsFillH} rx={4} fill={nsColor} opacity={0.7} />
+                      {/* Zone lines */}
+                      <line x1={nsBarX - 4} y1={nsBarY + nsBarH * 0.4} x2={nsBarX + nsBarW + 4} y2={nsBarY + nsBarH * 0.4} stroke="var(--color-text-muted)" strokeWidth={0.5} strokeDasharray="3,2" />
+                      <line x1={nsBarX - 4} y1={nsBarY + nsBarH * 0.7} x2={nsBarX + nsBarW + 4} y2={nsBarY + nsBarH * 0.7} stroke="var(--color-text-muted)" strokeWidth={0.5} strokeDasharray="3,2" />
+                      {/* Zone labels */}
+                      <text x={nsBarX + nsBarW + 10} y={nsBarY + nsBarH * 0.2} fontSize="9" fill="#ef4444" fontFamily="var(--font-mono)">Noise-heavy</text>
+                      <text x={nsBarX + nsBarW + 10} y={nsBarY + nsBarH * 0.55} fontSize="9" fill="#eab308" fontFamily="var(--font-mono)">Moderate</text>
+                      <text x={nsBarX + nsBarW + 10} y={nsBarY + nsBarH * 0.85} fontSize="9" fill="#22c55e" fontFamily="var(--font-mono)">Signal-clear</text>
+                      {/* Percentage labels */}
+                      <text x={nsBarX - 6} y={nsBarY + 4} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">100%</text>
+                      <text x={nsBarX - 6} y={nsBarY + nsBarH} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">0%</text>
+                      {/* Current level marker */}
+                      <line x1={nsBarX - 2} y1={nsBarY + nsBarH - nsFillH} x2={nsBarX + nsBarW + 2} y2={nsBarY + nsBarH - nsFillH} stroke={nsColor} strokeWidth={2} />
+                      <text x={nsBarX - 6} y={nsBarY + nsBarH - nsFillH + 3} textAnchor="end" fontSize="9" fill={nsColor} fontWeight="600" fontFamily="var(--font-mono)">{(nsRatio * 100).toFixed(0)}%</text>
+                      {/* Stats on right */}
+                      <text x={nsBarX + nsBarW + 10} y={nsH - 6} fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                        σ²noise: {nsNoiseVar.toPrecision(3)} | σ²signal: {nsSignalVar.toPrecision(3)}
+                      </text>
+                    </svg>
+                    <div style={{ textAlign: "center", marginTop: "4px", fontSize: "0.82rem", fontWeight: 600, color: nsColor }}>
+                      {nsStatus}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -2858,6 +2937,87 @@ export default function Workspace() {
                       <span style={{ marginLeft: "auto", fontSize: "0.78rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
                         MAE: {mae.toPrecision(3)}
                       </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Lengthscale Adequacy Indicator */}
+              {trials.length >= 10 && (() => {
+                const laSpecs = campaign.spec?.parameters || [];
+                const laContSpecs = laSpecs.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (laContSpecs.length < 2) return null;
+                // For each parameter, compute median nearest-neighbor distance
+                const laResults = laContSpecs.map((spec: { name: string; lower?: number; upper?: number }) => {
+                  const range = (spec.upper ?? 1) - (spec.lower ?? 0);
+                  const vals = trials.map(t => Number(t.parameters[spec.name]) || 0);
+                  const sorted = [...vals].sort((a, b) => a - b);
+                  // Nearest neighbor distances
+                  const nnDists: number[] = [];
+                  for (let i = 0; i < sorted.length; i++) {
+                    let minD = Infinity;
+                    if (i > 0) minD = Math.min(minD, sorted[i] - sorted[i - 1]);
+                    if (i < sorted.length - 1) minD = Math.min(minD, sorted[i + 1] - sorted[i]);
+                    nnDists.push(minD);
+                  }
+                  nnDists.sort((a, b) => a - b);
+                  const medianNN = nnDists[Math.floor(nnDists.length / 2)];
+                  const resolution = range > 0 ? medianNN / range : 0;
+                  // Critical threshold: ~1/sqrt(n) as rough heuristic for GP resolution
+                  const critical = 1 / Math.sqrt(trials.length);
+                  const adequate = resolution <= critical;
+                  return { name: spec.name, resolution, critical, adequate, range };
+                });
+                const laAdequateCount = laResults.filter((r: { adequate: boolean }) => r.adequate).length;
+                const laMaxRes = Math.max(...laResults.map((r: { resolution: number }) => r.resolution), 0.01);
+                const laW = 320, laRowH = 22, laPadL = 80, laPadR = 60, laPadT = 8, laPadB = 20;
+                const laH = laPadT + laResults.length * laRowH + laPadB;
+                const laPlotW = laW - laPadL - laPadR;
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "8px" }}>
+                      <Ruler size={16} style={{ color: "var(--color-primary)", marginTop: 2 }} />
+                      <div style={{ flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Sampling Resolution</h2>
+                        <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                          Median nearest-neighbor distance per parameter vs. critical threshold.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ background: laAdequateCount === laResults.length ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)", color: laAdequateCount === laResults.length ? "#22c55e" : "#eab308", border: `1px solid ${laAdequateCount === laResults.length ? "#22c55e44" : "#eab30844"}` }}>
+                        {laAdequateCount}/{laResults.length} adequate
+                      </span>
+                    </div>
+                    <svg width={laW} height={laH} viewBox={`0 0 ${laW} ${laH}`} role="img" aria-label="Sampling resolution per parameter" style={{ display: "block" }}>
+                      {laResults.map((r: { name: string; resolution: number; critical: number; adequate: boolean }, i: number) => {
+                        const y = laPadT + i * laRowH;
+                        const barW = Math.max(2, (r.resolution / laMaxRes) * laPlotW);
+                        const critX = laPadL + (r.critical / laMaxRes) * laPlotW;
+                        const barColor = r.adequate ? "#22c55e" : r.resolution < r.critical * 2 ? "#eab308" : "#ef4444";
+                        return (
+                          <g key={r.name}>
+                            <text x={laPadL - 6} y={y + laRowH / 2 + 3} textAnchor="end" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text-primary)">{r.name}</text>
+                            <rect x={laPadL} y={y + 3} width={laPlotW} height={laRowH - 6} rx={3} fill="var(--color-border)" />
+                            <rect x={laPadL} y={y + 3} width={Math.min(barW, laPlotW)} height={laRowH - 6} rx={3} fill={barColor} opacity={0.6}>
+                              <title>{r.name}: resolution {(r.resolution * 100).toFixed(1)}% of range (threshold: {(r.critical * 100).toFixed(1)}%)</title>
+                            </rect>
+                            {/* Critical threshold mark */}
+                            <line x1={critX} y1={y + 1} x2={critX} y2={y + laRowH - 1} stroke="var(--color-text-muted)" strokeWidth={1.5} strokeDasharray="3,2" />
+                            <text x={laW - laPadR + 6} y={y + laRowH / 2 + 3} fontSize="9" fontFamily="var(--font-mono)" fill={barColor} fontWeight="600">
+                              {(r.resolution * 100).toFixed(1)}%
+                            </text>
+                          </g>
+                        );
+                      })}
+                      {/* Threshold label */}
+                      <text x={laPadL + (laResults[0].critical / laMaxRes) * laPlotW} y={laH - 4} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                        threshold
+                      </text>
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#22c55e", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />Adequate</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#eab308", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />Marginal</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#ef4444", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />Too coarse</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>Dashed = 1/√n threshold</span>
                     </div>
                   </div>
                 );
@@ -4593,6 +4753,89 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Suggestion Novelty Scores */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 3 && (() => {
+                const snPKeys = Object.keys(trials[0].parameters);
+                const snSpecs = campaign.spec?.parameters || [];
+                const snRanges = snPKeys.map(k => {
+                  const sp = snSpecs.find((s: { name: string }) => s.name === k);
+                  const lo = sp && (sp as { lower?: number }).lower != null ? (sp as { lower: number }).lower : Math.min(...trials.map(t => Number(t.parameters[k]) || 0));
+                  const hi = sp && (sp as { upper?: number }).upper != null ? (sp as { upper: number }).upper : Math.max(...trials.map(t => Number(t.parameters[k]) || 0));
+                  return hi - lo || 1;
+                });
+                // Normalize trial coords
+                const snTrialCoords = trials.map(t => snPKeys.map((k, d) => (Number(t.parameters[k]) || 0) / snRanges[d]));
+                const snScores = suggestions.suggestions.map((sug) => {
+                  const sugCoords = snPKeys.map((k, d) => (Number(sug[k]) || 0) / snRanges[d]);
+                  let minDist = Infinity;
+                  for (const tc of snTrialCoords) {
+                    const dist = Math.sqrt(tc.reduce((s, v, d) => s + (v - sugCoords[d]) ** 2, 0));
+                    if (dist < minDist) minDist = dist;
+                  }
+                  return minDist;
+                });
+                // Normalize to 0-1 (max possible dist in unit cube = sqrt(dims))
+                const snMaxDist = Math.sqrt(snPKeys.length);
+                const snNorm = snScores.map(d => Math.min(d / (snMaxDist * 0.5), 1));
+                const snAvg = snNorm.reduce((a, b) => a + b, 0) / snNorm.length;
+                const snW = 320, snH = 80, snPad = 16;
+                const snCircleR = 18;
+                const snSpacing = Math.min((snW - 2 * snPad) / snNorm.length, snCircleR * 2.8);
+                const snStartX = snPad + (snW - 2 * snPad - (snNorm.length - 1) * snSpacing) / 2;
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "8px" }}>
+                      <Circle size={16} style={{ color: "var(--color-primary)", marginTop: 2 }} />
+                      <div style={{ flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Suggestion Novelty</h2>
+                        <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                          Min distance from each suggestion to historical trials. Higher = more novel.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ background: snAvg > 0.5 ? "rgba(59,130,246,0.12)" : snAvg > 0.25 ? "rgba(234,179,8,0.12)" : "rgba(239,68,68,0.12)", color: snAvg > 0.5 ? "#3b82f6" : snAvg > 0.25 ? "#eab308" : "#ef4444", border: `1px solid ${snAvg > 0.5 ? "#3b82f644" : snAvg > 0.25 ? "#eab30844" : "#ef444444"}` }}>
+                        avg {(snAvg * 100).toFixed(0)}% novel
+                      </span>
+                    </div>
+                    <svg width={snW} height={snH} viewBox={`0 0 ${snW} ${snH}`} role="img" aria-label="Suggestion novelty scores" style={{ display: "block", margin: "0 auto" }}>
+                      {snNorm.map((nov, i) => {
+                        const cx = snStartX + i * snSpacing;
+                        const cy = snH / 2;
+                        const fillColor = nov > 0.5 ? "#3b82f6" : nov > 0.25 ? "#eab308" : "#ef4444";
+                        const fillH = snCircleR * 2 * nov;
+                        const clipId = `sn-clip-${i}`;
+                        return (
+                          <g key={i}>
+                            <defs>
+                              <clipPath id={clipId}>
+                                <circle cx={cx} cy={cy} r={snCircleR - 1} />
+                              </clipPath>
+                            </defs>
+                            {/* Background circle */}
+                            <circle cx={cx} cy={cy} r={snCircleR} fill="none" stroke="var(--color-border)" strokeWidth={1.5} />
+                            {/* Fill from bottom */}
+                            <rect x={cx - snCircleR} y={cy + snCircleR - fillH} width={snCircleR * 2} height={fillH} fill={fillColor} opacity={0.6} clipPath={`url(#${clipId})`} />
+                            {/* Label */}
+                            <text x={cx} y={cy + 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="var(--color-text-primary)" fontFamily="var(--font-mono)">
+                              {(nov * 100).toFixed(0)}%
+                            </text>
+                            {/* Rank below */}
+                            <text x={cx} y={cy + snCircleR + 12} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)">
+                              #{i + 1}
+                            </text>
+                            <title>Suggestion #{i + 1}: {(nov * 100).toFixed(1)}% novelty (min distance: {snScores[i].toPrecision(3)})</title>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "#3b82f6", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />High (&gt;50%)</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "#eab308", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />Moderate (25-50%)</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: "#ef4444", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />Low (&lt;25%)</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -5434,6 +5677,106 @@ export default function Workspace() {
                       <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
                         ⚠ = locked in (late spread &lt; 30% of early)
                       </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Posterior Contraction Timeline */}
+              {trials.length >= 15 && (() => {
+                const pcObjKey = Object.keys(trials[0].kpis)[0];
+                const pcPKeys = Object.keys(trials[0].parameters);
+                const pcSpecs = campaign.spec?.parameters || [];
+                const pcRanges = pcPKeys.map(k => {
+                  const sp = pcSpecs.find((s: { name: string }) => s.name === k);
+                  const range = sp && (sp as { upper?: number }).upper != null && (sp as { lower?: number }).lower != null ? ((sp as { upper: number }).upper - (sp as { lower: number }).lower) : 1;
+                  return range || 1;
+                });
+                // At each trial, compute IQR-volume of top-k trials so far
+                const pcK = Math.max(5, Math.floor(trials.length / 5));
+                const pcWinSize = Math.max(3, Math.floor(trials.length / 20));
+                const pcPoints: Array<{ idx: number; volume: number }> = [];
+                for (let i = pcK - 1; i < trials.length; i += pcWinSize) {
+                  // Get top-k by objective (minimize = lowest values)
+                  const subset = trials.slice(0, i + 1).map((t, j) => ({
+                    j,
+                    val: Number(t.kpis[pcObjKey]) || 0,
+                    params: pcPKeys.map((k, d) => (Number(t.parameters[k]) || 0) / pcRanges[d]),
+                  })).sort((a, b) => a.val - b.val).slice(0, pcK);
+                  // Compute normalized IQR volume: product of IQRs per dimension
+                  let logVol = 0;
+                  for (let d = 0; d < pcPKeys.length; d++) {
+                    const dimVals = subset.map(s => s.params[d]).sort((a, b) => a - b);
+                    const q1 = dimVals[Math.floor(dimVals.length * 0.25)];
+                    const q3 = dimVals[Math.floor(dimVals.length * 0.75)];
+                    const iqr = Math.max(q3 - q1, 0.001);
+                    logVol += Math.log(iqr);
+                  }
+                  pcPoints.push({ idx: i, volume: Math.exp(logVol / pcPKeys.length) }); // Geometric mean of IQRs
+                }
+                if (pcPoints.length < 2) return null;
+                const pcMaxVol = Math.max(...pcPoints.map(p => p.volume));
+                const pcMinVol = Math.min(...pcPoints.map(p => p.volume));
+                const pcVolRange = pcMaxVol - pcMinVol || 1;
+                const pcW = 320, pcH = 120, pcPadL = 40, pcPadR = 20, pcPadT = 12, pcPadB = 24;
+                const pcPlotW = pcW - pcPadL - pcPadR;
+                const pcPlotH = pcH - pcPadT - pcPadB;
+                const pcMaxIdx = trials.length - 1;
+                const pcPathPts = pcPoints.map(p => ({
+                  x: pcPadL + (p.idx / pcMaxIdx) * pcPlotW,
+                  y: pcPadT + (1 - (p.volume - pcMinVol) / pcVolRange) * pcPlotH,
+                }));
+                const pcAreaPath = `M${pcPathPts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L")} L${pcPathPts[pcPathPts.length - 1].x.toFixed(1)},${pcPadT + pcPlotH} L${pcPathPts[0].x.toFixed(1)},${pcPadT + pcPlotH} Z`;
+                const pcLinePath = pcPathPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                // Trend: compare first third vs last third
+                const pcThird = Math.max(1, Math.floor(pcPoints.length / 3));
+                const pcEarlyAvg = pcPoints.slice(0, pcThird).reduce((s, p) => s + p.volume, 0) / pcThird;
+                const pcLateAvg = pcPoints.slice(-pcThird).reduce((s, p) => s + p.volume, 0) / pcThird;
+                const pcContraction = pcEarlyAvg > 0 ? ((pcEarlyAvg - pcLateAvg) / pcEarlyAvg) * 100 : 0;
+                const pcTrend = pcContraction > 20 ? "Converging" : pcContraction > 5 ? "Narrowing" : pcContraction > -5 ? "Stable" : "Diverging";
+                const pcTrendColor = pcContraction > 20 ? "#22c55e" : pcContraction > 5 ? "#3b82f6" : pcContraction > -5 ? "#eab308" : "#ef4444";
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "8px" }}>
+                      <Minimize2 size={16} style={{ color: "var(--color-primary)", marginTop: 2 }} />
+                      <div style={{ flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Posterior Contraction</h2>
+                        <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
+                          Search volume of top-{pcK} trials over time. Shrinking = spatial convergence.
+                        </p>
+                      </div>
+                      <span className="findings-badge" style={{ background: pcTrendColor + "22", color: pcTrendColor, border: `1px solid ${pcTrendColor}44` }}>
+                        {pcTrend} ({pcContraction > 0 ? "-" : "+"}{Math.abs(pcContraction).toFixed(0)}%)
+                      </span>
+                    </div>
+                    <svg width={pcW} height={pcH} viewBox={`0 0 ${pcW} ${pcH}`} role="img" aria-label="Posterior contraction timeline" style={{ display: "block" }}>
+                      {/* Grid */}
+                      {[0, 0.5, 1].map(f => (
+                        <g key={f}>
+                          <line x1={pcPadL} y1={pcPadT + f * pcPlotH} x2={pcPadL + pcPlotW} y2={pcPadT + f * pcPlotH} stroke="var(--color-border)" strokeWidth={0.5} />
+                          <text x={pcPadL - 4} y={pcPadT + f * pcPlotH + 3} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                            {(pcMaxVol - f * pcVolRange).toPrecision(2)}
+                          </text>
+                        </g>
+                      ))}
+                      {/* Area fill */}
+                      <path d={pcAreaPath} fill={pcTrendColor} opacity={0.15} />
+                      {/* Line */}
+                      <path d={pcLinePath} fill="none" stroke={pcTrendColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Dots */}
+                      {pcPathPts.map((p, i) => (
+                        <circle key={i} cx={p.x} cy={p.y} r={2.5} fill={pcTrendColor}>
+                          <title>Trial {pcPoints[i].idx}: volume {pcPoints[i].volume.toPrecision(3)}</title>
+                        </circle>
+                      ))}
+                      {/* X axis */}
+                      <text x={pcPadL + pcPlotW / 2} y={pcH - 2} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">Trial</text>
+                      <text x={pcPadL} y={pcH - 2} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">0</text>
+                      <text x={pcPadL + pcPlotW} y={pcH - 2} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">{pcMaxIdx}</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: "16px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: pcTrendColor, marginRight: 4, verticalAlign: "middle" }} />IQR Volume (top-{pcK})</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>Shrinking area = convergence in parameter space</span>
                     </div>
                   </div>
                 );
