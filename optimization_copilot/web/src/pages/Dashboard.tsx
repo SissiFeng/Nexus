@@ -16,6 +16,10 @@ import {
   Sparkles,
   ArrowRight,
   Clock,
+  GitCompareArrows,
+  X,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import {
   fetchCampaigns,
@@ -87,18 +91,29 @@ function CampaignCard({
   onArchive,
   onUnarchive,
   onDelete,
+  selected,
+  onToggleSelect,
 }: {
   campaign: CampaignSummary;
   onArchive: (id: string) => void;
   onUnarchive: (id: string) => void;
   onDelete: (id: string) => void;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const c = campaign;
 
   return (
-    <div className={`dashboard-card ${c.status === "archived" ? "dashboard-card-archived" : ""}`}>
+    <div className={`dashboard-card ${c.status === "archived" ? "dashboard-card-archived" : ""} ${selected ? "dashboard-card-selected" : ""}`}>
       <div className="dashboard-card-top">
+        <button
+          className="dashboard-card-checkbox"
+          onClick={(e) => { e.stopPropagation(); onToggleSelect(c.campaign_id); }}
+          title={selected ? "Deselect" : "Select for comparison"}
+        >
+          {selected ? <CheckSquare size={16} /> : <Square size={16} />}
+        </button>
         <Link to={`/workspace/${c.campaign_id}`} className="dashboard-card-name">
           {c.name}
         </Link>
@@ -226,6 +241,18 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Selection for batch compare
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -708,11 +735,39 @@ export default function Dashboard() {
                     onArchive={handleArchive}
                     onUnarchive={handleUnarchive}
                     onDelete={handleDelete}
+                    selected={selectedIds.has(c.campaign_id)}
+                    onToggleSelect={toggleSelect}
                   />
                 ))}
               </div>
             )}
           </>
+        )}
+
+        {/* Floating comparison toolbar */}
+        {selectedIds.size >= 2 && (
+          <div className="compare-toolbar">
+            <span className="compare-toolbar-count">
+              {selectedIds.size} campaigns selected
+            </span>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                const ids = Array.from(selectedIds);
+                navigate(`/compare?ids=${ids.join(",")}`);
+              }}
+            >
+              <GitCompareArrows size={14} />
+              Compare Selected
+            </button>
+            <button
+              className="compare-toolbar-clear"
+              onClick={() => setSelectedIds(new Set())}
+              title="Clear selection"
+            >
+              <X size={14} />
+            </button>
+          </div>
         )}
       </div>
     </ErrorBoundary>
