@@ -4569,6 +4569,73 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Discovery Yield Curve */}
+              {trials.length >= 10 && (() => {
+                const dyKey = Object.keys(trials[0].kpis)[0];
+                if (!dyKey) return null;
+                const dyVals = trials.map((t: { kpis: Record<string, number> }) => t.kpis[dyKey] ?? 0);
+                // Compute cumulative best (minimization assumed, flip if needed)
+                const dyMin = Math.min(...dyVals);
+                const dyMax = Math.max(...dyVals);
+                const dyIsMin = Math.abs(dyVals[dyVals.length - 1] - dyMin) < Math.abs(dyVals[dyVals.length - 1] - dyMax);
+                const dyCumBest: number[] = [];
+                let dyBest = dyVals[0];
+                dyVals.forEach((v: number) => {
+                  if (dyIsMin ? v < dyBest : v > dyBest) dyBest = v;
+                  dyCumBest.push(dyBest);
+                });
+                const dyInitial = dyCumBest[0];
+                const dyFinal = dyCumBest[dyCumBest.length - 1];
+                const dyRange = Math.abs(dyFinal - dyInitial) || 1;
+                // Normalize to [0,1]: fraction of total improvement at each step
+                const dyNorm = dyCumBest.map((b: number) => Math.abs(b - dyInitial) / dyRange);
+                // Gini coefficient: area between curve and diagonal
+                const dyN = dyNorm.length;
+                let dyAreaCurve = 0;
+                for (let i = 1; i < dyN; i++) {
+                  dyAreaCurve += (dyNorm[i - 1] + dyNorm[i]) / 2 / (dyN - 1);
+                }
+                const dyGini = Math.abs(dyAreaCurve - 0.5) * 2; // 0=uniform, 1=extreme
+                const dyFrontLoaded = dyAreaCurve > 0.5;
+                const dyBadge = dyGini > 0.25 && dyFrontLoaded ? "Front-Loaded" : dyGini > 0.25 ? "Back-Loaded" : "Uniform";
+                const dyBadgeColor = dyBadge === "Front-Loaded" ? "var(--color-green, #22c55e)" : dyBadge === "Uniform" ? "var(--color-blue, #3b82f6)" : "var(--color-yellow, #eab308)";
+                const dyW = 260, dyH = 100;
+                // Build curve points
+                const dyCurvePoints = dyNorm.map((y: number, i: number) => ({
+                  x: 8 + (i / (dyN - 1)) * (dyW - 16),
+                  y: dyH - 8 - y * (dyH - 20),
+                }));
+                const dyCurvePath = dyCurvePoints.map((p: { x: number; y: number }, i: number) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const dyAreaPath = `${dyCurvePath} L${(dyW - 8).toFixed(1)},${(dyH - 8).toFixed(1)} L8,${(dyH - 8).toFixed(1)} Z`;
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <LineChart size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Discovery Yield Curve</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: dyBadgeColor, background: `color-mix(in srgb, ${dyBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{dyBadge}</span>
+                    </div>
+                    <svg width={dyW} height={dyH} viewBox={`0 0 ${dyW} ${dyH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Diagonal reference (uniform improvement) */}
+                      <line x1={8} y1={dyH - 8} x2={dyW - 8} y2={12} stroke="var(--color-text-muted)" strokeWidth={1} strokeDasharray="4,3" opacity={0.4} />
+                      {/* Area fill */}
+                      <path d={dyAreaPath} fill={dyFrontLoaded ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)"} />
+                      {/* Curve */}
+                      <path d={dyCurvePath} fill="none" stroke={dyBadge === "Front-Loaded" ? "#22c55e" : dyBadge === "Uniform" ? "#3b82f6" : "#eab308"} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Axes labels */}
+                      <text x={dyW / 2} y={dyH - 0} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle">fraction of experiments</text>
+                      <text x={2} y={dyH / 2} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90,2,${dyH / 2})`}>improvement</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>Gini: {dyGini.toFixed(2)}</span>
+                      <span>efficiency: {(dyAreaCurve * 100).toFixed(0)}%</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {dyBadge === "Front-Loaded" ? "Most improvement came early — efficient discovery process." : dyBadge === "Uniform" ? "Improvement spread evenly across experiments — steady progress." : "Most improvement came late — early experiments were less productive."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -7418,6 +7485,78 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {piBadge === "Strong Interactions" ? "Significant parameter interactions — joint tuning is important." : piBadge === "Moderate" ? "Some parameter pairs interact — consider tuning them together." : "Parameters act independently — single-parameter optimization is effective."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Stability Zones */}
+              {trials.length >= 15 && (() => {
+                const szSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (szSpecs.length === 0) return null;
+                const szKey = Object.keys(trials[0].kpis)[0];
+                if (!szKey) return null;
+                const szBins = 6;
+                const szData = szSpecs.slice(0, 8).map((spec: { name: string; lower?: number; upper?: number }) => {
+                  const lo = spec.lower!;
+                  const hi = spec.upper!;
+                  const binWidth = (hi - lo) / szBins;
+                  const bins: number[][] = Array.from({ length: szBins }, () => []);
+                  trials.forEach((t: { parameters: Record<string, number>; kpis: Record<string, number> }) => {
+                    const v = t.parameters[spec.name];
+                    if (v == null) return;
+                    const bi = Math.min(Math.floor((v - lo) / binWidth), szBins - 1);
+                    bins[Math.max(0, bi)].push(t.kpis[szKey] ?? 0);
+                  });
+                  // Compute CV per bin
+                  const cvs = bins.map((b: number[]) => {
+                    if (b.length < 2) return -1; // insufficient data
+                    const mean = b.reduce((s: number, x: number) => s + x, 0) / b.length;
+                    const std = Math.sqrt(b.reduce((s: number, x: number) => s + (x - mean) ** 2, 0) / b.length);
+                    return mean !== 0 ? Math.abs(std / mean) : std;
+                  });
+                  return { name: spec.name, cvs };
+                });
+                const szAllCvs = szData.flatMap((d: { cvs: number[] }) => d.cvs.filter((c: number) => c >= 0));
+                const szMaxCv = szAllCvs.length > 0 ? Math.max(...szAllCvs) : 1;
+                const szGreenCount = szAllCvs.filter((c: number) => c < szMaxCv * 0.33).length;
+                const szGreenFrac = szAllCvs.length > 0 ? szGreenCount / szAllCvs.length : 0;
+                const szBadge = szGreenFrac > 0.6 ? "Mostly Stable" : szGreenFrac > 0.3 ? "Mixed" : "Highly Volatile";
+                const szBadgeColor = szBadge === "Mostly Stable" ? "var(--color-green, #22c55e)" : szBadge === "Mixed" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const szRowH = 18;
+                const szW = 260;
+                const szLabelW = 60;
+                const szH = szData.length * szRowH + 12;
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <MapPin size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Parameter Stability Zones</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: szBadgeColor, background: `color-mix(in srgb, ${szBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{szBadge}</span>
+                    </div>
+                    <svg width={szW} height={szH} viewBox={`0 0 ${szW} ${szH}`} style={{ width: "100%", height: "auto" }}>
+                      {szData.map((d: { name: string; cvs: number[] }, ri: number) => {
+                        const y = ri * szRowH + 6;
+                        const cellW = (szW - szLabelW - 8) / szBins;
+                        return (
+                          <g key={d.name}>
+                            <text x={szLabelW - 4} y={y + szRowH / 2 + 3} fontSize={8} fill="var(--color-text-muted)" textAnchor="end" style={{ fontFamily: "var(--font-mono, monospace)" }}>{d.name.length > 8 ? d.name.substring(0, 7) + "…" : d.name}</text>
+                            {d.cvs.map((cv: number, ci: number) => {
+                              const frac = cv >= 0 ? cv / (szMaxCv || 1) : -1;
+                              const color = frac < 0 ? "var(--color-border)" : frac < 0.33 ? "rgba(34,197,94,0.5)" : frac < 0.66 ? "rgba(234,179,8,0.5)" : "rgba(239,68,68,0.5)";
+                              return <rect key={ci} x={szLabelW + ci * cellW} y={y} width={cellW - 1} height={szRowH - 3} rx={2} fill={color} />;
+                            })}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "rgba(34,197,94,0.5)", display: "inline-block" }} />stable</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "rgba(234,179,8,0.5)", display: "inline-block" }} />moderate</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "rgba(239,68,68,0.5)", display: "inline-block" }} />volatile</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {szBadge === "Mostly Stable" ? "Most parameter regions yield consistent results — predictable optimization landscape." : szBadge === "Mixed" ? "Some parameter regions are volatile — be cautious when exploring those zones." : "KPI varies widely across parameter ranges — noisy landscape or complex interactions."}
                     </div>
                   </div>
                 );
@@ -11405,6 +11544,89 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Risk-Return Profile */}
+              {suggestions && trials.length >= 5 && (() => {
+                const rrSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rrSpecs.length === 0) return null;
+                const rrKey = Object.keys(trials[0].kpis)[0];
+                if (!rrKey) return null;
+                const rrSuggs = suggestions.suggestions || [];
+                if (rrSuggs.length < 2) return null;
+                const rrBestKpi = Math.min(...trials.map((t: { kpis: Record<string, number> }) => t.kpis[rrKey] ?? 0));
+                const rrKpiRange = Math.max(...trials.map((t: { kpis: Record<string, number> }) => t.kpis[rrKey] ?? 0)) - rrBestKpi || 1;
+                // Compute risk (min normalized distance to observed data) and return (predicted improvement) for each suggestion
+                const rrPoints = rrSuggs.map((sug: Record<string, number>, si: number) => {
+                  // Risk: min Euclidean distance to any trial, normalized by parameter ranges
+                  let minDist = Infinity;
+                  trials.forEach((t: { parameters: Record<string, number> }) => {
+                    let d2 = 0;
+                    rrSpecs.forEach((sp: { name: string; lower?: number; upper?: number }) => {
+                      const range = (sp.upper! - sp.lower!) || 1;
+                      const diff = ((sug[sp.name] ?? 0) - (t.parameters[sp.name] ?? 0)) / range;
+                      d2 += diff * diff;
+                    });
+                    minDist = Math.min(minDist, Math.sqrt(d2));
+                  });
+                  // Return: predicted improvement over best
+                  let ret = 0;
+                  if (suggestions.predicted_values && suggestions.predicted_values[si] != null) {
+                    ret = (rrBestKpi - suggestions.predicted_values[si]) / rrKpiRange; // positive = improvement
+                  } else {
+                    // Fallback: use distance to best trial as proxy (closer to best = higher expected return)
+                    const bestTrial = trials.reduce((best: { parameters: Record<string, number>; kpis: Record<string, number> }, t: { parameters: Record<string, number>; kpis: Record<string, number> }) => (t.kpis[rrKey] ?? 0) < (best.kpis[rrKey] ?? 0) ? t : best, trials[0]);
+                    let dBest = 0;
+                    rrSpecs.forEach((sp: { name: string; lower?: number; upper?: number }) => {
+                      const range = (sp.upper! - sp.lower!) || 1;
+                      const diff = ((sug[sp.name] ?? 0) - (bestTrial.parameters[sp.name] ?? 0)) / range;
+                      dBest += diff * diff;
+                    });
+                    ret = 1 - Math.sqrt(dBest) / Math.sqrt(rrSpecs.length);
+                  }
+                  return { risk: minDist, ret: Math.max(0, Math.min(1, ret)), idx: si };
+                });
+                const rrMaxRisk = Math.max(...rrPoints.map((p: { risk: number }) => p.risk)) || 1;
+                const rrAvgRisk = rrPoints.reduce((s: number, p: { risk: number }) => s + p.risk, 0) / rrPoints.length;
+                const rrAvgRet = rrPoints.reduce((s: number, p: { ret: number }) => s + p.ret, 0) / rrPoints.length;
+                const rrBadge = rrAvgRisk / rrMaxRisk < 0.3 ? "Conservative" : rrAvgRisk / rrMaxRisk > 0.6 ? "Aggressive" : "Balanced";
+                const rrBadgeColor = rrBadge === "Conservative" ? "var(--color-blue, #3b82f6)" : rrBadge === "Balanced" ? "var(--color-green, #22c55e)" : "var(--color-red, #ef4444)";
+                const rrW = 200, rrH = 130, rrPad = 20;
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Compass size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Risk-Return Profile</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: rrBadgeColor, background: `color-mix(in srgb, ${rrBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{rrBadge}</span>
+                    </div>
+                    <svg width={rrW} height={rrH} viewBox={`0 0 ${rrW} ${rrH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Quadrant backgrounds */}
+                      <rect x={rrPad} y={4} width={(rrW - rrPad - 4) / 2} height={(rrH - rrPad - 4) / 2} fill="rgba(34,197,94,0.06)" rx={3} />
+                      <rect x={rrPad + (rrW - rrPad - 4) / 2} y={4} width={(rrW - rrPad - 4) / 2} height={(rrH - rrPad - 4) / 2} fill="rgba(234,179,8,0.06)" rx={3} />
+                      <rect x={rrPad} y={4 + (rrH - rrPad - 4) / 2} width={(rrW - rrPad - 4) / 2} height={(rrH - rrPad - 4) / 2} fill="rgba(59,130,246,0.06)" rx={3} />
+                      <rect x={rrPad + (rrW - rrPad - 4) / 2} y={4 + (rrH - rrPad - 4) / 2} width={(rrW - rrPad - 4) / 2} height={(rrH - rrPad - 4) / 2} fill="rgba(239,68,68,0.06)" rx={3} />
+                      {/* Axes */}
+                      <line x1={rrPad} y1={rrH - rrPad} x2={rrW - 4} y2={rrH - rrPad} stroke="var(--color-border)" strokeWidth={1} />
+                      <line x1={rrPad} y1={4} x2={rrPad} y2={rrH - rrPad} stroke="var(--color-border)" strokeWidth={1} />
+                      <text x={rrW / 2 + 8} y={rrH - 4} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle">risk →</text>
+                      <text x={6} y={(rrH - rrPad) / 2} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90,6,${(rrH - rrPad) / 2})`}>return →</text>
+                      {/* Data points */}
+                      {rrPoints.map((p: { risk: number; ret: number; idx: number }) => {
+                        const px = rrPad + (p.risk / rrMaxRisk) * (rrW - rrPad - 8);
+                        const py = rrH - rrPad - p.ret * (rrH - rrPad - 8);
+                        const dotColor = p.ret > 0.5 && p.risk / rrMaxRisk < 0.5 ? "#22c55e" : p.risk / rrMaxRisk > 0.5 ? "#ef4444" : "#3b82f6";
+                        return <circle key={p.idx} cx={px} cy={py} r={4} fill={dotColor} opacity={0.8} stroke="white" strokeWidth={1} />;
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>avg risk: {(rrAvgRisk / rrMaxRisk * 100).toFixed(0)}%</span>
+                      <span>avg return: {(rrAvgRet * 100).toFixed(0)}%</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {rrBadge === "Conservative" ? "Suggestions stay close to known data — low risk, steady improvement." : rrBadge === "Balanced" ? "Good balance of risk and expected return across suggestions." : "Suggestions venture into uncharted territory — high risk, high potential reward."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -14571,6 +14793,68 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {oqBadge === "High Quality" ? "Observations are locally consistent — data quality is high." : oqBadge === "Mixed" ? "Some observations are inconsistent with neighbors — consider reviewing flagged trials." : "Many low-quality observations — data may need cleaning before further optimization."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Temporal Contamination Risk */}
+              {trials.length >= 10 && (() => {
+                const tcKey = Object.keys(trials[0].kpis)[0];
+                if (!tcKey) return null;
+                const tcSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (tcSpecs.length === 0) return null;
+                const tcK = Math.min(5, Math.floor(trials.length / 3));
+                // Compute per-trial quality (k-NN consistency)
+                const tcFeats = trials.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }) => {
+                  const params = tcSpecs.map((s: { name: string; lower?: number; upper?: number }) => ((t.parameters[s.name] ?? 0) - s.lower!) / ((s.upper! - s.lower!) || 1));
+                  return { params, kpi: t.kpis[tcKey] ?? 0 };
+                });
+                const tcScores = tcFeats.map((obs: { params: number[]; kpi: number }, i: number) => {
+                  const dists = tcFeats.map((other: { params: number[]; kpi: number }, j: number) => {
+                    if (i === j) return { d: Infinity, kpi: 0 };
+                    const d = Math.sqrt(obs.params.reduce((s: number, v: number, k: number) => s + (v - other.params[k]) ** 2, 0));
+                    return { d, kpi: other.kpi };
+                  }).sort((a: { d: number }, b: { d: number }) => a.d - b.d).slice(0, tcK);
+                  const neighborMean = dists.reduce((s: number, d: { kpi: number }) => s + d.kpi, 0) / tcK;
+                  const neighborStd = Math.sqrt(dists.reduce((s: number, d: { kpi: number }) => s + (d.kpi - neighborMean) ** 2, 0) / tcK) || 0.001;
+                  return 1 - Math.min(Math.abs(obs.kpi - neighborMean) / (neighborStd * 3), 1);
+                });
+                // Sliding window contamination risk
+                const tcWinSize = 5;
+                const tcWindows: number[] = [];
+                for (let i = 0; i <= tcScores.length - tcWinSize; i++) {
+                  const winScores = tcScores.slice(i, i + tcWinSize);
+                  const lowCount = winScores.filter((s: number) => s < 0.4).length;
+                  tcWindows.push(lowCount / tcWinSize);
+                }
+                const tcRedCount = tcWindows.filter((w: number) => w >= 0.4).length;
+                const tcBadge = tcRedCount === 0 ? "Clean" : tcRedCount <= 2 ? "Some Clusters" : "Systematic Issues";
+                const tcBadgeColor = tcBadge === "Clean" ? "var(--color-green, #22c55e)" : tcBadge === "Some Clusters" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const tcW = 260, tcH = 50;
+                const tcBarW = tcWindows.length > 0 ? (tcW - 16) / tcWindows.length : 0;
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <ShieldAlert size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Temporal Contamination Risk</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: tcBadgeColor, background: `color-mix(in srgb, ${tcBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{tcBadge}</span>
+                    </div>
+                    <svg width={tcW} height={tcH} viewBox={`0 0 ${tcW} ${tcH}`} style={{ width: "100%", height: "auto" }}>
+                      {tcWindows.map((risk: number, i: number) => {
+                        const color = risk < 0.2 ? "rgba(34,197,94,0.5)" : risk < 0.4 ? "rgba(234,179,8,0.5)" : "rgba(239,68,68,0.6)";
+                        return <rect key={i} x={8 + i * tcBarW} y={4} width={Math.max(tcBarW - 1, 1)} height={tcH - 12} rx={2} fill={color} />;
+                      })}
+                      {/* Threshold line */}
+                      <line x1={8} y1={4 + (tcH - 12) * 0.6} x2={tcW - 8} y2={4 + (tcH - 12) * 0.6} stroke="var(--color-red, #ef4444)" strokeWidth={1} strokeDasharray="3,2" opacity={0.5} />
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>window 1</span>
+                      <span>{tcRedCount} risk cluster{tcRedCount !== 1 ? "s" : ""} / {tcWindows.length} windows</span>
+                      <span>window {tcWindows.length}</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {tcBadge === "Clean" ? "No temporal clusters of low-quality data — experiments are consistent over time." : tcBadge === "Some Clusters" ? "A few time windows show clustered quality issues — check for equipment drift." : "Multiple time windows with quality problems — possible systematic experimental issue."}
                     </div>
                   </div>
                 );
