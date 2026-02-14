@@ -3122,3 +3122,254 @@ a:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Export Tab ── */
+
+.export-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.export-summary-item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.export-summary-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.export-summary-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.export-desc {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.export-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.export-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--color-text);
+  transition: all var(--transition-fast);
+}
+
+.export-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-subtle);
+}
+
+.export-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.export-card-icon-csv {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+[data-theme="dark"] .export-card-icon-csv {
+  background: #14532d;
+  color: #86efac;
+}
+
+.export-card-icon-json {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
+[data-theme="dark"] .export-card-icon-json {
+  background: #1e3a5f;
+  color: #93c5fd;
+}
+
+.export-card-icon-xlsx {
+  background: #f3e8ff;
+  color: #7c3aed;
+}
+
+[data-theme="dark"] .export-card-icon-xlsx {
+  background: #2e1065;
+  color: #d8b4fe;
+}
+
+.export-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.export-card-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.export-card-desc {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.export-figure-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.export-figure-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.export-figure-charts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.export-figure-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.export-figure-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.export-figure-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-report-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.export-report-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  padding: 4px 0;
+}
+
+.export-report-section + .export-report-section {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 8px;
+}
+
+@media (max-width: 768px) {
+  .export-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .export-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── History Sort ── */
+
+.history-sort-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.history-th-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.history-th-sortable:hover {
+  color: var(--color-primary);
+}
+
+.history-th-sortable svg {
+  display: inline;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.history-sort-idle {
+  opacity: 0.3;
+  transition: opacity var(--transition-fast);
+}
+
+.history-th-sortable:hover .history-sort-idle {
+  opacity: 0.7;
+}
+
+/* ── Best Result Copy ── */
+
+.best-result-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  transition: all var(--transition-fast);
+}
+
+.best-result-copy:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}

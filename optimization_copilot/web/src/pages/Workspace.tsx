@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -17,6 +17,21 @@ import {
   AlertTriangle,
   CheckCircle,
   ArrowRight,
+  Copy,
+  Check,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Pause,
+  Play,
+  Square,
+  FileSpreadsheet,
+  FileJson,
+  FileText,
+  Image,
+  BarChart3,
+  Table,
+  ClipboardList,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { ChatPanel } from "../components/ChatPanel";
@@ -34,6 +49,9 @@ import {
   fetchImportance,
   fetchSuggestions,
   fetchExport,
+  pauseCampaign,
+  resumeCampaign,
+  stopCampaign,
   type DiagnosticsData,
   type ParameterImportanceData,
   type SuggestionData,
@@ -52,7 +70,7 @@ const DIAGNOSTIC_TOOLTIPS: Record<string, string> = {
 
 export default function Workspace() {
   const { id } = useParams<{ id: string }>();
-  const { campaign, loading, error } = useCampaign(id);
+  const { campaign, loading, error, refresh } = useCampaign(id);
   const [activeTab, setActiveTab] = useState<
     "overview" | "explore" | "suggestions" | "insights" | "history" | "export"
   >("overview");
@@ -66,6 +84,25 @@ export default function Workspace() {
   const [loadingDiag, setLoadingDiag] = useState(false);
   const [loadingImportance, setLoadingImportance] = useState(false);
   const [batchSize, setBatchSize] = useState(5);
+  const [copied, setCopied] = useState(false);
+  const [historySortCol, setHistorySortCol] = useState<string | null>(null);
+  const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("asc");
+
+  const handleCopyBest = useCallback((params: Record<string, number>) => {
+    navigator.clipboard.writeText(JSON.stringify(params, null, 2)).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, []);
+
+  const handleHistorySort = useCallback((col: string) => {
+    if (historySortCol === col) {
+      setHistorySortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setHistorySortCol(col);
+      setHistorySortDir("asc");
+    }
+  }, [historySortCol]);
 
   // Fetch diagnostics when overview tab is active
   useEffect(() => {
@@ -294,6 +331,35 @@ export default function Workspace() {
               <span>Trials: {campaign.total_trials}</span>
             </div>
           </div>
+          <div className="workspace-actions">
+            {campaign.status === "running" && (
+              <>
+                <button
+                  className="btn btn-sm btn-secondary workspace-action-btn"
+                  onClick={async () => { await pauseCampaign(id); refresh(); }}
+                  title="Pause campaign"
+                >
+                  <Pause size={14} /> Pause
+                </button>
+                <button
+                  className="btn btn-sm btn-danger-outline workspace-action-btn"
+                  onClick={async () => { await stopCampaign(id); refresh(); }}
+                  title="Stop campaign"
+                >
+                  <Square size={14} /> Stop
+                </button>
+              </>
+            )}
+            {campaign.status === "paused" && (
+              <button
+                className="btn btn-sm btn-primary workspace-action-btn"
+                onClick={async () => { await resumeCampaign(id); refresh(); }}
+                title="Resume campaign"
+              >
+                <Play size={14} /> Resume
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tabs */}
@@ -344,7 +410,17 @@ export default function Workspace() {
                     <div className="best-result-badge">
                       <CheckCircle size={16} /> Best Result Found
                     </div>
-                    <span className="best-result-iter">Iteration {bestResult.iteration}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                      <span className="best-result-iter">Iteration {bestResult.iteration}</span>
+                      <button
+                        className="btn btn-sm btn-secondary best-result-copy"
+                        onClick={() => handleCopyBest(bestResult.parameters)}
+                        title="Copy parameters to clipboard"
+                      >
+                        {copied ? <Check size={13} /> : <Copy size={13} />}
+                        {copied ? "Copied" : "Copy"}
+                      </button>
+                    </div>
                   </div>
                   <div className="best-result-kpi">
                     {Object.entries(bestResult.kpis).map(([name, value]) => (
@@ -694,39 +770,84 @@ export default function Workspace() {
               <div className="card">
                 <div className="history-header">
                   <h2>Trial History ({trials.length} experiments)</h2>
+                  <span className="history-sort-hint">Click column headers to sort</span>
                 </div>
                 {trials.length > 0 ? (
                   <div className="history-table-wrapper">
                     <table className="history-table">
                       <thead>
                         <tr>
-                          <th>#</th>
+                          <th
+                            className="history-th-sortable"
+                            onClick={() => handleHistorySort("__iter__")}
+                          >
+                            # {historySortCol === "__iter__" && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                            {historySortCol !== "__iter__" && <ArrowUpDown size={11} className="history-sort-idle" />}
+                          </th>
                           {Object.keys(trials[0].parameters).map((p) => (
-                            <th key={p}>{p}</th>
+                            <th
+                              key={p}
+                              className="history-th-sortable"
+                              onClick={() => handleHistorySort(`p:${p}`)}
+                            >
+                              {p}
+                              {historySortCol === `p:${p}` && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                              {historySortCol !== `p:${p}` && <ArrowUpDown size={11} className="history-sort-idle" />}
+                            </th>
                           ))}
                           {Object.keys(trials[0].kpis).map((k) => (
-                            <th key={k} className="history-kpi-col">{k}</th>
+                            <th
+                              key={k}
+                              className="history-kpi-col history-th-sortable"
+                              onClick={() => handleHistorySort(`k:${k}`)}
+                            >
+                              {k}
+                              {historySortCol === `k:${k}` && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                              {historySortCol !== `k:${k}` && <ArrowUpDown size={11} className="history-sort-idle" />}
+                            </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {[...trials].reverse().map((trial) => {
-                          const isBest = bestResult && trial.iteration === bestResult.iteration;
-                          return (
-                            <tr key={trial.id} className={isBest ? "history-row-best" : ""}>
-                              <td className="history-iter">{trial.iteration}</td>
-                              {Object.values(trial.parameters).map((v, j) => (
-                                <td key={j} className="mono">{typeof v === "number" ? v.toFixed(3) : String(v)}</td>
-                              ))}
-                              {Object.values(trial.kpis).map((v, j) => (
-                                <td key={j} className={`mono history-kpi-val ${isBest ? "history-best-val" : ""}`}>
-                                  {typeof v === "number" ? v.toFixed(4) : String(v)}
-                                  {isBest && <span className="history-best-badge">Best</span>}
-                                </td>
-                              ))}
-                            </tr>
-                          );
-                        })}
+                        {(() => {
+                          let sorted = [...trials];
+                          if (historySortCol) {
+                            sorted.sort((a, b) => {
+                              let va: number, vb: number;
+                              if (historySortCol === "__iter__") {
+                                va = a.iteration; vb = b.iteration;
+                              } else if (historySortCol.startsWith("p:")) {
+                                const key = historySortCol.slice(2);
+                                va = Number(a.parameters[key]) || 0;
+                                vb = Number(b.parameters[key]) || 0;
+                              } else {
+                                const key = historySortCol.slice(2);
+                                va = Number(a.kpis[key]) || 0;
+                                vb = Number(b.kpis[key]) || 0;
+                              }
+                              return historySortDir === "asc" ? va - vb : vb - va;
+                            });
+                          } else {
+                            sorted.reverse(); // default: reverse chronological
+                          }
+                          return sorted.map((trial) => {
+                            const isBest = bestResult && trial.iteration === bestResult.iteration;
+                            return (
+                              <tr key={trial.id} className={isBest ? "history-row-best" : ""}>
+                                <td className="history-iter">{trial.iteration}</td>
+                                {Object.values(trial.parameters).map((v, j) => (
+                                  <td key={j} className="mono">{typeof v === "number" ? v.toFixed(3) : String(v)}</td>
+                                ))}
+                                {Object.values(trial.kpis).map((v, j) => (
+                                  <td key={j} className={`mono history-kpi-val ${isBest ? "history-best-val" : ""}`}>
+                                    {typeof v === "number" ? v.toFixed(4) : String(v)}
+                                    {isBest && <span className="history-best-badge">Best</span>}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          });
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -739,37 +860,65 @@ export default function Workspace() {
 
           {activeTab === "export" && (
             <div className="tab-panel">
+              {/* Campaign Summary */}
+              <div className="export-summary">
+                <div className="export-summary-item">
+                  <span className="export-summary-label">Parameters</span>
+                  <span className="export-summary-value">{trials.length > 0 ? Object.keys(trials[0].parameters).length : 0}</span>
+                </div>
+                <div className="export-summary-item">
+                  <span className="export-summary-label">Objectives</span>
+                  <span className="export-summary-value">{campaign.objective_names?.length ?? 1}</span>
+                </div>
+                <div className="export-summary-item">
+                  <span className="export-summary-label">Experiments</span>
+                  <span className="export-summary-value">{trials.length}</span>
+                </div>
+                <div className="export-summary-item">
+                  <span className="export-summary-label">Best KPI</span>
+                  <span className="export-summary-value mono">{campaign.best_kpi?.toFixed(4) ?? "—"}</span>
+                </div>
+              </div>
+
+              {/* Data Export */}
               <div className="card">
-                <h2>Export Data</h2>
-                <p style={{ color: "#718096", marginBottom: "16px", fontSize: "0.9rem" }}>
-                  Export your campaign data and results in various formats.
+                <h2><Table size={18} /> Data Export</h2>
+                <p className="export-desc">
+                  Download all experiment data including parameters, objectives, and iteration metadata.
                 </p>
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => handleExport("csv")}
-                  >
-                    <Download size={16} /> Export CSV
+                <div className="export-grid">
+                  <button className="export-card" onClick={() => handleExport("csv")}>
+                    <div className="export-card-icon export-card-icon-csv"><FileSpreadsheet size={24} /></div>
+                    <div className="export-card-info">
+                      <span className="export-card-title">CSV</span>
+                      <span className="export-card-desc">Spreadsheet-compatible format. Best for Excel, Google Sheets, or R/pandas.</span>
+                    </div>
                   </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => handleExport("json")}
-                  >
-                    <Download size={16} /> Export JSON
+                  <button className="export-card" onClick={() => handleExport("json")}>
+                    <div className="export-card-icon export-card-icon-json"><FileJson size={24} /></div>
+                    <div className="export-card-info">
+                      <span className="export-card-title">JSON</span>
+                      <span className="export-card-desc">Structured data with full metadata. Best for programmatic consumption.</span>
+                    </div>
                   </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => handleExport("xlsx")}
-                  >
-                    <Download size={16} /> Export Excel
+                  <button className="export-card" onClick={() => handleExport("xlsx")}>
+                    <div className="export-card-icon export-card-icon-xlsx"><FileSpreadsheet size={24} /></div>
+                    <div className="export-card-info">
+                      <span className="export-card-title">Excel</span>
+                      <span className="export-card-desc">Native Excel workbook with formatted headers and data validation.</span>
+                    </div>
                   </button>
                 </div>
               </div>
 
+              {/* Figure Export */}
               <div className="card">
-                <h2>Figure Export</h2>
-                <div style={{ display: "grid", gap: "16px", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "0.9rem", fontWeight: 500 }}>
+                <h2><Image size={18} /> Figure Export</h2>
+                <p className="export-desc">
+                  Export publication-ready figures of your optimization results.
+                </p>
+                <div className="export-figure-options">
+                  <label className="export-figure-label">
                     Resolution
                     <select className="input">
                       <option>72 DPI (Screen)</option>
@@ -778,7 +927,7 @@ export default function Workspace() {
                       <option>600 DPI (Publication)</option>
                     </select>
                   </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "0.9rem", fontWeight: 500 }}>
+                  <label className="export-figure-label">
                     Format
                     <select className="input">
                       <option>PNG</option>
@@ -786,7 +935,7 @@ export default function Workspace() {
                       <option>PDF</option>
                     </select>
                   </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "0.9rem", fontWeight: 500 }}>
+                  <label className="export-figure-label">
                     Style
                     <select className="input">
                       <option>Default</option>
@@ -795,18 +944,42 @@ export default function Workspace() {
                     </select>
                   </label>
                 </div>
-                <button className="btn btn-primary" style={{ marginTop: "16px" }}>
-                  Export All Figures
+                <div className="export-figure-charts">
+                  <label className="export-figure-check">
+                    <input type="checkbox" defaultChecked /> <BarChart3 size={14} /> Convergence Plot
+                  </label>
+                  <label className="export-figure-check">
+                    <input type="checkbox" defaultChecked /> <BarChart3 size={14} /> Parameter Importance
+                  </label>
+                  <label className="export-figure-check">
+                    <input type="checkbox" defaultChecked /> <BarChart3 size={14} /> Parameter Space
+                  </label>
+                  <label className="export-figure-check">
+                    <input type="checkbox" /> <BarChart3 size={14} /> Phase Timeline
+                  </label>
+                </div>
+                <button className="btn btn-primary export-figure-btn">
+                  <Image size={14} /> Export Selected Figures
                 </button>
               </div>
 
+              {/* Report */}
               <div className="card">
-                <h2>Generate Report</h2>
-                <p style={{ color: "#718096", marginBottom: "16px", fontSize: "0.9rem" }}>
-                  Generate a comprehensive PDF report including convergence plot,
-                  parameter importance, best results, and full experiment history.
+                <h2><ClipboardList size={18} /> Campaign Report</h2>
+                <p className="export-desc">
+                  Generate a comprehensive PDF report with convergence analysis,
+                  parameter importance, best results, diagnostics, and experiment history.
                 </p>
-                <button className="btn btn-primary">Generate PDF Report</button>
+                <div className="export-report-preview">
+                  <div className="export-report-section"><FileText size={14} /> Executive Summary</div>
+                  <div className="export-report-section"><BarChart3 size={14} /> Convergence Analysis</div>
+                  <div className="export-report-section"><BarChart3 size={14} /> Parameter Importance</div>
+                  <div className="export-report-section"><Table size={14} /> Full Experiment Log ({trials.length} rows)</div>
+                  <div className="export-report-section"><CheckCircle size={14} /> Best Result + Recommendations</div>
+                </div>
+                <button className="btn btn-primary export-figure-btn">
+                  <FileDown size={14} /> Generate PDF Report
+                </button>
               </div>
             </div>
           )}
@@ -854,6 +1027,25 @@ export default function Workspace() {
           padding: 24px 24px 16px;
           border-bottom: 1px solid var(--color-border);
           background: var(--color-surface);
+        }
+
+        .workspace-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+        }
+
+        .workspace-actions {
+          display: flex;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+
+        .workspace-action-btn {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          white-space: nowrap;
         }
 
         .workspace-header h1 {
