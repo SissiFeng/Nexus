@@ -72,6 +72,9 @@ import {
   Ruler,
   Circle,
   Minimize2,
+  Gauge,
+  MapPin,
+  Scan,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -2386,6 +2389,92 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Budget Utilization Curve */}
+              {trials.length >= 3 && (() => {
+                const buObs = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const buObjKey = campaign.objective_names?.[0] || Object.keys(buObs[0].kpis)[0];
+                const buDir = (campaign.objective_directions?.[buObjKey] || "minimize") === "minimize" ? -1 : 1;
+                const buVals = buObs.map(o => (o.kpis[buObjKey] ?? 0) * buDir);
+                const buN = buVals.length;
+                const buBest: number[] = [];
+                let buRunBest = -Infinity;
+                for (let i = 0; i < buN; i++) { buRunBest = Math.max(buRunBest, buVals[i]); buBest.push(buRunBest); }
+                const buStart = buBest[0];
+                const buEnd = buBest[buN - 1];
+                const buRange = buEnd - buStart || 1;
+                const buFrac = buBest.map(v => Math.max(0, Math.min(1, (v - buStart) / buRange)));
+                // AUC via trapezoidal rule
+                let buAUC = 0;
+                for (let i = 1; i < buN; i++) {
+                  const dx = 1 / (buN - 1);
+                  buAUC += (buFrac[i - 1] + buFrac[i]) * 0.5 * dx;
+                }
+                const buAF = buAUC > 0 ? buAUC / 0.5 : 1.0;
+                const buW = 200, buH = 80, buPad = 20;
+                const buPts = buFrac.map((f, i) => ({
+                  x: buPad + (i / (buN - 1)) * (buW - 2 * buPad),
+                  y: buH - buPad - f * (buH - 2 * buPad),
+                }));
+                const buDiagStart = { x: buPad, y: buH - buPad };
+                const buDiagEnd = { x: buW - buPad, y: buPad };
+                // Build fill path between curve and diagonal
+                const buCurvePath = buPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const buDiagPath = buPts.map((_, i) => {
+                  const t = i / (buN - 1);
+                  const dx = buDiagStart.x + t * (buDiagEnd.x - buDiagStart.x);
+                  const dy = buDiagStart.y + t * (buDiagEnd.y - buDiagStart.y);
+                  return `${dx.toFixed(1)},${dy.toFixed(1)}`;
+                }).reverse().map((s, i) => `${i === 0 ? "L" : "L"}${s}`).join(" ");
+                const buFillPath = buCurvePath + " " + buDiagPath + " Z";
+                const buFillColor = buAF >= 1.0 ? "rgba(34,197,94,0.18)" : "rgba(239,68,68,0.15)";
+                const buAccColor = buAF >= 1.0 ? "#22c55e" : "#ef4444";
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Gauge size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Budget Utilization</h3>
+                      <span className="findings-badge" style={{ background: buAccColor + "18", color: buAccColor, marginLeft: "auto" }}>
+                        {buAF.toFixed(1)}x acceleration
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${buW} ${buH}`} style={{ display: "block" }}>
+                      {/* Grid lines */}
+                      {[0.25, 0.5, 0.75].map(t => (
+                        <Fragment key={`bug${t}`}>
+                          <line x1={buPad + t * (buW - 2 * buPad)} y1={buPad} x2={buPad + t * (buW - 2 * buPad)} y2={buH - buPad} stroke="var(--color-border)" strokeWidth="0.5" />
+                          <line x1={buPad} y1={buH - buPad - t * (buH - 2 * buPad)} x2={buW - buPad} y2={buH - buPad - t * (buH - 2 * buPad)} stroke="var(--color-border)" strokeWidth="0.5" />
+                        </Fragment>
+                      ))}
+                      {/* Axes */}
+                      <line x1={buPad} y1={buH - buPad} x2={buW - buPad} y2={buH - buPad} stroke="var(--color-text-muted)" strokeWidth="0.8" />
+                      <line x1={buPad} y1={buPad} x2={buPad} y2={buH - buPad} stroke="var(--color-text-muted)" strokeWidth="0.8" />
+                      {/* Fill between curve and diagonal */}
+                      <path d={buFillPath} fill={buFillColor} />
+                      {/* Random baseline diagonal */}
+                      <line x1={buDiagStart.x} y1={buDiagStart.y} x2={buDiagEnd.x} y2={buDiagEnd.y} stroke="var(--color-text-muted)" strokeWidth="1" strokeDasharray="4 3" opacity={0.6} />
+                      {/* Campaign curve */}
+                      <polyline points={buPts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Endpoint dot */}
+                      <circle cx={buPts[buPts.length - 1].x} cy={buPts[buPts.length - 1].y} r="3" fill="#3b82f6" />
+                      {/* Labels */}
+                      <text x={buPad - 2} y={buH - buPad + 11} fontSize="7" fill="var(--color-text-muted)" textAnchor="start">0%</text>
+                      <text x={buW - buPad + 2} y={buH - buPad + 11} fontSize="7" fill="var(--color-text-muted)" textAnchor="end">100%</text>
+                      <text x={buPad - 4} y={buH - buPad} fontSize="7" fill="var(--color-text-muted)" textAnchor="end">0</text>
+                      <text x={buPad - 4} y={buPad + 3} fontSize="7" fill="var(--color-text-muted)" textAnchor="end">1</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ display: "inline-block", width: 12, height: 2, background: "#3b82f6", borderRadius: 1 }} /> Campaign
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ display: "inline-block", width: 12, height: 0, borderTop: "1.5px dashed var(--color-text-muted)" }} /> Random baseline
+                      </span>
+                      <span>AUC: {buAUC.toFixed(3)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -3018,6 +3107,104 @@ export default function Workspace() {
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#eab308", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />Marginal</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#ef4444", opacity: 0.6, marginRight: 4, verticalAlign: "middle" }} />Too coarse</span>
                       <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>Dashed = 1/√n threshold</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Variance Decomposition */}
+              {trials.length >= 8 && (() => {
+                const vdObjKey = campaign.objective_names?.[0] || Object.keys(trials[0].kpis)[0];
+                const vdParams = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (vdParams.length < 2) return null;
+                const vdObjVals = trials.map(t => t.kpis[vdObjKey] ?? 0);
+                const vdMean = vdObjVals.reduce((a: number, b: number) => a + b, 0) / vdObjVals.length;
+                const vdTotalVar = vdObjVals.reduce((a: number, v: number) => a + (v - vdMean) ** 2, 0) / vdObjVals.length;
+                if (vdTotalVar < 1e-15) return null;
+                const vdK = 5;
+                const vdColors = ["#3b82f6", "#14b8a6", "#f59e0b", "#f43f5e", "#8b5cf6", "#06b6d4", "#84cc16"];
+                // Compute marginal variance for each parameter
+                const vdMarginals: { name: string; variance: number; color: string }[] = [];
+                for (let pi = 0; pi < Math.min(vdParams.length, 6); pi++) {
+                  const sp = vdParams[pi] as { name: string; lower?: number; upper?: number };
+                  const pVals = trials.map(t => t.parameters[sp.name] ?? 0);
+                  const sorted = pVals.map((v: number, i: number) => ({ v, obj: vdObjVals[i] })).sort((a: { v: number }, b: { v: number }) => a.v - b.v);
+                  const binSize = Math.max(1, Math.floor(sorted.length / vdK));
+                  const binMeans: number[] = [];
+                  for (let b = 0; b < vdK; b++) {
+                    const start = b * binSize;
+                    const end = b === vdK - 1 ? sorted.length : (b + 1) * binSize;
+                    const slice = sorted.slice(start, end);
+                    if (slice.length === 0) continue;
+                    binMeans.push(slice.reduce((a: number, c: { obj: number }) => a + c.obj, 0) / slice.length);
+                  }
+                  const bmMean = binMeans.reduce((a, b) => a + b, 0) / binMeans.length;
+                  const margVar = binMeans.reduce((a, v) => a + (v - bmMean) ** 2, 0) / binMeans.length;
+                  vdMarginals.push({ name: sp.name, variance: margVar, color: vdColors[pi % vdColors.length] });
+                }
+                const vdMargSum = vdMarginals.reduce((a, m) => a + m.variance, 0);
+                // Interaction: residual not explained by marginals
+                const vdInteraction = Math.max(0, vdTotalVar - vdMargSum) * 0.4; // conservative estimate
+                const vdResidual = Math.max(0, vdTotalVar - vdMargSum - vdInteraction);
+                const vdAll = vdMarginals.reduce((a, m) => a + m.variance, 0) + vdInteraction + vdResidual;
+                const vdBarW = 200, vdBarH = 22;
+                let vdX = 0;
+                const vdSegments = vdMarginals.map(m => {
+                  const w = (m.variance / vdAll) * vdBarW;
+                  const seg = { x: vdX, w, color: m.color, name: m.name, pct: (m.variance / vdAll) * 100 };
+                  vdX += w;
+                  return seg;
+                });
+                const vdIntW = (vdInteraction / vdAll) * vdBarW;
+                const vdResW = (vdResidual / vdAll) * vdBarW;
+                const vdDominant = vdMarginals.length > 0 && (vdMarginals[0].variance / vdAll) > 0.6 ?
+                  vdMarginals.reduce((max, m) => m.variance > max.variance ? m : max) : null;
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <PieChart size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Variance Decomposition</h3>
+                      {vdDominant && (
+                        <span className="findings-badge" style={{ background: "#f59e0b18", color: "#f59e0b", marginLeft: "auto" }}>
+                          {vdDominant.name} dominates ({(vdDominant.variance / vdAll * 100).toFixed(0)}%)
+                        </span>
+                      )}
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${vdBarW} ${vdBarH + 30}`} style={{ display: "block" }}>
+                      <defs>
+                        <pattern id="vd-hatch" patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(45)">
+                          <line x1="0" y1="0" x2="0" y2="5" stroke="#64748b" strokeWidth="1.5" />
+                        </pattern>
+                      </defs>
+                      {/* Stacked bar */}
+                      {vdSegments.map((seg, i) => (
+                        <rect key={`vds${i}`} x={seg.x} y={0} width={Math.max(seg.w, 0.5)} height={vdBarH} fill={seg.color} rx={i === 0 ? 4 : 0} opacity={0.85} />
+                      ))}
+                      {/* Interaction segment */}
+                      <rect x={vdX} y={0} width={Math.max(vdIntW, 0.5)} height={vdBarH} fill="url(#vd-hatch)" opacity={0.6} />
+                      {/* Residual segment */}
+                      <rect x={vdX + vdIntW} y={0} width={Math.max(vdResW, 0.5)} height={vdBarH} fill="#e2e8f0" rx={0} />
+                      {/* Last segment rounded right */}
+                      <rect x={vdBarW - 4} y={0} width={4} height={vdBarH} fill="#e2e8f0" rx={4} />
+                      {/* Legend below */}
+                      {vdSegments.slice(0, 4).map((seg, i) => (
+                        <g key={`vdl${i}`} transform={`translate(${i * 50}, ${vdBarH + 6})`}>
+                          <rect x={0} y={0} width={7} height={7} rx={1.5} fill={seg.color} opacity={0.85} />
+                          <text x={10} y={6.5} fontSize="5.5" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">{seg.name.length > 6 ? seg.name.slice(0, 6) + ".." : seg.name}</text>
+                        </g>
+                      ))}
+                      {vdIntW > 2 && (
+                        <g transform={`translate(${Math.min(vdSegments.length, 4) * 50}, ${vdBarH + 6})`}>
+                          <rect x={0} y={0} width={7} height={7} rx={1.5} fill="url(#vd-hatch)" />
+                          <text x={10} y={6.5} fontSize="5.5" fill="var(--color-text-muted)">Interactions</text>
+                        </g>
+                      )}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      {vdSegments.slice(0, 4).map(seg => (
+                        <span key={seg.name}><strong style={{ color: seg.color }}>{seg.pct.toFixed(0)}%</strong> {seg.name}</span>
+                      ))}
+                      {vdIntW > 2 && <span><strong style={{ color: "#64748b" }}>{((vdInteraction / vdAll) * 100).toFixed(0)}%</strong> interactions</span>}
                     </div>
                   </div>
                 );
@@ -4836,6 +5023,96 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Trust Region Membership */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 3 && (() => {
+                const trSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (trSpecs.length === 0) return null;
+                // Normalize observations
+                const trNorm = (val: number, sp: { lower?: number; upper?: number }) => {
+                  const lo = sp.lower ?? 0, hi = sp.upper ?? 1;
+                  return hi > lo ? (val - lo) / (hi - lo) : 0.5;
+                };
+                const trObsNormed = trials.map(t => trSpecs.map((s: { name: string; lower?: number; upper?: number }) => trNorm(t.parameters[s.name] ?? 0, s)));
+                const trDist = (a: number[], b: number[]) => Math.sqrt(a.reduce((s, v, i) => s + (v - (b[i] ?? 0)) ** 2, 0));
+                // Get objective values
+                const trObjKey = campaign.objective_names?.[0] || Object.keys(trials[0].kpis)[0];
+                const trObjDir = (campaign.objective_directions?.[trObjKey] || "minimize") === "minimize" ? -1 : 1;
+                const trScored = trObsNormed.map((n, i) => ({ normed: n, score: (trials[i].kpis[trObjKey] ?? 0) * trObjDir }));
+                trScored.sort((a, b) => b.score - a.score);
+                // Greedy select local optima
+                const trOptima: { normed: number[]; radius: number }[] = [];
+                const trMaxK = 3;
+                for (const obs of trScored) {
+                  if (trOptima.length >= trMaxK) break;
+                  const tooClose = trOptima.some(o => trDist(o.normed, obs.normed) < 0.25);
+                  if (!tooClose) {
+                    trOptima.push({ normed: obs.normed, radius: 0.15 + 0.1 * (1 - trOptima.length / trMaxK) });
+                  }
+                }
+                if (trOptima.length === 0) return null;
+                // PCA-like 1D projection: use first continuous parameter dimension
+                const trProject = (normed: number[]) => normed[0] ?? 0.5;
+                // Classify suggestions
+                const trSugs = suggestions.suggestions.map((sug: Record<string, number>, idx: number) => {
+                  const normed = trSpecs.map((s: { name: string; lower?: number; upper?: number }) => trNorm(sug[s.name] ?? 0, s));
+                  const minDist = Math.min(...trOptima.map(o => trDist(o.normed, normed) - o.radius));
+                  return { idx: idx + 1, normed, proj: trProject(normed), exploit: minDist < 0 };
+                });
+                const trExploitCount = trSugs.filter((s: { exploit: boolean }) => s.exploit).length;
+                const trExploreCount = trSugs.length - trExploitCount;
+                const trStripW = 200, trStripH = 44;
+                const trPadX = 10;
+                const trMapX = (v: number) => trPadX + v * (trStripW - 2 * trPadX);
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <Scan size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Trust Region Membership</h3>
+                      <span className="findings-badge" style={{ background: trExploitCount > trExploreCount ? "#3b82f618" : "#f9731618", color: trExploitCount > trExploreCount ? "#3b82f6" : "#f97316", marginLeft: "auto" }}>
+                        {trExploitCount} exploit / {trExploreCount} explore
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${trStripW} ${trStripH}`} style={{ display: "block" }}>
+                      {/* Strip background */}
+                      <rect x={trPadX} y={12} width={trStripW - 2 * trPadX} height={16} rx={8} fill="var(--color-border)" opacity={0.5} />
+                      {/* Trust regions */}
+                      {trOptima.map((o, i) => {
+                        const cx = trMapX(trProject(o.normed));
+                        const rw = o.radius * (trStripW - 2 * trPadX);
+                        return (
+                          <Fragment key={`trr${i}`}>
+                            <rect x={Math.max(trPadX, cx - rw)} y={12} width={Math.min(rw * 2, trStripW - 2 * trPadX)} height={16} rx={8} fill="#3b82f6" opacity={0.12} />
+                            <polygon points={`${cx - 3},12 ${cx + 3},12 ${cx},8`} fill="#eab308" />
+                          </Fragment>
+                        );
+                      })}
+                      {/* Suggestion dots */}
+                      {trSugs.map((s: { idx: number; proj: number; exploit: boolean }) => (
+                        <circle key={`trs${s.idx}`} cx={trMapX(s.proj)} cy={20} r={4.5} fill={s.exploit ? "#3b82f6" : "#f97316"} stroke="white" strokeWidth="1" />
+                      ))}
+                      {/* Labels */}
+                      <text x={trPadX} y={trStripH - 1} fontSize="6" fill="var(--color-text-muted)">0</text>
+                      <text x={trStripW - trPadX} y={trStripH - 1} fontSize="6" fill="var(--color-text-muted)" textAnchor="end">1</text>
+                      <text x={trStripW / 2} y={trStripH - 1} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="middle">{trSpecs[0]?.name || "dim 1"} (normalized)</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#3b82f6" }} /> Exploit
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#f97316" }} /> Explore
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ display: "inline-block", width: 0, height: 0, borderLeft: "4px solid transparent", borderRight: "4px solid transparent", borderBottom: "6px solid #eab308" }} /> Local optima
+                      </span>
+                      <span style={{ marginLeft: "auto" }}>
+                        <span style={{ display: "inline-block", width: 16, height: 8, background: "#3b82f6", opacity: 0.12, borderRadius: 3, marginRight: 3, verticalAlign: "middle" }} /> Trust regions
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -5777,6 +6054,91 @@ export default function Workspace() {
                     <div style={{ display: "flex", gap: "16px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: pcTrendColor, marginRight: 4, verticalAlign: "middle" }} />IQR Volume (top-{pcK})</span>
                       <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--color-text-muted)" }}>Shrinking area = convergence in parameter space</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Search Coverage Progression */}
+              {trials.length >= 5 && (() => {
+                const scSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (scSpecs.length === 0) return null;
+                const scSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const scG = 20; // grid cells per dimension
+                const scN = scSorted.length;
+                const scStep = Math.max(1, Math.floor(scN / 20));
+                const scCheckpoints: { iter: number; coverage: number }[] = [];
+                // Track which cells are covered per dimension
+                const scCovered: Set<number>[] = scSpecs.map(() => new Set<number>());
+                for (let i = 0; i < scN; i++) {
+                  const t = scSorted[i];
+                  for (let d = 0; d < scSpecs.length; d++) {
+                    const sp = scSpecs[d] as { name: string; lower?: number; upper?: number };
+                    const lo = sp.lower ?? 0, hi = sp.upper ?? 1;
+                    const norm = hi > lo ? (t.parameters[sp.name] - lo) / (hi - lo) : 0.5;
+                    const cell = Math.min(scG - 1, Math.max(0, Math.floor(norm * scG)));
+                    scCovered[d].add(cell);
+                  }
+                  if ((i + 1) % scStep === 0 || i === scN - 1) {
+                    const avgCov = scCovered.reduce((a, s) => a + s.size / scG, 0) / scSpecs.length;
+                    scCheckpoints.push({ iter: t.iteration, coverage: avgCov });
+                  }
+                }
+                if (scCheckpoints.length < 2) return null;
+                const scCurrent = scCheckpoints[scCheckpoints.length - 1].coverage;
+                // Stall detection: last 5 checkpoints delta < 0.01
+                const scLastN = scCheckpoints.slice(-5);
+                const scStalled = scLastN.length >= 5 && Math.abs(scLastN[scLastN.length - 1].coverage - scLastN[0].coverage) < 0.01;
+                const scW = 200, scH = 70, scPadX = 20, scPadY = 12;
+                const scChartW = scW - 2 * scPadX, scChartH = scH - 2 * scPadY;
+                const scPts = scCheckpoints.map((c, i) => ({
+                  x: scPadX + (i / (scCheckpoints.length - 1)) * scChartW,
+                  y: scH - scPadY - c.coverage * scChartH,
+                }));
+                const scAreaPath = `M${scPts[0].x},${scH - scPadY} ` + scPts.map(p => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") + ` L${scPts[scPts.length - 1].x},${scH - scPadY} Z`;
+                const scLinePath = scPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const scTargetY = scH - scPadY - 0.8 * scChartH;
+                const scCovColor = scCurrent >= 0.7 ? "#22c55e" : scCurrent >= 0.4 ? "#f59e0b" : "#ef4444";
+                return (
+                  <div className="card" style={{ padding: "14px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <MapPin size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Search Coverage</h3>
+                      <span className="findings-badge" style={{ background: scCovColor + "18", color: scCovColor, marginLeft: "auto" }}>
+                        {(scCurrent * 100).toFixed(0)}% covered{scStalled ? " (stalled)" : ""}
+                      </span>
+                    </div>
+                    <svg width="100%" viewBox={`0 0 ${scW} ${scH}`} style={{ display: "block" }}>
+                      <defs>
+                        <linearGradient id="sc-grad" x1="0" y1="1" x2="0" y2="0">
+                          <stop offset="0%" stopColor={scCovColor} stopOpacity="0.02" />
+                          <stop offset="100%" stopColor={scCovColor} stopOpacity="0.25" />
+                        </linearGradient>
+                      </defs>
+                      {/* Grid */}
+                      {[0.25, 0.5, 0.75].map(t => (
+                        <line key={`scg${t}`} x1={scPadX} y1={scH - scPadY - t * scChartH} x2={scW - scPadX} y2={scH - scPadY - t * scChartH} stroke="var(--color-border)" strokeWidth="0.5" />
+                      ))}
+                      {/* Target line at 80% */}
+                      <line x1={scPadX} y1={scTargetY} x2={scW - scPadX} y2={scTargetY} stroke="#22c55e" strokeWidth="0.8" strokeDasharray="3 2" opacity={0.5} />
+                      <text x={scW - scPadX + 2} y={scTargetY + 3} fontSize="5.5" fill="#22c55e" opacity={0.7}>80%</text>
+                      {/* Area fill */}
+                      <path d={scAreaPath} fill="url(#sc-grad)" />
+                      {/* Line */}
+                      <path d={scLinePath} fill="none" stroke={scCovColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Endpoint */}
+                      <circle cx={scPts[scPts.length - 1].x} cy={scPts[scPts.length - 1].y} r="3" fill={scCovColor} />
+                      {/* Current value label */}
+                      <text x={scPts[scPts.length - 1].x + 2} y={scPts[scPts.length - 1].y - 4} fontSize="7" fill={scCovColor} fontWeight="600" fontFamily="var(--font-mono)">{(scCurrent * 100).toFixed(0)}%</text>
+                      {/* Axes labels */}
+                      <text x={scPadX} y={scH - 1} fontSize="5.5" fill="var(--color-text-muted)">iter {scCheckpoints[0].iter}</text>
+                      <text x={scW - scPadX} y={scH - 1} fontSize="5.5" fill="var(--color-text-muted)" textAnchor="end">iter {scCheckpoints[scCheckpoints.length - 1].iter}</text>
+                      <text x={scPadX - 3} y={scH - scPadY + 2} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">0</text>
+                      <text x={scPadX - 3} y={scPadY + 3} fontSize="5" fill="var(--color-text-muted)" textAnchor="end">1</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 2 }}>
+                      <span>{scSpecs.length} dims × {scG} grid cells</span>
+                      {scStalled && <span style={{ color: "#f59e0b", fontWeight: 500 }}>Coverage stalled — consider forcing exploration</span>}
                     </div>
                   </div>
                 );
