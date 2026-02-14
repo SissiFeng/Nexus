@@ -1920,6 +1920,117 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Cost-Adjusted Stopping Signal */}
+              {trials.length >= 15 && (() => {
+                const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const objKey = Object.keys(chrono[0].kpis)[0];
+                const vals = chrono.map(t => Number(t.kpis[objKey]) || 0);
+
+                // Cumulative best
+                const cumBest: number[] = [];
+                let rb = Infinity;
+                for (const v of vals) { if (v < rb) rb = v; cumBest.push(rb); }
+
+                // Cost-adjusted regret: improvement per unit cost (iteration)
+                const totalImprovement = cumBest[0] - cumBest[cumBest.length - 1];
+                const regretSeries: Array<{ iter: number; regret: number; marginal: number }> = [];
+                for (let i = 1; i < cumBest.length; i++) {
+                  const improvement = cumBest[0] - cumBest[i];
+                  const regret = totalImprovement > 0 ? improvement / totalImprovement : 0; // normalized 0-1
+                  const marginalWindow = Math.min(10, i);
+                  const marginal = i >= marginalWindow ? (cumBest[i - marginalWindow] - cumBest[i]) / marginalWindow : 0;
+                  regretSeries.push({ iter: i, regret, marginal });
+                }
+
+                // Stopping signal: compute efficiency ratio
+                const recentMarginal = regretSeries.slice(-10).reduce((a, r) => a + r.marginal, 0) / 10;
+                const avgMarginal = totalImprovement / chrono.length;
+                const efficiencyRatio = avgMarginal > 0 ? recentMarginal / avgMarginal : 0;
+
+                // Zone classification
+                let zone: "green" | "yellow" | "red";
+                let zoneLabel: string;
+                if (efficiencyRatio > 0.3) { zone = "green"; zoneLabel = "Continue"; }
+                else if (efficiencyRatio > 0.05) { zone = "yellow"; zoneLabel = "Caution"; }
+                else { zone = "red"; zoneLabel = "Consider stopping"; }
+
+                // Project future: exponential decay of marginal improvement
+                const projectedIters = 30;
+                const projections: Array<{ iter: number; regret: number }> = [];
+                const lastRegret = regretSeries[regretSeries.length - 1]?.regret ?? 0;
+                const decayRate = efficiencyRatio > 0 ? Math.min(0.95, 1 - efficiencyRatio * 0.1) : 0.98;
+                let projMarginal = recentMarginal;
+                let projRegret = lastRegret;
+                for (let i = 1; i <= projectedIters; i++) {
+                  projMarginal *= decayRate;
+                  const projImprovement = projMarginal * (totalImprovement > 0 ? chrono.length / totalImprovement : 0);
+                  projRegret = Math.min(1, projRegret + projImprovement * 0.01);
+                  projections.push({ iter: chrono.length + i, regret: projRegret });
+                }
+
+                const W = 460, H = 140, padL = 50, padR = 12, padT = 10, padB = 28;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const totalIters = chrono.length + projectedIters;
+                const scaleX = (x: number) => padL + (x / totalIters) * plotW;
+                const scaleY = (y: number) => padT + (1 - y) * plotH;
+
+                const zoneColors = { green: "#22c55e", yellow: "#eab308", red: "#ef4444" };
+                const regretPath = regretSeries.map((r, i) => `${i === 0 ? "M" : "L"}${scaleX(r.iter).toFixed(1)},${scaleY(r.regret).toFixed(1)}`).join(" ");
+                const projPath = projections.length > 0
+                  ? `M${scaleX(chrono.length).toFixed(1)},${scaleY(lastRegret).toFixed(1)} ${projections.map(p => `L${scaleX(p.iter).toFixed(1)},${scaleY(p.regret).toFixed(1)}`).join(" ")}`
+                  : "";
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Flag size={16} style={{ color: zoneColors[zone] }} />
+                      <h2 style={{ margin: 0 }}>Stopping Signal</h2>
+                      <span className={`findings-badge findings-badge-${zone === "green" ? "success" : zone === "yellow" ? "warning" : "warning"}`} style={{ marginLeft: "auto", background: zone === "red" ? "rgba(239,68,68,0.1)" : undefined, color: zone === "red" ? "#ef4444" : undefined }}>
+                        {zoneLabel}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Normalized improvement progress over iterations. Flat curve = diminishing returns. Dashed line = projected trajectory.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Zone background */}
+                      <rect x={padL} y={padT} width={plotW} height={plotH * 0.3} fill="rgba(34,197,94,0.05)" />
+                      <rect x={padL} y={padT + plotH * 0.3} width={plotW} height={plotH * 0.4} fill="rgba(234,179,8,0.05)" />
+                      <rect x={padL} y={padT + plotH * 0.7} width={plotW} height={plotH * 0.3} fill="rgba(239,68,68,0.05)" />
+                      {/* Grid */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                        <line key={f} x1={padL} y1={padT + f * plotH} x2={padL + plotW} y2={padT + f * plotH}
+                          stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                      ))}
+                      {/* Now boundary */}
+                      <line x1={scaleX(chrono.length)} y1={padT} x2={scaleX(chrono.length)} y2={padT + plotH}
+                        stroke="var(--color-text-muted)" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+                      <text x={scaleX(chrono.length)} y={padT - 2} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)">Now</text>
+                      {/* Regret curve */}
+                      <path d={regretPath} fill="none" stroke={zoneColors[zone]} strokeWidth="2" strokeLinecap="round" />
+                      {/* Projection */}
+                      {projPath && <path d={projPath} fill="none" stroke={zoneColors[zone]} strokeWidth="1.5" strokeDasharray="4,3" opacity="0.5" />}
+                      {/* Y-axis */}
+                      {[0, 0.5, 1].map(f => (
+                        <text key={f} x={padL - 4} y={scaleY(f) + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                          {(f * 100).toFixed(0)}%
+                        </text>
+                      ))}
+                      {/* X-axis */}
+                      <text x={padL} y={H - 4} textAnchor="start" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">0</text>
+                      <text x={padL + plotW} y={H - 4} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">{totalIters}</text>
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">Iteration</text>
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 3, background: zoneColors[zone], borderRadius: 1, marginRight: 4, verticalAlign: "middle" }} />Improvement</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 0, borderTop: `2px dashed ${zoneColors[zone]}`, opacity: 0.5, marginRight: 4, verticalAlign: "middle" }} />Projected</span>
+                      <span className="efficiency-legend-item" style={{ fontFamily: "var(--font-mono)" }}>Efficiency: {(efficiencyRatio * 100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -2469,6 +2580,109 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Parameter Interaction Network */}
+              {trials.length >= 15 && (() => {
+                const pNames = Object.keys(trials[0].parameters);
+                if (pNames.length < 3) return null;
+                const oKey = Object.keys(trials[0].kpis)[0];
+                const oVals = trials.map(t => Number(t.kpis[oKey]) || 0);
+                const oMean = oVals.reduce((a, b) => a + b, 0) / oVals.length;
+
+                // Compute pairwise interaction scores
+                const edges: Array<{ a: number; b: number; strength: number; synergy: boolean }> = [];
+                for (let i = 0; i < pNames.length; i++) {
+                  for (let j = i + 1; j < pNames.length; j++) {
+                    const aVals = trials.map(t => Number(t.parameters[pNames[i]]) || 0);
+                    const bVals = trials.map(t => Number(t.parameters[pNames[j]]) || 0);
+                    const aMean = aVals.reduce((s, v) => s + v, 0) / aVals.length;
+                    const bMean = bVals.reduce((s, v) => s + v, 0) / bVals.length;
+
+                    // Interaction: correlation of (a*b) with objective residual
+                    const abProduct = aVals.map((a, k) => (a - aMean) * (bVals[k] - bMean));
+                    const oResidual = oVals.map(v => v - oMean);
+                    const prodMean = abProduct.reduce((s, v) => s + v, 0) / abProduct.length;
+                    const resMean = oResidual.reduce((s, v) => s + v, 0) / oResidual.length;
+                    let num = 0, denA = 0, denB = 0;
+                    for (let k = 0; k < abProduct.length; k++) {
+                      const da = abProduct[k] - prodMean;
+                      const db = oResidual[k] - resMean;
+                      num += da * db;
+                      denA += da * da;
+                      denB += db * db;
+                    }
+                    const corr = denA > 0 && denB > 0 ? num / Math.sqrt(denA * denB) : 0;
+                    const strength = Math.abs(corr);
+                    if (strength > 0.1) {
+                      edges.push({ a: i, b: j, strength, synergy: corr < 0 }); // negative corr with minimize = synergistic
+                    }
+                  }
+                }
+
+                // Layout: circular node placement
+                const W = 350, H = 280;
+                const cx = W / 2, cy = H / 2;
+                const radius = Math.min(W, H) / 2 - 40;
+                const nodePositions = pNames.map((_, i) => {
+                  const angle = (2 * Math.PI * i) / pNames.length - Math.PI / 2;
+                  return { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+                });
+
+                const maxStrength = edges.length > 0 ? Math.max(...edges.map(e => e.strength)) : 1;
+                const strongEdges = edges.filter(e => e.strength > 0.15);
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <GitCompare size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Interaction Network</h2>
+                      <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginLeft: "auto", fontFamily: "var(--font-mono)" }}>
+                        {strongEdges.length} interactions
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Parameter interactions detected from joint effects on {oKey}. Thick edges = strong interaction. Green = synergistic, red = antagonistic.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Edges */}
+                      {strongEdges.map((e, i) => {
+                        const pa = nodePositions[e.a];
+                        const pb = nodePositions[e.b];
+                        const thickness = 1 + (e.strength / maxStrength) * 4;
+                        const color = e.synergy ? "rgba(34,197,94,0.6)" : "rgba(239,68,68,0.5)";
+                        return (
+                          <line key={i} x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y}
+                            stroke={color} strokeWidth={thickness} strokeLinecap="round">
+                            <title>{pNames[e.a]} × {pNames[e.b]}: {e.synergy ? "synergistic" : "antagonistic"} ({e.strength.toFixed(3)})</title>
+                          </line>
+                        );
+                      })}
+                      {/* Nodes */}
+                      {pNames.map((name, i) => {
+                        const pos = nodePositions[i];
+                        const nodeEdges = strongEdges.filter(e => e.a === i || e.b === i);
+                        const totalStr = nodeEdges.reduce((s, e) => s + e.strength, 0);
+                        const nodeRadius = 16 + Math.min(totalStr * 8, 8);
+                        return (
+                          <g key={i}>
+                            <circle cx={pos.x} cy={pos.y} r={nodeRadius} fill="var(--color-card-bg)" stroke="var(--color-primary)" strokeWidth="2">
+                              <title>{name}: {nodeEdges.length} interaction(s), total strength={totalStr.toFixed(3)}</title>
+                            </circle>
+                            <text x={pos.x} y={pos.y + 3} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fontWeight="600" fill="var(--color-text-primary)">
+                              {name.length > 6 ? name.slice(0, 5) + "…" : name}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 3, background: "rgba(34,197,94,0.8)", borderRadius: 1, marginRight: 4, verticalAlign: "middle" }} />Synergistic</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 14, height: 3, background: "rgba(239,68,68,0.7)", borderRadius: 1, marginRight: 4, verticalAlign: "middle" }} />Antagonistic</span>
+                      <span className="efficiency-legend-item" style={{ color: "var(--color-text-muted)", fontSize: "0.72rem" }}>Edge width ∝ effect size</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Parallel Coordinates Plot */}
               {trials.length >= 3 && (() => {
                 const paramNames = Object.keys(trials[0].parameters);
@@ -2725,6 +2939,177 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Acquisition Function Proxy */}
+              {trials.length >= 12 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                if (paramNames.length < 2) return null;
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const afXParam = paramNames[0];
+                const afYParam = paramNames[1];
+                const afXVals = trials.map(t => Number(t.parameters[afXParam]) || 0);
+                const afYVals = trials.map(t => Number(t.parameters[afYParam]) || 0);
+                const afObjVals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                const afXMin = Math.min(...afXVals), afXMax = Math.max(...afXVals);
+                const afYMin = Math.min(...afYVals), afYMax = Math.max(...afYVals);
+                const afXRange = afXMax - afXMin || 1;
+                const afYRange = afYMax - afYMin || 1;
+                const afObjMin = Math.min(...afObjVals);
+                const afObjMax = Math.max(...afObjVals);
+                const afObjRange = afObjMax - afObjMin || 1;
+
+                const res = 16;
+                const afGrid: Array<Array<{ exploit: number; explore: number; acq: number }>> = [];
+                for (let gy = 0; gy < res; gy++) {
+                  const row: Array<{ exploit: number; explore: number; acq: number }> = [];
+                  for (let gx = 0; gx < res; gx++) {
+                    const cx = afXMin + (gx + 0.5) * afXRange / res;
+                    const cy = afYMin + (gy + 0.5) * afYRange / res;
+
+                    // Exploitation: IDW-interpolated objective value (normalized, lower=better)
+                    let wSum = 0, vSum = 0;
+                    for (let i = 0; i < trials.length; i++) {
+                      const dx = (afXVals[i] - cx) / afXRange;
+                      const dy = (afYVals[i] - cy) / afYRange;
+                      const d = Math.sqrt(dx * dx + dy * dy) + 0.001;
+                      const w = 1 / (d * d);
+                      wSum += w;
+                      vSum += w * afObjVals[i];
+                    }
+                    const predicted = vSum / wSum;
+                    const exploit = 1 - (predicted - afObjMin) / afObjRange; // Higher = better predicted value
+
+                    // Exploration: inverse of local density (sparse = high exploration value)
+                    let nearCount = 0;
+                    const radius = 0.15;
+                    for (let i = 0; i < trials.length; i++) {
+                      const dx = (afXVals[i] - cx) / afXRange;
+                      const dy = (afYVals[i] - cy) / afYRange;
+                      if (Math.sqrt(dx * dx + dy * dy) < radius) nearCount++;
+                    }
+                    const explore = 1 - Math.min(nearCount / 5, 1); // fewer nearby = higher exploration
+
+                    // Acquisition score: balanced combination
+                    const acq = 0.4 * exploit + 0.6 * explore;
+                    row.push({ exploit, explore, acq });
+                  }
+                  afGrid.push(row);
+                }
+
+                const maxAcq = Math.max(...afGrid.flat().map(c => c.acq));
+                const minAcq = Math.min(...afGrid.flat().map(c => c.acq));
+                const acqRange = maxAcq - minAcq || 1;
+
+                // Find top suggested cell
+                let topGx = 0, topGy = 0, topAcq = -Infinity;
+                for (let gy = 0; gy < res; gy++) {
+                  for (let gx = 0; gx < res; gx++) {
+                    if (afGrid[gy][gx].acq > topAcq) {
+                      topAcq = afGrid[gy][gx].acq;
+                      topGx = gx;
+                      topGy = gy;
+                    }
+                  }
+                }
+
+                const W = 420, H = 280, padL = 50, padR = 20, padT = 10, padB = 36;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const cellW = plotW / res;
+                const cellH = plotH / res;
+
+                const acqColor = (v: number) => {
+                  const t = (v - minAcq) / acqRange;
+                  // Purple (low) → blue (mid) → cyan (high)
+                  if (t < 0.5) {
+                    const p = t / 0.5;
+                    return `rgb(${Math.round(88 - p * 30)}, ${Math.round(28 + p * 72)}, ${Math.round(135 + p * 70)})`;
+                  }
+                  const p = (t - 0.5) / 0.5;
+                  return `rgb(${Math.round(58 - p * 50)}, ${Math.round(100 + p * 155)}, ${Math.round(205 + p * 50)})`;
+                };
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Crosshair size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Acquisition Landscape</h2>
+                      <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginLeft: "auto", fontFamily: "var(--font-mono)" }}>
+                        {afXParam} × {afYParam}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Estimated acquisition score combining predicted value (40%) and exploration need (60%). Bright = high-priority regions for next experiments.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {afGrid.map((row, gy) =>
+                        row.map((cell, gx) => (
+                          <rect
+                            key={`${gy}-${gx}`}
+                            x={padL + gx * cellW}
+                            y={padT + gy * cellH}
+                            width={cellW + 0.5}
+                            height={cellH + 0.5}
+                            fill={acqColor(cell.acq)}
+                            opacity={0.85}
+                          >
+                            <title>{afXParam}≈{(afXMin + (gx + 0.5) * afXRange / res).toFixed(2)}, {afYParam}≈{(afYMin + (gy + 0.5) * afYRange / res).toFixed(2)} | Acq={cell.acq.toFixed(3)} (exploit={cell.exploit.toFixed(2)}, explore={cell.explore.toFixed(2)})</title>
+                          </rect>
+                        ))
+                      )}
+                      {/* Best acquisition cell marker */}
+                      <rect
+                        x={padL + topGx * cellW + 1}
+                        y={padT + topGy * cellH + 1}
+                        width={cellW - 2}
+                        height={cellH - 2}
+                        fill="none"
+                        stroke="white"
+                        strokeWidth="2"
+                        strokeDasharray="3,2"
+                      />
+                      <text
+                        x={padL + (topGx + 0.5) * cellW}
+                        y={padT + (topGy + 0.5) * cellH + 3}
+                        textAnchor="middle"
+                        fontSize="9"
+                        fill="white"
+                        fontWeight="bold"
+                      >★</text>
+                      {/* Trial positions */}
+                      {trials.map((t, i) => {
+                        const px = padL + ((afXVals[i] - afXMin) / afXRange) * plotW;
+                        const py = padT + ((afYVals[i] - afYMin) / afYRange) * plotH;
+                        return (
+                          <circle key={i} cx={px} cy={py} r="2" fill="rgba(255,255,255,0.5)" stroke="rgba(0,0,0,0.3)" strokeWidth="0.5">
+                            <title>Trial #{t.iteration}: {objKey}={afObjVals[i].toFixed(4)}</title>
+                          </circle>
+                        );
+                      })}
+                      {/* Axes */}
+                      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      {[0, 0.5, 1].map(f => (
+                        <Fragment key={`af${f}`}>
+                          <text x={padL + f * plotW} y={H - 12} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                            {(afXMin + f * afXRange).toFixed(2)}
+                          </text>
+                          <text x={padL - 4} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                            {(afYMin + f * afYRange).toFixed(2)}
+                          </text>
+                        </Fragment>
+                      ))}
+                      <text x={padL + plotW / 2} y={H - 0} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">{afXParam}</text>
+                      <text x={10} y={padT + plotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" transform={`rotate(-90, 10, ${padT + plotH / 2})`}>{afYParam}</text>
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(88,28,135)", marginRight: 4, verticalAlign: "middle" }} />Low priority</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(8,255,255)", marginRight: 4, verticalAlign: "middle" }} />High priority</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px dashed white", background: "transparent", marginRight: 4, verticalAlign: "middle" }} />★ Next suggestion</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Parameter Space Sampling Density */}
               {trials.length >= 10 && (() => {
                 const paramNames = Object.keys(trials[0].parameters);
@@ -2945,6 +3330,146 @@ export default function Workspace() {
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)", maxWidth: `${W}px`, padding: "2px 0" }}>
                       <span>Better ({oMin.toFixed(3)})</span>
                       <span>Worse ({oMax.toFixed(3)})</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Surrogate Confidence Map */}
+              {trials.length >= 12 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                if (paramNames.length < 2) return null;
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const scXParam = paramNames[0];
+                const scYParam = paramNames[1];
+                const scXVals = trials.map(t => Number(t.parameters[scXParam]) || 0);
+                const scYVals = trials.map(t => Number(t.parameters[scYParam]) || 0);
+                const scObjVals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                const scXMin = Math.min(...scXVals), scXMax = Math.max(...scXVals);
+                const scYMin = Math.min(...scYVals), scYMax = Math.max(...scYVals);
+                const scXRange = scXMax - scXMin || 1;
+                const scYRange = scYMax - scYMin || 1;
+
+                const res = 16;
+                const confGrid: number[][] = [];
+                for (let gy = 0; gy < res; gy++) {
+                  const row: number[] = [];
+                  for (let gx = 0; gx < res; gx++) {
+                    const cx = scXMin + (gx + 0.5) * scXRange / res;
+                    const cy = scYMin + (gy + 0.5) * scYRange / res;
+
+                    // Find nearby trials within radius
+                    const nearbyVals: number[] = [];
+                    const nearbyDists: number[] = [];
+                    for (let i = 0; i < trials.length; i++) {
+                      const dx = (scXVals[i] - cx) / scXRange;
+                      const dy = (scYVals[i] - cy) / scYRange;
+                      const dist = Math.sqrt(dx * dx + dy * dy);
+                      if (dist < 0.25) {
+                        nearbyVals.push(scObjVals[i]);
+                        nearbyDists.push(dist);
+                      }
+                    }
+
+                    // Confidence: combination of density (more nearby = confident) and local consistency (low variance = confident)
+                    const density = Math.min(nearbyVals.length / 8, 1); // saturates at 8 nearby trials
+                    let consistency = 1;
+                    if (nearbyVals.length >= 2) {
+                      const mean = nearbyVals.reduce((a, b) => a + b, 0) / nearbyVals.length;
+                      const variance = nearbyVals.reduce((a, v) => a + (v - mean) ** 2, 0) / nearbyVals.length;
+                      const globalMean = scObjVals.reduce((a, b) => a + b, 0) / scObjVals.length;
+                      const globalVar = scObjVals.reduce((a, v) => a + (v - globalMean) ** 2, 0) / scObjVals.length;
+                      consistency = globalVar > 0 ? Math.max(0, 1 - variance / globalVar) : 1;
+                    } else {
+                      consistency = 0;
+                    }
+
+                    const confidence = 0.6 * density + 0.4 * consistency;
+                    row.push(confidence);
+                  }
+                  confGrid.push(row);
+                }
+
+                const maxConf = Math.max(...confGrid.flat());
+                const minConf = Math.min(...confGrid.flat());
+                const confRange = maxConf - minConf || 1;
+                const highConfPct = (confGrid.flat().filter(c => c > 0.5).length / (res * res) * 100).toFixed(0);
+
+                const W = 420, H = 280, padL = 50, padR = 20, padT = 10, padB = 36;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const cellW = plotW / res;
+                const cellH = plotH / res;
+
+                const confColor = (v: number) => {
+                  const t = (v - minConf) / confRange;
+                  // Red (uncertain) → yellow → blue (confident)
+                  if (t < 0.5) {
+                    const p = t / 0.5;
+                    return `rgb(${Math.round(239 - p * 5)}, ${Math.round(68 + p * 111)}, ${Math.round(68 - p * 60)})`;
+                  }
+                  const p = (t - 0.5) / 0.5;
+                  return `rgb(${Math.round(234 - p * 175)}, ${Math.round(179 - p * 49)}, ${Math.round(8 + p * 227)})`;
+                };
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Radar size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Model Confidence</h2>
+                      <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginLeft: "auto", fontFamily: "var(--font-mono)" }}>
+                        {highConfPct}% confident
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Surrogate model confidence based on local trial density and prediction consistency. Blue = reliable predictions, red = uncertain.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {confGrid.map((row, gy) =>
+                        row.map((conf, gx) => (
+                          <rect
+                            key={`${gy}-${gx}`}
+                            x={padL + gx * cellW}
+                            y={padT + gy * cellH}
+                            width={cellW + 0.5}
+                            height={cellH + 0.5}
+                            fill={confColor(conf)}
+                            opacity={0.75}
+                          >
+                            <title>{scXParam}≈{(scXMin + (gx + 0.5) * scXRange / res).toFixed(2)}, {scYParam}≈{(scYMin + (gy + 0.5) * scYRange / res).toFixed(2)} | Confidence={conf.toFixed(3)}</title>
+                          </rect>
+                        ))
+                      )}
+                      {/* Trial positions */}
+                      {trials.map((t, i) => {
+                        const px = padL + ((scXVals[i] - scXMin) / scXRange) * plotW;
+                        const py = padT + ((scYVals[i] - scYMin) / scYRange) * plotH;
+                        return (
+                          <circle key={i} cx={px} cy={py} r="2.5" fill="white" stroke="rgba(0,0,0,0.4)" strokeWidth="0.5">
+                            <title>Trial #{t.iteration}: {objKey}={scObjVals[i].toFixed(4)}</title>
+                          </circle>
+                        );
+                      })}
+                      {/* Axes */}
+                      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      {[0, 0.5, 1].map(f => (
+                        <Fragment key={`sc${f}`}>
+                          <text x={padL + f * plotW} y={H - 12} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                            {(scXMin + f * scXRange).toFixed(2)}
+                          </text>
+                          <text x={padL - 4} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                            {(scYMin + f * scYRange).toFixed(2)}
+                          </text>
+                        </Fragment>
+                      ))}
+                      <text x={padL + plotW / 2} y={H - 0} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">{scXParam}</text>
+                      <text x={10} y={padT + plotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" transform={`rotate(-90, 10, ${padT + plotH / 2})`}>{scYParam}</text>
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(239,68,68)", marginRight: 4, verticalAlign: "middle" }} />Uncertain</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(234,179,8)", marginRight: 4, verticalAlign: "middle" }} />Moderate</span>
+                      <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgb(59,130,235)", marginRight: 4, verticalAlign: "middle" }} />Confident</span>
                     </div>
                   </div>
                 );
