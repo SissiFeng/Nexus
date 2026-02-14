@@ -104,6 +104,23 @@ export default function Workspace() {
     }
   }, [historySortCol]);
 
+  // Keyboard shortcuts for tab navigation
+  useEffect(() => {
+    const tabKeys: Record<string, typeof activeTab> = {
+      "1": "overview", "2": "explore", "3": "suggestions",
+      "4": "insights", "5": "history", "6": "export",
+    };
+    const handler = (e: KeyboardEvent) => {
+      // Don't intercept when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tab = tabKeys[e.key];
+      if (tab) { setActiveTab(tab); e.preventDefault(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   // Fetch diagnostics when overview tab is active
   useEffect(() => {
     if (!id || activeTab !== "overview") return;
@@ -364,14 +381,16 @@ export default function Workspace() {
 
         {/* Tabs */}
         <div className="workspace-tabs">
-          {tabs.map((tab) => (
+          {tabs.map((tab, idx) => (
             <button
               key={tab.id}
               className={`workspace-tab ${activeTab === tab.id ? "active" : ""}`}
               onClick={() => setActiveTab(tab.id)}
+              title={`${tab.label} (${idx + 1})`}
             >
               <tab.icon size={16} />
               <span>{tab.label}</span>
+              <kbd className="tab-kbd">{idx + 1}</kbd>
             </button>
           ))}
         </div>
@@ -557,6 +576,50 @@ export default function Workspace() {
                   </p>
                 )}
               </div>
+
+              {/* Parameter Range Explorer */}
+              {trials.length > 0 && campaign.spec?.parameters && (() => {
+                const specs = campaign.spec.parameters;
+                const rangeData = specs
+                  .filter((s) => s.type === "continuous" && s.lower !== undefined && s.upper !== undefined)
+                  .map((s) => {
+                    const vals = trials.map((t) => Number(t.parameters[s.name]) || 0);
+                    const sampledMin = Math.min(...vals);
+                    const sampledMax = Math.max(...vals);
+                    const fullRange = (s.upper! - s.lower!);
+                    const coveragePct = fullRange > 0 ? ((sampledMax - sampledMin) / fullRange) * 100 : 0;
+                    const uniqueVals = new Set(vals.map((v) => v.toFixed(4))).size;
+                    return { name: s.name, lower: s.lower!, upper: s.upper!, sampledMin, sampledMax, coveragePct, uniqueVals };
+                  });
+
+                if (rangeData.length === 0) return null;
+                return (
+                  <div className="card">
+                    <h2>Parameter Range Coverage</h2>
+                    <p className="range-desc">
+                      How much of each parameter's defined range has been sampled. Low coverage suggests unexplored regions.
+                    </p>
+                    <div className="range-list">
+                      {rangeData.map((r) => (
+                        <div key={r.name} className="range-row">
+                          <span className="range-name mono">{r.name}</span>
+                          <div className="range-track">
+                            <div
+                              className="range-fill"
+                              style={{
+                                left: `${((r.sampledMin - r.lower) / (r.upper - r.lower)) * 100}%`,
+                                width: `${Math.max(((r.sampledMax - r.sampledMin) / (r.upper - r.lower)) * 100, 2)}%`,
+                              }}
+                            />
+                          </div>
+                          <span className="range-pct mono">{r.coveragePct.toFixed(0)}%</span>
+                          <span className="range-bounds mono">{r.sampledMin.toFixed(2)}–{r.sampledMax.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Parameter Correlation Summary */}
               {trials.length >= 5 && (() => {
@@ -1095,6 +1158,28 @@ export default function Workspace() {
         .workspace-tab.active {
           color: var(--color-primary);
           border-bottom-color: var(--color-primary);
+        }
+
+        .tab-kbd {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 18px;
+          height: 18px;
+          border-radius: 3px;
+          background: var(--color-bg);
+          border: 1px solid var(--color-border);
+          font-size: 0.65rem;
+          font-weight: 600;
+          color: var(--color-text-muted);
+          margin-left: 4px;
+          opacity: 0.5;
+          transition: opacity var(--transition-fast);
+        }
+
+        .workspace-tab:hover .tab-kbd,
+        .workspace-tab.active .tab-kbd {
+          opacity: 0.8;
         }
 
         .workspace-content {
