@@ -115,6 +115,10 @@ import {
   Users,
   Award,
   Milestone,
+  Shield,
+  Banknote,
+  Network,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3605,6 +3609,146 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Model Distrust Meter */}
+              {trials.length >= 15 && (() => {
+                const dmSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (dmSpecs.length < 2) return null;
+                const dmObjKey = Object.keys(trials[0].kpis)[0];
+                const dmSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // compute LOO k-NN predictions for rolling windows
+                const dmK = Math.min(5, Math.floor(dmSorted.length / 4));
+                const dmNorm = (v: number, lo: number, hi: number) => hi > lo ? (v - lo) / (hi - lo) : 0;
+                const dmRanges = dmSpecs.map((s: { name: string; lower?: number; upper?: number }) => ({
+                  name: s.name, lo: s.lower!, hi: s.upper!
+                }));
+                // baseline RMSE: first 60% of trials
+                const dmSplit = Math.max(10, Math.floor(dmSorted.length * 0.6));
+                const dmBaseline = dmSorted.slice(0, dmSplit);
+                const dmRecent = dmSorted.slice(dmSplit);
+                const dmPredErr = (pool: typeof dmSorted, test: typeof dmSorted) => {
+                  if (pool.length < dmK + 1 || test.length === 0) return 0;
+                  let sumSq = 0;
+                  for (const t of test) {
+                    const dists = pool.filter(p => p !== t).map(p => {
+                      let d2 = 0;
+                      for (const r of dmRanges) {
+                        const a = dmNorm(t.parameters[r.name] ?? 0, r.lo, r.hi);
+                        const b = dmNorm(p.parameters[r.name] ?? 0, r.lo, r.hi);
+                        d2 += (a - b) ** 2;
+                      }
+                      return { dist: Math.sqrt(d2), val: p.kpis[dmObjKey] ?? 0 };
+                    }).sort((a, b) => a.dist - b.dist);
+                    const pred = dists.slice(0, dmK).reduce((s, d) => s + d.val, 0) / dmK;
+                    sumSq += (pred - (t.kpis[dmObjKey] ?? 0)) ** 2;
+                  }
+                  return Math.sqrt(sumSq / test.length);
+                };
+                const dmBaseRMSE = dmPredErr(dmBaseline, dmBaseline.slice(-Math.min(10, dmBaseline.length)));
+                const dmRecentRMSE = dmPredErr(dmSorted, dmRecent);
+                // OOD detection: how many recent trials are far from training distribution
+                const dmMeanDist = (() => {
+                  let sum = 0;
+                  for (const t of dmBaseline) {
+                    const dists = dmBaseline.filter(p => p !== t).map(p => {
+                      let d2 = 0;
+                      for (const r of dmRanges) {
+                        const a = dmNorm(t.parameters[r.name] ?? 0, r.lo, r.hi);
+                        const b = dmNorm(p.parameters[r.name] ?? 0, r.lo, r.hi);
+                        d2 += (a - b) ** 2;
+                      }
+                      return Math.sqrt(d2);
+                    });
+                    dists.sort((a, b) => a - b);
+                    sum += dists[0] ?? 0;
+                  }
+                  return sum / dmBaseline.length;
+                })();
+                const dmThreshold = dmMeanDist * 3;
+                let dmOOD = 0;
+                for (const t of dmRecent) {
+                  const minD = Math.min(...dmBaseline.map(p => {
+                    let d2 = 0;
+                    for (const r of dmRanges) {
+                      const a = dmNorm(t.parameters[r.name] ?? 0, r.lo, r.hi);
+                      const b = dmNorm(p.parameters[r.name] ?? 0, r.lo, r.hi);
+                      d2 += (a - b) ** 2;
+                    }
+                    return Math.sqrt(d2);
+                  }));
+                  if (minD > dmThreshold) dmOOD++;
+                }
+                const dmOODRate = dmRecent.length > 0 ? dmOOD / dmRecent.length : 0;
+                // Trust score
+                const dmRMSEDrift = dmBaseRMSE > 0 ? Math.abs(dmRecentRMSE - dmBaseRMSE) / dmBaseRMSE : 0;
+                const dmTrust = Math.max(0, Math.min(1, 1 - 0.5 * Math.min(1, dmRMSEDrift) - 0.35 * dmOODRate - 0.15 * Math.min(1, dmRecentRMSE * 5)));
+                const dmBadge = dmTrust > 0.7 ? "Trustworthy" : dmTrust > 0.4 ? "Caution" : "Unreliable";
+                const dmColor = dmTrust > 0.7 ? "var(--color-green, #22c55e)" : dmTrust > 0.4 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Gauge visualization
+                const dmW = 220, dmH = 130;
+                const dmAngle = Math.PI * (1 - dmTrust);
+                const dmCx = dmW / 2, dmCy = dmH - 10;
+                const dmR = 80;
+                const dmNeedleX = dmCx + dmR * 0.85 * Math.cos(Math.PI - dmAngle);
+                const dmNeedleY = dmCy - dmR * 0.85 * Math.sin(Math.PI - dmAngle);
+                // Arc segments: red (0-0.4), yellow (0.4-0.7), green (0.7-1.0)
+                const dmArc = (start: number, end: number) => {
+                  const s = Math.PI - Math.PI * start;
+                  const e = Math.PI - Math.PI * end;
+                  const x1 = dmCx + dmR * Math.cos(s);
+                  const y1 = dmCy - dmR * Math.sin(s);
+                  const x2 = dmCx + dmR * Math.cos(e);
+                  const y2 = dmCy - dmR * Math.sin(e);
+                  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${dmR},${dmR} 0 0 1 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+                };
+                return (
+                  <div className="card" style={{ padding: "20px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+                      <Shield size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>Model Distrust Meter</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: dmColor + "22", color: dmColor }}>{dmBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <svg width={dmW} height={dmH} viewBox={`0 0 ${dmW} ${dmH}`}>
+                        {/* Background arcs */}
+                        <path d={dmArc(0, 0.4)} fill="none" stroke="var(--color-red, #ef4444)" strokeWidth="14" strokeLinecap="round" opacity={0.2} />
+                        <path d={dmArc(0.4, 0.7)} fill="none" stroke="var(--color-yellow, #eab308)" strokeWidth="14" strokeLinecap="round" opacity={0.2} />
+                        <path d={dmArc(0.7, 1.0)} fill="none" stroke="var(--color-green, #22c55e)" strokeWidth="14" strokeLinecap="round" opacity={0.2} />
+                        {/* Active arc */}
+                        <path d={dmArc(0, dmTrust)} fill="none" stroke={dmColor} strokeWidth="14" strokeLinecap="round" />
+                        {/* Needle */}
+                        <line x1={dmCx} y1={dmCy} x2={dmNeedleX} y2={dmNeedleY} stroke={dmColor} strokeWidth="2.5" strokeLinecap="round" />
+                        <circle cx={dmCx} cy={dmCy} r="5" fill={dmColor} />
+                        {/* Score */}
+                        <text x={dmCx} y={dmCy - 25} textAnchor="middle" style={{ fontSize: "1.4rem", fontWeight: 700, fontFamily: "var(--font-mono)", fill: dmColor }}>{(dmTrust * 100).toFixed(0)}%</text>
+                        <text x={dmCx} y={dmCy - 8} textAnchor="middle" style={{ fontSize: "0.65rem", fill: "var(--color-text-muted)" }}>Trust Score</text>
+                        {/* Labels */}
+                        <text x="15" y={dmCy - 2} style={{ fontSize: "0.6rem", fill: "var(--color-red, #ef4444)" }}>Low</text>
+                        <text x={dmW - 25} y={dmCy - 2} style={{ fontSize: "0.6rem", fill: "var(--color-green, #22c55e)" }}>High</text>
+                      </svg>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginTop: "8px" }}>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>RMSE Drift</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)", color: dmRMSEDrift > 0.5 ? "var(--color-red, #ef4444)" : "var(--color-text)" }}>{(dmRMSEDrift * 100).toFixed(0)}%</div>
+                      </div>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>OOD Rate</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)", color: dmOODRate > 0.3 ? "var(--color-red, #ef4444)" : "var(--color-text)" }}>{(dmOODRate * 100).toFixed(0)}%</div>
+                      </div>
+                      <div style={{ textAlign: "center", padding: "6px", background: "var(--color-bg-secondary)", borderRadius: "6px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>Recent RMSE</div>
+                        <div style={{ fontSize: "0.85rem", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{dmRecentRMSE.toFixed(4)}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "8px", textAlign: "center" }}>
+                      {dmBadge === "Trustworthy" ? "Model predictions are reliable — proceed with confidence." :
+                       dmBadge === "Caution" ? "Model shows some drift — verify critical suggestions manually." :
+                       "Model unreliable — consider collecting more data or retraining."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -5471,6 +5615,108 @@ export default function Workspace() {
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       <span>{mdParams[0].name} →</span>
                       <span>↓ {mdParams[1].name}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Knowledge Gain Per Cost */}
+              {trials.length >= 12 && (() => {
+                const kgSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (kgSpecs.length < 2) return null;
+                const kgObjKey = Object.keys(trials[0].kpis)[0];
+                const kgSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const kgNorm = (v: number, lo: number, hi: number) => hi > lo ? (v - lo) / (hi - lo) : 0;
+                const kgRanges = kgSpecs.map((s: { name: string; lower?: number; upper?: number }) => ({
+                  name: s.name, lo: s.lower!, hi: s.upper!
+                }));
+                const kgK = Math.min(5, Math.floor(kgSorted.length / 4));
+                // Rolling window: measure epistemic uncertainty reduction per trial
+                const kgWin = 5;
+                const kgGains: number[] = [];
+                for (let i = kgWin; i <= kgSorted.length; i++) {
+                  const pool = kgSorted.slice(0, i);
+                  const prevPool = kgSorted.slice(0, i - 1);
+                  // Measure uncertainty as avg k-NN std for a grid of points
+                  const kgGridN = 8;
+                  let kgUncAfter = 0, kgUncBefore = 0;
+                  const kgGridCount = kgGridN ** 2;
+                  for (let gi = 0; gi < kgGridN; gi++) {
+                    for (let gj = 0; gj < kgGridN; gj++) {
+                      const pt: Record<string, number> = {};
+                      kgRanges.forEach((r, idx) => {
+                        pt[r.name] = idx === 0 ? (gi + 0.5) / kgGridN : idx === 1 ? (gj + 0.5) / kgGridN : 0.5;
+                      });
+                      const distAfter = pool.map(t => {
+                        let d2 = 0;
+                        for (const r of kgRanges) { const a = pt[r.name]; const b = kgNorm(t.parameters[r.name] ?? 0, r.lo, r.hi); d2 += (a - b) ** 2; }
+                        return { dist: Math.sqrt(d2), val: t.kpis[kgObjKey] ?? 0 };
+                      }).sort((a, b) => a.dist - b.dist);
+                      const nn = distAfter.slice(0, kgK);
+                      const mean = nn.reduce((s, d) => s + d.val, 0) / kgK;
+                      kgUncAfter += Math.sqrt(nn.reduce((s, d) => s + (d.val - mean) ** 2, 0) / kgK);
+                      if (prevPool.length >= kgK) {
+                        const distBefore = prevPool.map(t => {
+                          let d2 = 0;
+                          for (const r of kgRanges) { const a = pt[r.name]; const b = kgNorm(t.parameters[r.name] ?? 0, r.lo, r.hi); d2 += (a - b) ** 2; }
+                          return { dist: Math.sqrt(d2), val: t.kpis[kgObjKey] ?? 0 };
+                        }).sort((a, b) => a.dist - b.dist);
+                        const nnB = distBefore.slice(0, kgK);
+                        const meanB = nnB.reduce((s, d) => s + d.val, 0) / kgK;
+                        kgUncBefore += Math.sqrt(nnB.reduce((s, d) => s + (d.val - meanB) ** 2, 0) / kgK);
+                      }
+                    }
+                  }
+                  kgUncAfter /= kgGridCount;
+                  kgUncBefore /= kgGridCount;
+                  const reduction = Math.max(0, kgUncBefore - kgUncAfter);
+                  kgGains.push(reduction);
+                }
+                if (kgGains.length < 3) return null;
+                const kgMax = Math.max(...kgGains, 0.001);
+                const kgAvgRecent = kgGains.slice(-5).reduce((s, v) => s + v, 0) / Math.min(5, kgGains.length);
+                const kgAvgAll = kgGains.reduce((s, v) => s + v, 0) / kgGains.length;
+                const kgRatio = kgAvgAll > 0 ? kgAvgRecent / kgAvgAll : 1;
+                const kgBadge = kgRatio > 1.2 ? "Efficient" : kgRatio > 0.5 ? "Moderate" : "Diminishing";
+                const kgBadgeColor = kgRatio > 1.2 ? "var(--color-green, #22c55e)" : kgRatio > 0.5 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const kgW = 280, kgH = 100, kgPad = 30;
+                const kgPts = kgGains.map((v, i) => ({
+                  x: kgPad + (i / (kgGains.length - 1)) * (kgW - 2 * kgPad),
+                  y: 8 + (1 - v / kgMax) * (kgH - 20),
+                }));
+                const kgArea = kgPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")
+                  + ` L${kgPts[kgPts.length - 1].x.toFixed(1)},${kgH - 4} L${kgPts[0].x.toFixed(1)},${kgH - 4} Z`;
+                const kgLine = kgPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                return (
+                  <div className="card" style={{ padding: "20px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+                      <Banknote size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>Knowledge Gain Per Cost</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: kgBadgeColor + "22", color: kgBadgeColor }}>{kgBadge}</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginBottom: "8px" }}>
+                      Uncertainty reduction per trial — are your experiments efficiently reducing model uncertainty?
+                    </div>
+                    <svg width={kgW} height={kgH} viewBox={`0 0 ${kgW} ${kgH}`} style={{ width: "100%", height: "auto" }}>
+                      <defs>
+                        <linearGradient id="kgGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={kgBadgeColor} stopOpacity="0.3" />
+                          <stop offset="100%" stopColor={kgBadgeColor} stopOpacity="0.02" />
+                        </linearGradient>
+                      </defs>
+                      <path d={kgArea} fill="url(#kgGrad)" />
+                      <path d={kgLine} fill="none" stroke={kgBadgeColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      {kgPts.map((p, i) => (
+                        <circle key={i} cx={p.x} cy={p.y} r={i === kgPts.length - 1 ? 3.5 : 1.5} fill={kgBadgeColor} opacity={i === kgPts.length - 1 ? 1 : 0.5} />
+                      ))}
+                      {/* x-axis labels */}
+                      <text x={kgPad} y={kgH} textAnchor="middle" style={{ fontSize: "0.55rem", fill: "var(--color-text-muted)" }}>#{kgWin + 1}</text>
+                      <text x={kgW - kgPad} y={kgH} textAnchor="middle" style={{ fontSize: "0.55rem", fill: "var(--color-text-muted)" }}>#{kgSorted.length}</text>
+                      <text x={(kgW) / 2} y={kgH} textAnchor="middle" style={{ fontSize: "0.55rem", fill: "var(--color-text-muted)" }}>Trial</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "0.75rem" }}>
+                      <span style={{ color: "var(--color-text-muted)" }}>Avg gain: <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)" }}>{kgAvgAll.toFixed(4)}</span></span>
+                      <span style={{ color: kgBadgeColor, fontWeight: 600 }}>Recent: {kgAvgRecent.toFixed(4)} ({kgRatio > 1 ? "+" : ""}{((kgRatio - 1) * 100).toFixed(0)}%)</span>
                     </div>
                   </div>
                 );
@@ -8529,6 +8775,133 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Batch Pareto Frontier */}
+              {suggestions && suggestions.suggestions.length >= 3 && trials.length >= 5 && (() => {
+                const bpSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (bpSpecs.length < 2) return null;
+                const bpObjKey = Object.keys(trials[0].kpis)[0];
+                const bpNorm = (v: number, lo: number, hi: number) => hi > lo ? (v - lo) / (hi - lo) : 0;
+                const bpRanges = bpSpecs.map((s: { name: string; lower?: number; upper?: number }) => ({
+                  name: s.name, lo: s.lower!, hi: s.upper!
+                }));
+                const bpK = Math.min(5, Math.floor(trials.length / 3));
+                // For each suggestion, compute: novelty, predicted improvement, diversity contribution
+                const bpSuggs = suggestions.suggestions.map((sg, idx) => {
+                  // Novelty: min distance to any trial
+                  const dists = trials.map(t => {
+                    let d2 = 0;
+                    for (const r of bpRanges) {
+                      const a = bpNorm(sg[r.name] ?? 0, r.lo, r.hi);
+                      const b = bpNorm(t.parameters[r.name] ?? 0, r.lo, r.hi);
+                      d2 += (a - b) ** 2;
+                    }
+                    return Math.sqrt(d2);
+                  });
+                  const novelty = Math.min(...dists);
+                  // Predicted improvement via k-NN
+                  const sorted = [...trials].map(t => {
+                    let d2 = 0;
+                    for (const r of bpRanges) {
+                      const a = bpNorm(sg[r.name] ?? 0, r.lo, r.hi);
+                      const b = bpNorm(t.parameters[r.name] ?? 0, r.lo, r.hi);
+                      d2 += (a - b) ** 2;
+                    }
+                    return { dist: Math.sqrt(d2), val: t.kpis[bpObjKey] ?? 0 };
+                  }).sort((a, b) => a.dist - b.dist);
+                  const knn = sorted.slice(0, bpK);
+                  const pred = knn.reduce((s, d) => s + d.val, 0) / bpK;
+                  const bestSoFar = Math.min(...trials.map(t => t.kpis[bpObjKey] ?? Infinity));
+                  const improvement = Math.max(0, bestSoFar - pred);
+                  // Diversity: avg distance to other suggestions
+                  const otherSuggs = suggestions.suggestions.filter((_, j) => j !== idx);
+                  let divSum = 0;
+                  for (const os of otherSuggs) {
+                    let d2 = 0;
+                    for (const r of bpRanges) {
+                      const a = bpNorm(sg[r.name] ?? 0, r.lo, r.hi);
+                      const b = bpNorm(os[r.name] ?? 0, r.lo, r.hi);
+                      d2 += (a - b) ** 2;
+                    }
+                    divSum += Math.sqrt(d2);
+                  }
+                  const diversity = otherSuggs.length > 0 ? divSum / otherSuggs.length : 0;
+                  return { idx: idx + 1, novelty, improvement, diversity };
+                });
+                // Normalize to 0-1
+                const bpMaxN = Math.max(...bpSuggs.map(s => s.novelty), 0.001);
+                const bpMaxI = Math.max(...bpSuggs.map(s => s.improvement), 0.001);
+                const bpMaxD = Math.max(...bpSuggs.map(s => s.diversity), 0.001);
+                const bpNormed = bpSuggs.map(s => ({
+                  ...s,
+                  nN: s.novelty / bpMaxN,
+                  nI: s.improvement / bpMaxI,
+                  nD: s.diversity / bpMaxD,
+                }));
+                // Pareto dominance check (2D: improvement vs novelty for visualization)
+                const bpIsPareto = bpNormed.map((a, i) => {
+                  return !bpNormed.some((b, j) => i !== j && b.nI >= a.nI && b.nN >= a.nN && (b.nI > a.nI || b.nN > a.nN));
+                });
+                const bpParetoCount = bpIsPareto.filter(Boolean).length;
+                const bpParetoFrac = bpParetoCount / bpSuggs.length;
+                const bpBadge = bpParetoFrac >= 0.8 ? "Pareto-Optimal" : bpParetoFrac >= 0.5 ? "Near-Optimal" : "Dominated";
+                const bpBadgeColor = bpParetoFrac >= 0.8 ? "var(--color-green, #22c55e)" : bpParetoFrac >= 0.5 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // SVG scatter plot
+                const bpW = 260, bpH = 200, bpPadL = 40, bpPadR = 15, bpPadT = 15, bpPadB = 30;
+                const bpPlotW = bpW - bpPadL - bpPadR, bpPlotH = bpH - bpPadT - bpPadB;
+                const bpPoints = bpNormed.map((s, i) => ({
+                  x: bpPadL + s.nN * bpPlotW,
+                  y: bpPadT + (1 - s.nI) * bpPlotH,
+                  pareto: bpIsPareto[i],
+                  idx: s.idx,
+                  size: 4 + s.nD * 6,
+                }));
+                // Draw Pareto front line (connect pareto points sorted by novelty)
+                const bpFront = bpPoints.filter(p => p.pareto).sort((a, b) => a.x - b.x);
+                const bpFrontLine = bpFront.length >= 2 ? bpFront.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") : "";
+                return (
+                  <div className="card" style={{ padding: "20px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+                      <Network size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>Batch Pareto Frontier</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: bpBadgeColor + "22", color: bpBadgeColor }}>{bpBadge}</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginBottom: "8px" }}>
+                      Trade-off between novelty and expected improvement. Dot size = batch diversity contribution.
+                    </div>
+                    <svg width={bpW} height={bpH} viewBox={`0 0 ${bpW} ${bpH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Grid */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(v => (
+                        <Fragment key={`gy${v}`}>
+                          <line x1={bpPadL} y1={bpPadT + (1 - v) * bpPlotH} x2={bpW - bpPadR} y2={bpPadT + (1 - v) * bpPlotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                          <text x={bpPadL - 4} y={bpPadT + (1 - v) * bpPlotH + 3} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>{(v * 100).toFixed(0)}%</text>
+                        </Fragment>
+                      ))}
+                      {[0, 0.5, 1].map(v => (
+                        <Fragment key={`gx${v}`}>
+                          <line x1={bpPadL + v * bpPlotW} y1={bpPadT} x2={bpPadL + v * bpPlotW} y2={bpH - bpPadB} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                        </Fragment>
+                      ))}
+                      {/* Pareto front line */}
+                      {bpFrontLine && <path d={bpFrontLine} fill="none" stroke={bpBadgeColor} strokeWidth="1.5" strokeDasharray="5,3" opacity={0.6} />}
+                      {/* Points */}
+                      {bpPoints.map((p, i) => (
+                        <g key={i}>
+                          <circle cx={p.x} cy={p.y} r={p.size} fill={p.pareto ? bpBadgeColor : "var(--color-text-muted)"} opacity={p.pareto ? 0.8 : 0.35} stroke={p.pareto ? bpBadgeColor : "none"} strokeWidth="1.5" />
+                          <text x={p.x} y={p.y + 3} textAnchor="middle" style={{ fontSize: "0.55rem", fontWeight: 700, fill: "white" }}>#{p.idx}</text>
+                        </g>
+                      ))}
+                      {/* Axis labels */}
+                      <text x={(bpPadL + bpW - bpPadR) / 2} y={bpH - 3} textAnchor="middle" style={{ fontSize: "0.6rem", fill: "var(--color-text-muted)" }}>Novelty</text>
+                      <text x={8} y={(bpPadT + bpH - bpPadB) / 2} textAnchor="middle" style={{ fontSize: "0.6rem", fill: "var(--color-text-muted)", transform: `rotate(-90, 8, ${(bpPadT + bpH - bpPadB) / 2})` }}>Improvement</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: "12px", marginTop: "6px", fontSize: "0.72rem", justifyContent: "center" }}>
+                      <span><span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: bpBadgeColor, marginRight: "4px" }}></span>Pareto-optimal ({bpParetoCount})</span>
+                      <span><span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "var(--color-text-muted)", opacity: 0.4, marginRight: "4px" }}></span>Dominated ({bpSuggs.length - bpParetoCount})</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -10760,6 +11133,104 @@ export default function Workspace() {
                       <span style={{ marginLeft: "6px", fontStyle: "italic" }}>
                         {itRankCorr > 0.7 ? " — parameter importance is consistent" : itRankCorr > 0.3 ? " — importance is shifting between parameters" : " — volatile rankings indicate complex landscape"}
                       </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Sequence Learning Asymmetry */}
+              {trials.length >= 15 && (() => {
+                const slObjKey = Object.keys(trials[0].kpis)[0];
+                const slSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // Split trials into batches of 5 (simulating experimental batches)
+                const slBatchSize = 5;
+                const slBatches: typeof slSorted[] = [];
+                for (let i = 0; i + slBatchSize <= slSorted.length; i += slBatchSize) {
+                  slBatches.push(slSorted.slice(i, i + slBatchSize));
+                }
+                if (slBatches.length < 2) return null;
+                // For each batch, compute position vs residual correlation
+                // Expected value = running mean up to that point
+                const slBatchScores: { batchIdx: number; asymmetry: number; earlyAvg: number; lateAvg: number }[] = [];
+                for (let bi = 0; bi < slBatches.length; bi++) {
+                  const batch = slBatches[bi];
+                  // Expected = mean of all trials before this batch
+                  const prior = slSorted.slice(0, bi * slBatchSize);
+                  const expectedVal = prior.length > 0 ? prior.reduce((s, t) => s + (t.kpis[slObjKey] ?? 0), 0) / prior.length : 0;
+                  const residuals = batch.map(t => (t.kpis[slObjKey] ?? 0) - expectedVal);
+                  const positions = batch.map((_, i) => i);
+                  // Spearman rank correlation of position vs residual
+                  const rankArr = (arr: number[]) => {
+                    const sorted = [...arr].sort((a, b) => a - b);
+                    return arr.map(v => sorted.indexOf(v) + 1);
+                  };
+                  const posRanks = rankArr(positions);
+                  const resRanks = rankArr(residuals);
+                  const n = batch.length;
+                  const dSqSum = posRanks.reduce((s, r, i) => s + (r - resRanks[i]) ** 2, 0);
+                  const rho = 1 - (6 * dSqSum) / (n * (n * n - 1));
+                  const earlyAvg = residuals.slice(0, Math.floor(n / 2)).reduce((s, v) => s + v, 0) / Math.floor(n / 2);
+                  const lateAvg = residuals.slice(Math.ceil(n / 2)).reduce((s, v) => s + v, 0) / (n - Math.ceil(n / 2));
+                  slBatchScores.push({ batchIdx: bi + 1, asymmetry: rho, earlyAvg, lateAvg });
+                }
+                const slMedian = (() => {
+                  const vals = slBatchScores.map(s => s.asymmetry).sort((a, b) => a - b);
+                  const mid = Math.floor(vals.length / 2);
+                  return vals.length % 2 === 0 ? (vals[mid - 1] + vals[mid]) / 2 : vals[mid];
+                })();
+                const slBadge = slMedian > 0.3 ? "Learning" : slMedian > -0.1 ? "Neutral" : "Regressing";
+                const slColor = slMedian > 0.3 ? "var(--color-green, #22c55e)" : slMedian > -0.1 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Bar chart of asymmetry per batch
+                const slW = 280, slH = 140, slPadL = 35, slPadR = 10, slPadT = 15, slPadB = 25;
+                const slPlotW = slW - slPadL - slPadR, slPlotH = slH - slPadT - slPadB;
+                const slBarW = Math.min(24, slPlotW / slBatchScores.length * 0.7);
+                const slGap = (slPlotW - slBarW * slBatchScores.length) / (slBatchScores.length + 1);
+                const slMidY = slPadT + slPlotH / 2; // zero line
+                return (
+                  <div className="card" style={{ padding: "20px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+                      <ArrowRightLeft size={18} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>Sequence Learning Asymmetry</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: slColor + "22", color: slColor }}>{slBadge}</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginBottom: "8px" }}>
+                      Do later trials in each batch outperform earlier ones? Positive = within-batch learning effect.
+                    </div>
+                    <svg width={slW} height={slH} viewBox={`0 0 ${slW} ${slH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Zero line */}
+                      <line x1={slPadL} y1={slMidY} x2={slW - slPadR} y2={slMidY} stroke="var(--color-text-muted)" strokeWidth="0.8" strokeDasharray="4,3" />
+                      <text x={slPadL - 4} y={slMidY + 3} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>0</text>
+                      <text x={slPadL - 4} y={slPadT + 5} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>+1</text>
+                      <text x={slPadL - 4} y={slH - slPadB + 3} textAnchor="end" style={{ fontSize: "0.5rem", fill: "var(--color-text-muted)" }}>-1</text>
+                      {/* Bars */}
+                      {slBatchScores.map((bs, i) => {
+                        const x = slPadL + slGap + i * (slBarW + slGap);
+                        const barH = Math.abs(bs.asymmetry) * (slPlotH / 2);
+                        const y = bs.asymmetry >= 0 ? slMidY - barH : slMidY;
+                        const c = bs.asymmetry > 0.3 ? "var(--color-green, #22c55e)" : bs.asymmetry > -0.1 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return (
+                          <g key={i}>
+                            <rect x={x} y={y} width={slBarW} height={Math.max(1, barH)} rx="2" fill={c} opacity={0.7}>
+                              <title>Batch {bs.batchIdx}: ρ={bs.asymmetry.toFixed(2)}</title>
+                            </rect>
+                            <text x={x + slBarW / 2} y={slH - slPadB + 12} textAnchor="middle" style={{ fontSize: "0.48rem", fill: "var(--color-text-muted)" }}>B{bs.batchIdx}</text>
+                          </g>
+                        );
+                      })}
+                      {/* Median line */}
+                      {(() => {
+                        const my = slMidY - slMedian * (slPlotH / 2);
+                        return <line x1={slPadL} y1={my} x2={slW - slPadR} y2={my} stroke={slColor} strokeWidth="1.5" strokeDasharray="6,3" opacity={0.7} />;
+                      })()}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "0.72rem" }}>
+                      <span style={{ color: "var(--color-text-muted)" }}>Median asymmetry: <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)", color: slColor }}>{slMedian > 0 ? "+" : ""}{slMedian.toFixed(2)}</span></span>
+                      <span style={{ color: "var(--color-text-muted)" }}>{slBatches.length} batches of {slBatchSize}</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {slBadge === "Learning" ? "Later trials in batches outperform — sequential learning is effective." :
+                       slBadge === "Neutral" ? "No significant order effect — batch trials are independent." :
+                       "Later trials underperform — consider randomizing batch order."}
                     </div>
                   </div>
                 );
