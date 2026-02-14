@@ -127,6 +127,9 @@ import {
   Diff,
   Rabbit,
   Snail,
+  Link2,                          // Batch 26
+  Siren,
+  Repeat2,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3975,6 +3978,78 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Feasibility Tracker */}
+              {trials.length >= 10 && (() => {
+                const ftObjKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!ftObjKey) return null;
+                const ftSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // Define "infeasible" as bottom 10% performers (simulating constraint violations)
+                const ftAllVals = ftSorted.map(t => t.kpis[ftObjKey]);
+                const ftSortedVals = [...ftAllVals].sort((a, b) => a - b);
+                const ftThreshold = ftSortedVals[Math.floor(ftSortedVals.length * 0.1)];
+                // Rolling windows
+                const ftWinSize = Math.max(5, Math.floor(ftSorted.length / 8));
+                const ftWindows: { start: number; feasibleRate: number }[] = [];
+                for (let i = 0; i + ftWinSize <= ftSorted.length; i += Math.max(1, Math.floor(ftWinSize / 2))) {
+                  const win = ftSorted.slice(i, i + ftWinSize);
+                  const feasible = win.filter(t => t.kpis[ftObjKey] > ftThreshold).length;
+                  ftWindows.push({ start: win[0].iteration, feasibleRate: feasible / win.length });
+                }
+                if (ftWindows.length < 2) return null;
+                const ftAvgRate = ftWindows.reduce((s, w) => s + w.feasibleRate, 0) / ftWindows.length;
+                const ftRecentRate = ftWindows[ftWindows.length - 1].feasibleRate;
+                const ftBadge = ftRecentRate > 0.92 ? "Healthy" : ftRecentRate > 0.8 ? "Caution" : "At Risk";
+                const ftBadgeColor = ftRecentRate > 0.92 ? "var(--color-green, #22c55e)" : ftRecentRate > 0.8 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // SVG area chart
+                const ftW = 260, ftH = 80, ftPadL = 4, ftPadR = 4, ftPadT = 6, ftPadB = 14;
+                const ftPlotW = ftW - ftPadL - ftPadR;
+                const ftPlotH = ftH - ftPadT - ftPadB;
+                const ftPts = ftWindows.map((w, i) => ({
+                  x: ftPadL + (i / Math.max(1, ftWindows.length - 1)) * ftPlotW,
+                  y: ftPadT + (1 - w.feasibleRate) * ftPlotH,
+                }));
+                const ftLine = ftPts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const ftArea = ftLine + ` L${ftPts[ftPts.length - 1].x.toFixed(1)},${(ftPadT + ftPlotH).toFixed(1)} L${ftPts[0].x.toFixed(1)},${(ftPadT + ftPlotH).toFixed(1)} Z`;
+                // Threshold line at 90%
+                const ftThreshY = ftPadT + (1 - 0.9) * ftPlotH;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Flame size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Feasibility Tracker</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: ftBadgeColor + "18", color: ftBadgeColor }}>{ftBadge}</span>
+                    </div>
+                    <svg width={ftW} height={ftH} style={{ width: "100%", maxWidth: ftW }}>
+                      <defs>
+                        <linearGradient id="ft-grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--color-green, #22c55e)" stopOpacity={0.3} />
+                          <stop offset="100%" stopColor="var(--color-green, #22c55e)" stopOpacity={0.02} />
+                        </linearGradient>
+                      </defs>
+                      <path d={ftArea} fill="url(#ft-grad)" />
+                      <path d={ftLine} fill="none" stroke="var(--color-green, #22c55e)" strokeWidth={1.5} strokeLinecap="round" />
+                      <line x1={ftPadL} x2={ftPadL + ftPlotW} y1={ftThreshY} y2={ftThreshY} stroke="var(--color-red, #ef4444)" strokeWidth={0.8} strokeDasharray="3,2" opacity={0.5} />
+                      <text x={ftPadL + ftPlotW - 2} y={ftThreshY - 2} textAnchor="end" fontSize={6.5} fill="var(--color-red, #ef4444)" opacity={0.7}>90%</text>
+                      {ftPts.map((p, i) => (
+                        <circle key={`ft-pt-${i}`} cx={p.x} cy={p.y} r={i === ftPts.length - 1 ? 3 : 1.5} fill={ftWindows[i].feasibleRate > 0.9 ? "var(--color-green, #22c55e)" : "var(--color-red, #ef4444)"} opacity={0.8}>
+                          <title>Window {i + 1}: {(ftWindows[i].feasibleRate * 100).toFixed(0)}% feasible</title>
+                        </circle>
+                      ))}
+                      <text x={ftW / 2} y={ftH - 1} textAnchor="middle" fontSize={7.5} fill="var(--color-text-muted)">Trial Window</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "0.73rem" }}>
+                      <span style={{ color: "var(--color-text-muted)" }}>Avg: <strong style={{ color: "var(--color-text)" }}>{(ftAvgRate * 100).toFixed(0)}%</strong></span>
+                      <span style={{ color: ftBadgeColor, fontWeight: 600 }}>Recent: {(ftRecentRate * 100).toFixed(0)}%</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {ftBadge === "Healthy" ? "High feasibility rate — experiments consistently produce valid results." :
+                       ftBadge === "Caution" ? "Some infeasible experiments detected — monitor parameter boundaries." :
+                       "Significant infeasibility — review constraints and parameter ranges."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -6159,6 +6234,139 @@ export default function Workspace() {
                       {lsBadge === "Sensitive" ? "Objective changes sharply near optimum — precise parameter control is critical." :
                        lsBadge === "Moderate" ? "Some parameters strongly affect the objective near optimum — focus tuning there." :
                        "Objective is flat near optimum — robust to small parameter variations."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Interaction Heatmap */}
+              {trials.length >= 15 && (() => {
+                const ihSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (ihSpecs.length < 2) return null;
+                const ihTop = ihSpecs.slice(0, 5);
+                const ihObjKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!ihObjKey) return null;
+                // Normalize parameters to [0,1]
+                const ihNorm = trials.map(t => {
+                  const row: Record<string, number> = {};
+                  ihTop.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const lo = s.lower ?? 0, hi = s.upper ?? 1;
+                    row[s.name] = hi > lo ? ((Number(t.parameters[s.name]) || 0) - lo) / (hi - lo) : 0.5;
+                  });
+                  return { params: row, obj: Number(t.kpis[ihObjKey]) || 0 };
+                });
+                // Compute interaction strength: for each pair (i,j), compute
+                // corr(xi*xj, residual after main effects)
+                const ihN = ihNorm.length;
+                const ihMean = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+                const ihCorr = (a: number[], b: number[]) => {
+                  const ma = ihMean(a), mb = ihMean(b);
+                  let num = 0, da = 0, db = 0;
+                  for (let k = 0; k < a.length; k++) {
+                    const ai = a[k] - ma, bi = b[k] - mb;
+                    num += ai * bi; da += ai * ai; db += bi * bi;
+                  }
+                  return da > 0 && db > 0 ? num / Math.sqrt(da * db) : 0;
+                };
+                const ihObjArr = ihNorm.map(r => r.obj);
+                // Main effect residuals
+                const ihMainEffects = ihTop.map((s: { name: string }) => {
+                  const xs = ihNorm.map(r => r.params[s.name]);
+                  const c = ihCorr(xs, ihObjArr);
+                  return { name: s.name, corr: c };
+                });
+                // Predicted by main effects only
+                const ihObjMean = ihMean(ihObjArr);
+                const ihObjStd = Math.sqrt(ihObjArr.reduce((s, v) => s + (v - ihObjMean) ** 2, 0) / ihN);
+                const ihResiduals = ihNorm.map((r, k) => {
+                  let pred = ihObjMean;
+                  ihMainEffects.forEach(me => {
+                    pred += me.corr * (r.params[me.name] - 0.5) * ihObjStd;
+                  });
+                  return ihObjArr[k] - pred;
+                });
+                // Interaction matrix: corr(xi*xj, residuals)
+                const ihMatrix: { i: number; j: number; strength: number }[] = [];
+                let ihMaxStr = 0;
+                for (let i = 0; i < ihTop.length; i++) {
+                  for (let j = i + 1; j < ihTop.length; j++) {
+                    const cross = ihNorm.map(r => r.params[ihTop[i].name] * r.params[ihTop[j].name]);
+                    const str = Math.abs(ihCorr(cross, ihResiduals));
+                    ihMatrix.push({ i, j, strength: str });
+                    if (str > ihMaxStr) ihMaxStr = str;
+                  }
+                }
+                const ihSignificant = ihMatrix.filter(m => m.strength > 0.3).length;
+                const ihBadge = ihSignificant === 0 ? "Independent" : ihSignificant <= 2 ? "Mild Coupling" : "Interacting";
+                const ihBadgeColor = ihSignificant === 0 ? "var(--color-green, #22c55e)" : ihSignificant <= 2 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Heatmap
+                const ihCellSize = 36;
+                const ihLabelW = 52;
+                const ihN2 = ihTop.length;
+                const ihW = ihLabelW + ihN2 * ihCellSize + 4;
+                const ihH = ihLabelW + ihN2 * ihCellSize + 4;
+                const ihGetColor = (str: number) => {
+                  const t = Math.min(1, str / Math.max(0.5, ihMaxStr));
+                  const r = Math.round(34 + t * 221);
+                  const g = Math.round(197 - t * 153);
+                  const b = Math.round(94 - t * 0);
+                  return `rgb(${r},${g},${b})`;
+                };
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Link2 size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Interaction Heatmap</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: ihBadgeColor + "18", color: ihBadgeColor }}>{ihBadge}</span>
+                    </div>
+                    <svg width={ihW} height={ihH} style={{ width: "100%", maxWidth: ihW }}>
+                      {/* Column labels */}
+                      {ihTop.map((s: { name: string }, ci: number) => (
+                        <text key={`ih-col-${ci}`} x={ihLabelW + ci * ihCellSize + ihCellSize / 2} y={ihLabelW - 4} textAnchor="middle" fontSize={7} fill="var(--color-text-muted)" style={{ fontFamily: "var(--font-mono)" }}>
+                          {s.name.length > 6 ? s.name.slice(0, 6) : s.name}
+                        </text>
+                      ))}
+                      {/* Row labels + cells */}
+                      {ihTop.map((_: { name: string }, ri: number) => (
+                        <g key={`ih-row-${ri}`}>
+                          <text x={ihLabelW - 4} y={ihLabelW + ri * ihCellSize + ihCellSize / 2 + 3} textAnchor="end" fontSize={7} fill="var(--color-text-muted)" style={{ fontFamily: "var(--font-mono)" }}>
+                            {ihTop[ri].name.length > 6 ? ihTop[ri].name.slice(0, 6) : ihTop[ri].name}
+                          </text>
+                          {ihTop.map((_2: { name: string }, ci: number) => {
+                            if (ri === ci) {
+                              return (
+                                <rect key={`ih-cell-${ri}-${ci}`} x={ihLabelW + ci * ihCellSize} y={ihLabelW + ri * ihCellSize} width={ihCellSize - 2} height={ihCellSize - 2} rx={3} fill="var(--color-border)" opacity={0.4} />
+                              );
+                            }
+                            const entry = ihMatrix.find(m => (m.i === Math.min(ri, ci) && m.j === Math.max(ri, ci)));
+                            const str = entry?.strength ?? 0;
+                            return (
+                              <g key={`ih-cell-${ri}-${ci}`}>
+                                <rect x={ihLabelW + ci * ihCellSize} y={ihLabelW + ri * ihCellSize} width={ihCellSize - 2} height={ihCellSize - 2} rx={3} fill={ihGetColor(str)} opacity={0.7}>
+                                  <title>{ihTop[ri].name} × {ihTop[ci].name}: {str.toFixed(3)}</title>
+                                </rect>
+                                <text x={ihLabelW + ci * ihCellSize + (ihCellSize - 2) / 2} y={ihLabelW + ri * ihCellSize + (ihCellSize - 2) / 2 + 3} textAnchor="middle" fontSize={7.5} fill={str > 0.4 ? "#fff" : "var(--color-text)"} fontWeight={str > 0.3 ? 600 : 400}>
+                                  {str.toFixed(2)}
+                                </text>
+                              </g>
+                            );
+                          })}
+                        </g>
+                      ))}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "0.73rem" }}>
+                      <span style={{ color: "var(--color-text-muted)" }}>{ihSignificant} significant interaction{ihSignificant !== 1 ? "s" : ""} (|ρ| &gt; 0.3)</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: ihGetColor(0), display: "inline-block" }} />
+                        <span style={{ fontSize: "0.68rem", color: "var(--color-text-muted)" }}>weak</span>
+                        <span style={{ width: "10px", height: "10px", borderRadius: "2px", background: ihGetColor(ihMaxStr), display: "inline-block" }} />
+                        <span style={{ fontSize: "0.68rem", color: "var(--color-text-muted)" }}>strong</span>
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {ihBadge === "Independent" ? "Parameters act independently — main effects dominate the response." :
+                       ihBadge === "Mild Coupling" ? "Some parameter pairs interact — joint tuning may improve results." :
+                       "Strong interactions detected — parameter combinations matter more than individual values."}
                     </div>
                   </div>
                 );
@@ -9530,6 +9738,78 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Suggestion Risk Score */}
+              {suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const srSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (srSpecs.length === 0) return null;
+                const srObjKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!srObjKey) return null;
+                // Find worst-performing trials (bottom 15%)
+                const srSortedByObj = [...trials].sort((a, b) => b.kpis[srObjKey] - a.kpis[srObjKey]);
+                const srWorstN = Math.max(3, Math.floor(trials.length * 0.15));
+                const srWorst = srSortedByObj.slice(0, srWorstN);
+                // Normalize suggestion and worst trials into [0,1] space
+                const srNormParam = (val: number, s: { lower?: number; upper?: number }) => {
+                  const lo = s.lower ?? 0, hi = s.upper ?? 1;
+                  return hi > lo ? (val - lo) / (hi - lo) : 0.5;
+                };
+                // For each suggestion, compute min distance to worst trials
+                const srResults = suggestions.suggestions.map((sug, si) => {
+                  const sugNorm = srSpecs.map((s: { name: string; lower?: number; upper?: number }) => srNormParam(Number(sug[s.name]) || 0, s));
+                  let minDistWorst = Infinity;
+                  srWorst.forEach(w => {
+                    const wNorm = srSpecs.map((s: { name: string; lower?: number; upper?: number }) => srNormParam(Number(w.parameters[s.name]) || 0, s));
+                    const dist = Math.sqrt(sugNorm.reduce((sum, v, k) => sum + (v - wNorm[k]) ** 2, 0));
+                    if (dist < minDistWorst) minDistWorst = dist;
+                  });
+                  // Risk score: closer to worst = higher risk. Scale to 0-100%
+                  const maxDist = Math.sqrt(srSpecs.length); // diagonal of unit cube
+                  const safety = Math.min(1, minDistWorst / (maxDist * 0.5));
+                  return { idx: si + 1, safety, minDist: minDistWorst };
+                });
+                const srAvgSafety = srResults.reduce((s, r) => s + r.safety, 0) / srResults.length;
+                const srBadge = srAvgSafety > 0.75 ? "Low Risk" : srAvgSafety > 0.45 ? "Moderate" : "High Risk";
+                const srBadgeColor = srAvgSafety > 0.75 ? "var(--color-green, #22c55e)" : srAvgSafety > 0.45 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Horizontal bar chart
+                const srBarH = 22;
+                const srW = 260, srH = srResults.length * srBarH + 24;
+                const srLabelW = 30, srBarMaxW = 180;
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Siren size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Suggestion Risk Score</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: srBadgeColor + "18", color: srBadgeColor }}>{srBadge}</span>
+                    </div>
+                    <svg width={srW} height={srH} style={{ width: "100%", maxWidth: srW }}>
+                      {srResults.map((r, i) => {
+                        const y = i * srBarH + 4;
+                        const barW = r.safety * srBarMaxW;
+                        const barColor = r.safety > 0.75 ? "var(--color-green, #22c55e)" : r.safety > 0.45 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return (
+                          <g key={`sr-bar-${i}`}>
+                            <text x={srLabelW - 4} y={y + srBarH / 2 + 3} textAnchor="end" fontSize={8} fill="var(--color-text-muted)" fontWeight={500}>#{r.idx}</text>
+                            <rect x={srLabelW} y={y + 2} width={srBarMaxW} height={srBarH - 6} rx={3} fill="var(--color-border)" opacity={0.3} />
+                            <rect x={srLabelW} y={y + 2} width={Math.max(2, barW)} height={srBarH - 6} rx={3} fill={barColor} opacity={0.7}>
+                              <title>Suggestion #{r.idx}: {(r.safety * 100).toFixed(0)}% safe (dist to worst: {r.minDist.toFixed(3)})</title>
+                            </rect>
+                            <text x={srLabelW + Math.max(2, barW) + 4} y={y + srBarH / 2 + 3} fontSize={7.5} fill="var(--color-text)" fontFamily="var(--font-mono)" fontWeight={600}>
+                              {(r.safety * 100).toFixed(0)}%
+                            </text>
+                          </g>
+                        );
+                      })}
+                      <text x={srLabelW + srBarMaxW / 2} y={srH - 2} textAnchor="middle" fontSize={7.5} fill="var(--color-text-muted)">Safety Score (distance from worst trials)</text>
+                    </svg>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {srBadge === "Low Risk" ? "Suggestions are well-separated from failure regions — safe to run." :
+                       srBadge === "Moderate" ? "Some suggestions are near historically poor regions — review before running." :
+                       "Suggestions are close to failure regions — manual review recommended."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -12046,6 +12326,103 @@ export default function Workspace() {
                       {dcBadge === "Frequent" ? "Discoveries occur at a steady pace — optimization is actively finding improvements." :
                        dcBadge === "Slowing" ? "Gaps between discoveries are widening — may be approaching optimum or needing strategy change." :
                        "Long gaps between discoveries — consider restarting exploration or adjusting search bounds."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Experiment Replay Value */}
+              {trials.length >= 20 && (() => {
+                const rvObjKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!rvObjKey) return null;
+                const rvSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                // Split into windows and do leave-one-window-out prediction
+                const rvWinSize = Math.max(5, Math.floor(rvSorted.length / 6));
+                const rvWindows: typeof rvSorted[] = [];
+                for (let i = 0; i + rvWinSize <= rvSorted.length; i += rvWinSize) {
+                  rvWindows.push(rvSorted.slice(i, i + rvWinSize));
+                }
+                if (rvWindows.length < 3) return null;
+                // For each window, use all OTHER windows to predict ranking within this window via k-NN
+                const rvParamNames = Object.keys(rvSorted[0].parameters);
+                const rvResults = rvWindows.map((win, wi) => {
+                  const others = rvWindows.filter((_w, i) => i !== wi).flat();
+                  // For each trial in window, predict its rank using k-NN from others
+                  const predictions = win.map(t => {
+                    const dists = others.map(o => {
+                      const d = Math.sqrt(rvParamNames.reduce((s, p) => s + ((Number(t.parameters[p]) || 0) - (Number(o.parameters[p]) || 0)) ** 2, 0));
+                      return { d, kpi: o.kpis[rvObjKey] };
+                    }).sort((a, b) => a.d - b.d);
+                    const k = Math.min(5, others.length);
+                    const predKpi = dists.slice(0, k).reduce((s, d) => s + d.kpi, 0) / k;
+                    return { actual: t.kpis[rvObjKey], predicted: predKpi };
+                  });
+                  // Compute Spearman rank correlation for this window
+                  const rank = (arr: number[]) => {
+                    const indexed = arr.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
+                    const ranks = new Array(arr.length);
+                    indexed.forEach((item, r) => { ranks[item.i] = r; });
+                    return ranks;
+                  };
+                  const actRanks = rank(predictions.map(p => p.actual));
+                  const predRanks = rank(predictions.map(p => p.predicted));
+                  const n = predictions.length;
+                  let dSq = 0;
+                  for (let k = 0; k < n; k++) dSq += (actRanks[k] - predRanks[k]) ** 2;
+                  const rho = 1 - (6 * dSq) / (n * (n * n - 1));
+                  return { windowIdx: wi, rho, n };
+                });
+                const rvAvgRho = rvResults.reduce((s, r) => s + r.rho, 0) / rvResults.length;
+                const rvBadge = rvAvgRho > 0.6 ? "Predictable" : rvAvgRho > 0.2 ? "Noisy" : "Unpredictable";
+                const rvBadgeColor = rvAvgRho > 0.6 ? "var(--color-green, #22c55e)" : rvAvgRho > 0.2 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // Bar chart of per-window ρ
+                const rvW = 260, rvH = 90, rvPadL = 28, rvPadR = 4, rvPadT = 8, rvPadB = 16;
+                const rvPlotW = rvW - rvPadL - rvPadR;
+                const rvPlotH = rvH - rvPadT - rvPadB;
+                const rvBarW = Math.min(24, Math.max(6, rvPlotW / rvResults.length - 3));
+                const rvMidY = rvPadT + rvPlotH / 2; // ρ=0 line
+                return (
+                  <div className="card" style={{ padding: "16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Repeat2 size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Experiment Replay Value</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 600, padding: "2px 8px", borderRadius: "8px", background: rvBadgeColor + "18", color: rvBadgeColor }}>{rvBadge}</span>
+                    </div>
+                    <svg width={rvW} height={rvH} style={{ width: "100%", maxWidth: rvW }}>
+                      {/* Zero line */}
+                      <line x1={rvPadL} x2={rvPadL + rvPlotW} y1={rvMidY} y2={rvMidY} stroke="var(--color-border)" strokeWidth={0.8} />
+                      <text x={rvPadL - 3} y={rvPadT + 4} textAnchor="end" fontSize={6.5} fill="var(--color-text-muted)">+1</text>
+                      <text x={rvPadL - 3} y={rvMidY + 2} textAnchor="end" fontSize={6.5} fill="var(--color-text-muted)">0</text>
+                      <text x={rvPadL - 3} y={rvPadT + rvPlotH} textAnchor="end" fontSize={6.5} fill="var(--color-text-muted)">-1</text>
+                      {/* Bars */}
+                      {rvResults.map((r, i) => {
+                        const x = rvPadL + (i / Math.max(1, rvResults.length - 1)) * (rvPlotW - rvBarW);
+                        const barH = Math.abs(r.rho) * (rvPlotH / 2);
+                        const y = r.rho >= 0 ? rvMidY - barH : rvMidY;
+                        const barColor = r.rho > 0.6 ? "var(--color-green, #22c55e)" : r.rho > 0.2 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return (
+                          <g key={`rv-bar-${i}`}>
+                            <rect x={x} y={y} width={rvBarW} height={Math.max(1, barH)} rx={2} fill={barColor} opacity={0.7}>
+                              <title>Window {i + 1}: ρ = {r.rho.toFixed(3)} (n={r.n})</title>
+                            </rect>
+                            <text x={x + rvBarW / 2} y={rvH - 2} textAnchor="middle" fontSize={6.5} fill="var(--color-text-muted)">W{i + 1}</text>
+                          </g>
+                        );
+                      })}
+                      {/* Average line */}
+                      {(() => {
+                        const avgY = rvMidY - rvAvgRho * (rvPlotH / 2);
+                        return <line x1={rvPadL} x2={rvPadL + rvPlotW} y1={avgY} y2={avgY} stroke="var(--color-primary)" strokeWidth={1} strokeDasharray="3,2" opacity={0.6} />;
+                      })()}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "0.73rem" }}>
+                      <span style={{ color: "var(--color-text-muted)" }}>Leave-one-window-out prediction</span>
+                      <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--color-text)" }}>Avg ρ = {rvAvgRho.toFixed(3)}</span>
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: "4px", textAlign: "center" }}>
+                      {rvBadge === "Predictable" ? "Past experiments replay well — the model is capturing the true response surface." :
+                       rvBadge === "Noisy" ? "Partial predictability — results are moderately influenced by noise or unmodeled factors." :
+                       "Low replay fidelity — the response surface may be highly complex or noisy."}
                     </div>
                   </div>
                 );
