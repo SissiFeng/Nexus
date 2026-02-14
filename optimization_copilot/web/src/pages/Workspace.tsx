@@ -99,6 +99,10 @@ import {
   Microscope,
   CandlestickChart,
   Hourglass,
+  Coins,
+  GitMerge,
+  ListOrdered,
+  SplitSquareVertical,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -3254,6 +3258,95 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Budget Efficiency Waterfall */}
+              {trials.length >= 10 && (() => {
+                const beSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (beSpecs.length === 0) return null;
+                const beSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const beKey = Object.keys(beSorted[0]?.kpis || {})[0];
+                if (!beKey) return null;
+                const beKpis = beSorted.map(t => Number(t.kpis[beKey]) || 0);
+                const beN = beSorted.length;
+
+                // Per-parameter: compute active budget (windows where it varied) and KPI contribution
+                const beData = beSpecs.map((s: { name: string; lower?: number; upper?: number }) => {
+                  const vals = beSorted.map(t => Number(t.parameters[s.name]) || 0);
+                  const range = ((s.upper ?? 1) - (s.lower ?? 0)) || 1;
+                  // Active budget: count 5-trial windows where param std > 5% of range
+                  let activeWindows = 0;
+                  const winSize = Math.min(5, beN);
+                  for (let i = winSize; i <= beN; i++) {
+                    const w = vals.slice(i - winSize, i);
+                    const mu = w.reduce((a, b) => a + b, 0) / w.length;
+                    const std = Math.sqrt(w.reduce((a, v) => a + (v - mu) ** 2, 0) / w.length);
+                    if (std / range > 0.05) activeWindows++;
+                  }
+                  const budget = activeWindows / Math.max(1, beN - winSize + 1);
+
+                  // KPI contribution: correlation * KPI range improvement
+                  const paramNorm = vals.map(v => (v - (s.lower ?? 0)) / range);
+                  const kpiMean = beKpis.reduce((a, b) => a + b, 0) / beN;
+                  const pMean = paramNorm.reduce((a, b) => a + b, 0) / beN;
+                  const cov = paramNorm.reduce((a, v, i) => a + (v - pMean) * (beKpis[i] - kpiMean), 0) / beN;
+                  const pStd = Math.sqrt(paramNorm.reduce((a, v) => a + (v - pMean) ** 2, 0) / beN) || 1;
+                  const kStd = Math.sqrt(beKpis.reduce((a, v) => a + (v - kpiMean) ** 2, 0) / beN) || 1;
+                  const corr = cov / (pStd * kStd);
+                  const contribution = Math.abs(corr);
+
+                  const efficiency = budget > 0.01 ? contribution / budget : 0;
+                  return { name: s.name, budget, contribution, efficiency };
+                }).sort((a: { efficiency: number }, b: { efficiency: number }) => b.efficiency - a.efficiency);
+
+                const beMaxEff = Math.max(...beData.map((d: { efficiency: number }) => d.efficiency), 0.01);
+                const beAvgEff = beData.reduce((s: number, d: { efficiency: number }) => s + d.efficiency, 0) / beData.length;
+                const beEfficient = beData.filter((d: { efficiency: number }) => d.efficiency > beAvgEff * 1.2).length;
+                const beStatus = beEfficient >= beData.length * 0.6 ? "Efficient" : beEfficient >= beData.length * 0.3 ? "Fair" : "Inefficient";
+                const beStatusColor = beStatus === "Efficient" ? "var(--color-green, #22c55e)" : beStatus === "Fair" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                const beLabelW = 60, beBarW = 200, bePadR = 50;
+                const beRowH = 22, beH = beData.length * beRowH + 24;
+                const beW = beLabelW + beBarW + bePadR;
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <Coins size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Budget Efficiency</h3>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: beStatusColor + "18", color: beStatusColor }}>{beStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      KPI contribution vs exploration budget per parameter. Higher bar = better ROI.
+                    </p>
+                    <svg width={beW} height={beH} viewBox={`0 0 ${beW} ${beH}`} style={{ display: "block", maxWidth: "100%" }}>
+                      {beData.map((d: { name: string; budget: number; contribution: number; efficiency: number }, i: number) => {
+                        const y = i * beRowH;
+                        const barW = (d.efficiency / beMaxEff) * beBarW;
+                        const color = d.efficiency > beAvgEff * 1.2 ? "#22c55e" : d.efficiency > beAvgEff * 0.5 ? "#eab308" : "#ef4444";
+                        return (
+                          <g key={i}>
+                            <text x={beLabelW - 4} y={y + 14} textAnchor="end" fill="var(--color-text)" fontSize={8} fontFamily="var(--font-mono)">{d.name.length > 8 ? d.name.slice(0, 7) + "…" : d.name}</text>
+                            <rect x={beLabelW} y={y + 2} width={Math.max(2, barW)} height={beRowH - 6} rx={3} fill={color} opacity={0.65} />
+                            {/* Budget indicator (thin line at bottom) */}
+                            <rect x={beLabelW} y={y + beRowH - 5} width={d.budget * beBarW} height={2} rx={1} fill="var(--color-primary)" opacity={0.4} />
+                            <text x={beLabelW + Math.max(2, barW) + 4} y={y + 14} fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">{(d.efficiency * 100).toFixed(0)}%</text>
+                          </g>
+                        );
+                      })}
+                      {/* Axis */}
+                      <line x1={beLabelW} y1={beH - 16} x2={beLabelW + beBarW} y2={beH - 16} stroke="var(--color-border)" strokeWidth={0.5} />
+                      <text x={beLabelW} y={beH - 6} fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">0</text>
+                      <text x={beLabelW + beBarW} y={beH - 6} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">{(beMaxEff * 100).toFixed(0)}%</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span><span style={{ display: "inline-block", width: 12, height: 3, background: "var(--color-primary)", opacity: 0.4, marginRight: 3, verticalAlign: "middle", borderRadius: 1 }} />budget used</span>
+                      <span>{beEfficient}/{beData.length} efficient params</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -4739,6 +4832,122 @@ export default function Workspace() {
                     </svg>
                     <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
                       <span>{lsHighCount} high-sensitivity cells of {lsTotalPopulated} populated</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Relationship Drift Heatmap */}
+              {trials.length >= 20 && (() => {
+                const rdSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rdSpecs.length < 2) return null;
+                const rdSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const rdKey = Object.keys(rdSorted[0]?.kpis || {})[0];
+                if (!rdKey) return null;
+                const rdN = rdSorted.length;
+                const rdPhases = 5;
+                const rdPhaseSize = Math.floor(rdN / rdPhases);
+
+                // Generate parameter pairs (top 8 params, up to 10 pairs)
+                const rdParamNames = rdSpecs.slice(0, 8).map((s: { name: string }) => s.name);
+                const rdPairs: [string, string][] = [];
+                for (let i = 0; i < rdParamNames.length && rdPairs.length < 10; i++) {
+                  for (let j = i + 1; j < rdParamNames.length && rdPairs.length < 10; j++) {
+                    rdPairs.push([rdParamNames[i], rdParamNames[j]]);
+                  }
+                }
+
+                // For each pair and phase, compute |correlation of product with KPI|
+                const rdMatrix: number[][] = rdPairs.map(([p1, p2]) => {
+                  const phases: number[] = [];
+                  for (let ph = 0; ph < rdPhases; ph++) {
+                    const start = ph * rdPhaseSize;
+                    const end = ph === rdPhases - 1 ? rdN : (ph + 1) * rdPhaseSize;
+                    const chunk = rdSorted.slice(start, end);
+                    if (chunk.length < 5) { phases.push(0); continue; }
+                    const products = chunk.map(t => (Number(t.parameters[p1]) || 0) * (Number(t.parameters[p2]) || 0));
+                    const kpis = chunk.map(t => Number(t.kpis[rdKey]) || 0);
+                    const pMu = products.reduce((a, b) => a + b, 0) / products.length;
+                    const kMu = kpis.reduce((a, b) => a + b, 0) / kpis.length;
+                    const cov = products.reduce((a, v, i) => a + (v - pMu) * (kpis[i] - kMu), 0) / products.length;
+                    const pStd = Math.sqrt(products.reduce((a, v) => a + (v - pMu) ** 2, 0) / products.length) || 1;
+                    const kStd = Math.sqrt(kpis.reduce((a, v) => a + (v - kMu) ** 2, 0) / kpis.length) || 1;
+                    phases.push(Math.abs(cov / (pStd * kStd)));
+                  }
+                  return phases;
+                });
+
+                // Sort pairs by max strength
+                const rdIndices = rdPairs.map((_, i) => i).sort((a, b) => Math.max(...rdMatrix[b]) - Math.max(...rdMatrix[a]));
+                const rdSortedPairs = rdIndices.slice(0, 8).map(i => ({ pair: rdPairs[i], values: rdMatrix[i] }));
+
+                // Detect drift: compare first vs last phase
+                const rdDriftCounts = { emerging: 0, stable: 0, decaying: 0 };
+                rdSortedPairs.forEach(({ values }) => {
+                  const delta = values[values.length - 1] - values[0];
+                  if (delta > 0.15) rdDriftCounts.emerging++;
+                  else if (delta < -0.15) rdDriftCounts.decaying++;
+                  else rdDriftCounts.stable++;
+                });
+                const rdStatus = rdDriftCounts.emerging > rdDriftCounts.stable ? "Emerging" : rdDriftCounts.decaying > rdDriftCounts.stable ? "Decaying" : "Stable";
+                const rdStatusColor = rdStatus === "Emerging" ? "var(--color-yellow, #eab308)" : rdStatus === "Decaying" ? "var(--color-blue, #3b82f6)" : "var(--color-text-muted, #94a3b8)";
+
+                const rdLabelW = 80, rdCellW = 36, rdCellH = 22, rdGap = 2, rdPadTop = 20;
+                const rdW = rdLabelW + rdPhases * (rdCellW + rdGap) + 10;
+                const rdH = rdPadTop + rdSortedPairs.length * (rdCellH + rdGap) + 4;
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <GitMerge size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Relationship Drift</h2>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: rdStatusColor + "18", color: rdStatusColor }}>{rdStatus}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      How parameter-pair interaction strength changes across {rdPhases} campaign phases.
+                    </p>
+                    <svg width={rdW} height={rdH} viewBox={`0 0 ${rdW} ${rdH}`} style={{ display: "block", maxWidth: "100%" }}>
+                      {/* Phase headers */}
+                      {Array.from({ length: rdPhases }, (_, p) => (
+                        <text key={p} x={rdLabelW + p * (rdCellW + rdGap) + rdCellW / 2} y={12} textAnchor="middle" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">P{p + 1}</text>
+                      ))}
+                      {/* Rows */}
+                      {rdSortedPairs.map(({ pair, values }, ri) => {
+                        const y = rdPadTop + ri * (rdCellH + rdGap);
+                        const label = pair[0].slice(0, 3) + "×" + pair[1].slice(0, 3);
+                        return (
+                          <g key={ri}>
+                            <text x={rdLabelW - 4} y={y + rdCellH / 2 + 3} textAnchor="end" fill="var(--color-text)" fontSize={7.5} fontFamily="var(--font-mono)">{label}</text>
+                            {values.map((v, ci) => {
+                              const x = rdLabelW + ci * (rdCellW + rdGap);
+                              const intensity = Math.min(1, v * 2); // scale for visibility
+                              const r = Math.round(59 + intensity * 196);
+                              const g = Math.round(130 - intensity * 100);
+                              const b = Math.round(246 - intensity * 196);
+                              return (
+                                <g key={ci}>
+                                  <rect x={x} y={y} width={rdCellW} height={rdCellH} rx={3} fill={`rgb(${r},${g},${b})`} opacity={0.7} />
+                                  <text x={x + rdCellW / 2} y={y + rdCellH / 2 + 3} textAnchor="middle" fill={intensity > 0.5 ? "#fff" : "var(--color-text)"} fontSize={7} fontFamily="var(--font-mono)">{v.toFixed(2)}</text>
+                                </g>
+                              );
+                            })}
+                            {/* Trend arrow */}
+                            {(() => {
+                              const delta = values[values.length - 1] - values[0];
+                              const arrow = delta > 0.15 ? "↑" : delta < -0.15 ? "↓" : "→";
+                              const color = delta > 0.15 ? "#eab308" : delta < -0.15 ? "#3b82f6" : "var(--color-text-muted)";
+                              return <text x={rdLabelW + rdPhases * (rdCellW + rdGap) + 2} y={y + rdCellH / 2 + 3} fill={color} fontSize={10} fontFamily="var(--font-mono)">{arrow}</text>;
+                            })()}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
+                      <span>↑ emerging ({rdDriftCounts.emerging})</span>
+                      <span>→ stable ({rdDriftCounts.stable})</span>
+                      <span>↓ decaying ({rdDriftCounts.decaying})</span>
                     </div>
                   </div>
                 );
@@ -7365,6 +7574,123 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Suggestion Rank Stability */}
+              {suggestions && suggestions.suggestions.length >= 3 && trials.length >= 5 && (() => {
+                const rsSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rsSpecs.length === 0) return null;
+                const rsKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!rsKey) return null;
+                const rsSugs = suggestions.suggestions;
+                const rsK = Math.min(5, trials.length - 1);
+
+                // Normalize trials
+                const rsTrialNorms = trials.map(t => {
+                  const vals: number[] = [];
+                  rsSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper ?? 1) - (s.lower ?? 0) || 1;
+                    vals.push(((Number(t.parameters[s.name]) || 0) - (s.lower ?? 0)) / range);
+                  });
+                  return vals;
+                });
+                const rsKpis = trials.map(t => Number(t.kpis[rsKey]) || 0);
+
+                // Score each suggestion on 3 criteria
+                const rsScored = rsSugs.map((sug: Record<string, number>, idx: number) => {
+                  const sugNorm: number[] = [];
+                  rsSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper ?? 1) - (s.lower ?? 0) || 1;
+                    sugNorm.push(((Number(sug[s.name]) || 0) - (s.lower ?? 0)) / range);
+                  });
+                  const dists = rsTrialNorms.map((v, j) => ({
+                    d: Math.sqrt(v.reduce((s, x, k) => s + (x - sugNorm[k]) ** 2, 0)), j
+                  })).sort((a, b) => a.d - b.d);
+                  const neighbors = dists.slice(0, rsK);
+                  const predicted = neighbors.reduce((s, n) => s + rsKpis[n.j], 0) / rsK;
+                  const novelty = dists[0].d; // min distance = novelty
+                  const confidence = 1 / (1 + Math.sqrt(neighbors.reduce((s, n) => s + (rsKpis[n.j] - predicted) ** 2, 0) / rsK));
+                  return { idx: idx + 1, predicted, novelty, confidence };
+                });
+
+                // Rank by each criterion (lower predicted = better for min)
+                const rsRankBy = (key: string, ascending: boolean) => {
+                  const sorted = [...rsScored].sort((a, b) => ascending ? (a as Record<string, number>)[key] - (b as Record<string, number>)[key] : (b as Record<string, number>)[key] - (a as Record<string, number>)[key]);
+                  const rankMap: Record<number, number> = {};
+                  sorted.forEach((s, i) => { rankMap[s.idx] = i + 1; });
+                  return rankMap;
+                };
+                const rsRanks = [
+                  { label: "Predicted", ranks: rsRankBy("predicted", true) },
+                  { label: "Novelty", ranks: rsRankBy("novelty", false) },
+                  { label: "Confidence", ranks: rsRankBy("confidence", false) },
+                ];
+
+                // Compute rank consistency: sum of rank differences across criteria
+                let rsTotalDiff = 0;
+                const rsMaxDiff = rsScored.length * rsRanks.length * (rsScored.length - 1);
+                rsScored.forEach(s => {
+                  const ranks = rsRanks.map(r => r.ranks[s.idx] || 0);
+                  for (let i = 0; i < ranks.length; i++) for (let j = i + 1; j < ranks.length; j++) rsTotalDiff += Math.abs(ranks[i] - ranks[j]);
+                });
+                const rsConsistency = 1 - rsTotalDiff / (rsMaxDiff || 1);
+                const rsStatus = rsConsistency > 0.7 ? "Consistent" : rsConsistency > 0.4 ? "Mixed" : "Unstable";
+                const rsStatusColor = rsStatus === "Consistent" ? "var(--color-green, #22c55e)" : rsStatus === "Mixed" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+
+                // Bump chart
+                const rsCount = rsScored.length;
+                const rsCols = rsRanks.length;
+                const rsColW = 80, rsRowH = 24;
+                const rsPadL = 30, rsPadT = 20;
+                const rsW = rsPadL + rsCols * rsColW;
+                const rsH = rsPadT + rsCount * rsRowH + 10;
+                const rsColors = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#8b5cf6"];
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <ListOrdered size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h3 style={{ margin: 0, fontSize: "0.92rem" }}>Rank Stability</h3>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: rsStatusColor + "18", color: rsStatusColor }}>{rsStatus} ({(rsConsistency * 100).toFixed(0)}%)</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      How suggestion rankings change across different evaluation criteria.
+                    </p>
+                    <svg width={rsW} height={rsH} viewBox={`0 0 ${rsW} ${rsH}`} style={{ display: "block", maxWidth: "100%" }}>
+                      {/* Column headers */}
+                      {rsRanks.map((r, ci) => (
+                        <text key={ci} x={rsPadL + ci * rsColW + rsColW / 2} y={12} textAnchor="middle" fill="var(--color-text-muted)" fontSize={8} fontWeight={600} fontFamily="var(--font-mono)">{r.label}</text>
+                      ))}
+                      {/* Lines connecting ranks */}
+                      {rsScored.map((s, si) => {
+                        const color = rsColors[si % rsColors.length];
+                        const points = rsRanks.map((r, ci) => ({
+                          x: rsPadL + ci * rsColW + rsColW / 2,
+                          y: rsPadT + ((r.ranks[s.idx] || 1) - 1) * rsRowH + rsRowH / 2,
+                        }));
+                        return (
+                          <g key={si}>
+                            {points.slice(0, -1).map((p, i) => (
+                              <line key={i} x1={p.x} y1={p.y} x2={points[i + 1].x} y2={points[i + 1].y} stroke={color} strokeWidth={2} opacity={0.5} strokeLinecap="round" />
+                            ))}
+                            {points.map((p, i) => (
+                              <g key={`dot-${i}`}>
+                                <circle cx={p.x} cy={p.y} r={8} fill={color} opacity={0.85} />
+                                <text x={p.x} y={p.y + 3} textAnchor="middle" fill="#fff" fontSize={8} fontWeight={700} fontFamily="var(--font-mono)">#{s.idx}</text>
+                              </g>
+                            ))}
+                          </g>
+                        );
+                      })}
+                      {/* Rank labels on left */}
+                      {Array.from({ length: rsCount }, (_, i) => (
+                        <text key={i} x={rsPadL - 6} y={rsPadT + i * rsRowH + rsRowH / 2 + 3} textAnchor="end" fill="var(--color-text-muted)" fontSize={8} fontFamily="var(--font-mono)">{i + 1}</text>
+                      ))}
+                    </svg>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -9178,6 +9504,120 @@ export default function Workspace() {
                       <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(34,197,94,0.3)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Progressing</span>
                       <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(234,179,8,0.3)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Plateau</span>
                       <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(239,68,68,0.3)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Cycling</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Regime Change Detector */}
+              {trials.length >= 20 && (() => {
+                const rcSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (rcSpecs.length === 0) return null;
+                const rcSorted = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const rcKey = Object.keys(rcSorted[0]?.kpis || {})[0];
+                if (!rcKey) return null;
+                const rcN = rcSorted.length;
+                const rcWin = Math.min(10, Math.floor(rcN / 3));
+
+                // Signal 1: Parameter variance (rolling normalized std)
+                const rcParamVar: number[] = [];
+                for (let i = rcWin; i <= rcN; i++) {
+                  const chunk = rcSorted.slice(i - rcWin, i);
+                  let totalVar = 0;
+                  rcSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                    const vals = chunk.map(t => Number(t.parameters[s.name]) || 0);
+                    const range = ((s.upper ?? 1) - (s.lower ?? 0)) || 1;
+                    const norms = vals.map(v => (v - (s.lower ?? 0)) / range);
+                    const mu = norms.reduce((a, b) => a + b, 0) / norms.length;
+                    totalVar += norms.reduce((a, v) => a + (v - mu) ** 2, 0) / norms.length;
+                  });
+                  rcParamVar.push(totalVar / rcSpecs.length);
+                }
+
+                // Signal 2: KPI improvement rate (rolling)
+                const rcKpis = rcSorted.map(t => Number(t.kpis[rcKey]) || 0);
+                const rcBsf: number[] = [];
+                let rcBest = rcKpis[0];
+                rcKpis.forEach(v => { rcBest = Math.min(rcBest, v); rcBsf.push(rcBest); });
+                const rcImprRate: number[] = [];
+                for (let i = rcWin; i <= rcN; i++) {
+                  const improvement = rcBsf[i - rcWin] - rcBsf[i - 1];
+                  rcImprRate.push(improvement);
+                }
+
+                // Normalize signals to [0,1]
+                const rcMaxVar = Math.max(...rcParamVar, 0.001);
+                const rcNormVar = rcParamVar.map(v => v / rcMaxVar);
+                const rcMaxImpr = Math.max(...rcImprRate.map(Math.abs), 0.001);
+                const rcNormImpr = rcImprRate.map(v => Math.max(0, v / rcMaxImpr));
+
+                // Composite exploration signal: param_var * 0.6 + impr_rate * 0.4
+                const rcSignal = rcNormVar.map((v, i) => v * 0.6 + (rcNormImpr[i] || 0) * 0.4);
+
+                // Detect transition: find point where signal drops below 50% of initial mean
+                const rcEarlyMean = rcSignal.slice(0, Math.min(5, rcSignal.length)).reduce((a, b) => a + b, 0) / Math.min(5, rcSignal.length);
+                const rcThreshold = rcEarlyMean * 0.5;
+                let rcTransition = rcSignal.length; // default: no transition
+                for (let i = Math.floor(rcSignal.length * 0.2); i < rcSignal.length; i++) {
+                  const windowMean = rcSignal.slice(Math.max(0, i - 3), i + 1).reduce((a, b) => a + b, 0) / Math.min(4, i + 1);
+                  if (windowMean < rcThreshold) { rcTransition = i; break; }
+                }
+
+                const rcTransPct = rcTransition / rcSignal.length;
+                const rcStatus = rcTransition >= rcSignal.length ? "No Transition" : rcTransPct < 0.4 ? "Early" : rcTransPct < 0.65 ? "On-Schedule" : "Late";
+                const rcStatusColor = rcStatus === "On-Schedule" ? "var(--color-green, #22c55e)" : rcStatus === "Early" ? "var(--color-yellow, #eab308)" : rcStatus === "Late" ? "var(--color-red, #ef4444)" : "var(--color-text-muted, #94a3b8)";
+
+                // SVG
+                const rcPadL = 30, rcPadR = 10, rcChartW = 320, rcChartH = 80;
+                const rcW = rcPadL + rcChartW + rcPadR;
+                const rcH = rcChartH + 50;
+                const rcMaxSig = Math.max(...rcSignal, 0.01);
+                const rcX = (i: number) => rcPadL + (i / (rcSignal.length - 1 || 1)) * rcChartW;
+                const rcY = (v: number) => 20 + (1 - v / rcMaxSig) * rcChartH;
+
+                // Area fill for exploration vs exploitation
+                const rcAreaPath = `M${rcX(0).toFixed(1)},${(20 + rcChartH).toFixed(1)} ` +
+                  rcSignal.map((v, i) => `L${rcX(i).toFixed(1)},${rcY(v).toFixed(1)}`).join(" ") +
+                  ` L${rcX(rcSignal.length - 1).toFixed(1)},${(20 + rcChartH).toFixed(1)} Z`;
+                const rcLinePath = rcSignal.map((v, i) => `${i === 0 ? "M" : "L"}${rcX(i).toFixed(1)},${rcY(v).toFixed(1)}`).join(" ");
+
+                return (
+                  <div className="card" style={{ padding: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <SplitSquareVertical size={16} style={{ color: "var(--color-primary)" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                        <h2 style={{ margin: 0 }}>Regime Change</h2>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 600, padding: "2px 8px", borderRadius: 9, background: rcStatusColor + "18", color: rcStatusColor }}>{rcStatus}{rcTransition < rcSignal.length ? ` (${(rcTransPct * 100).toFixed(0)}%)` : ""}</span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Exploration signal (param variance + improvement) over time. Drop = transition to exploitation.
+                    </p>
+                    <svg width={rcW} height={rcH} viewBox={`0 0 ${rcW} ${rcH}`} style={{ display: "block", maxWidth: "100%" }}>
+                      {/* Exploration phase background */}
+                      {rcTransition < rcSignal.length && (
+                        <>
+                          <rect x={rcPadL} y={20} width={rcX(rcTransition) - rcPadL} height={rcChartH} fill="rgba(59,130,246,0.06)" rx={2} />
+                          <rect x={rcX(rcTransition)} y={20} width={rcPadL + rcChartW - rcX(rcTransition)} height={rcChartH} fill="rgba(249,115,22,0.06)" rx={2} />
+                          <line x1={rcX(rcTransition)} y1={18} x2={rcX(rcTransition)} y2={20 + rcChartH + 2} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4,3" />
+                          <text x={rcX(rcTransition)} y={14} textAnchor="middle" fill="#f59e0b" fontSize={7} fontFamily="var(--font-mono)">transition</text>
+                        </>
+                      )}
+                      {/* Area fill */}
+                      <path d={rcAreaPath} fill="var(--color-primary)" opacity={0.08} />
+                      {/* Line */}
+                      <path d={rcLinePath} fill="none" stroke="var(--color-primary)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+                      {/* Threshold line */}
+                      <line x1={rcPadL} y1={rcY(rcThreshold)} x2={rcPadL + rcChartW} y2={rcY(rcThreshold)} stroke="var(--color-text-muted)" strokeWidth={0.5} strokeDasharray="3,3" opacity={0.5} />
+                      {/* Axes */}
+                      <text x={rcPadL - 4} y={24} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">High</text>
+                      <text x={rcPadL - 4} y={20 + rcChartH} textAnchor="end" fill="var(--color-text-muted)" fontSize={7} fontFamily="var(--font-mono)">Low</text>
+                      <text x={rcPadL + rcChartW / 2} y={rcH - 2} textAnchor="middle" fill="var(--color-text-muted)" fontSize={8} fontFamily="var(--font-mono)">Iteration</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: 12, justifyContent: "center", fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
+                      <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(59,130,246,0.15)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Exploration</span>
+                      <span><span style={{ display: "inline-block", width: 10, height: 8, background: "rgba(249,115,22,0.15)", marginRight: 3, verticalAlign: "middle", borderRadius: 2 }} />Exploitation</span>
+                      <span>60% variance + 40% improvement</span>
                     </div>
                   </div>
                 );
