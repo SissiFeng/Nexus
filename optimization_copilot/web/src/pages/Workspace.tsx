@@ -20,6 +20,7 @@ import RealParameterImportance from "../components/ParameterImportance";
 import RealScatterMatrix from "../components/ScatterMatrix";
 import RealSuggestionCard from "../components/SuggestionCard";
 import InsightsPanel from "../components/InsightsPanel";
+import ErrorBoundary from "../components/ErrorBoundary";
 import {
   fetchDiagnostics,
   fetchImportance,
@@ -29,6 +30,17 @@ import {
   type ParameterImportanceData,
   type SuggestionData,
 } from "../api";
+
+const DIAGNOSTIC_TOOLTIPS: Record<string, string> = {
+  convergence_trend: "Rate of improvement per iteration. Positive = still improving.",
+  exploration_coverage: "Fraction of parameter space explored. 30-80% is ideal.",
+  failure_rate: "Proportion of failed experiments. Below 20% is normal.",
+  noise_estimate: "Measurement noise level. Lower means more reliable data.",
+  plateau_length: "Consecutive iterations without improvement. >30 may mean converged.",
+  signal_to_noise: "Signal vs noise ratio. >3 means reliable trends.",
+  best_kpi_value: "Best objective value achieved so far.",
+  improvement_velocity: "Recent rate of improvement. Near 0 = diminishing returns.",
+};
 
 export default function Workspace() {
   const { id } = useParams<{ id: string }>();
@@ -150,6 +162,7 @@ export default function Workspace() {
   }));
 
   return (
+    <ErrorBoundary>
     <div className="workspace-container">
       <div className={`workspace-main ${chatOpen ? "chat-open" : ""}`}>
         {/* Header */}
@@ -238,6 +251,7 @@ export default function Workspace() {
                       best_kpi_value: diagnostics.best_kpi_value,
                       improvement_velocity: diagnostics.improvement_velocity,
                     }}
+                    tooltips={DIAGNOSTIC_TOOLTIPS}
                   />
                 ) : (
                   <p className="empty-state">
@@ -630,5 +644,6 @@ export default function Workspace() {
         }
       `}</style>
     </div>
+    </ErrorBoundary>
   );
 }

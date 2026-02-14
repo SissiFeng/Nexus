@@ -23,6 +23,7 @@ interface ParsedFile {
 export default function FileUpload({ onDataParsed }: FileUploadProps) {
   const [parsedFile, setParsedFile] = useState<ParsedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const formatFileSize = (bytes: number): string => {
@@ -71,7 +72,20 @@ export default function FileUpload({ onDataParsed }: FileUploadProps) {
 
       const file = acceptedFiles[0];
       setError(null);
+      setWarning(null);
       setIsLoading(true);
+
+      // File size checks
+      const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+      const LARGE_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+      if (file.size > MAX_FILE_SIZE) {
+        setError("File too large. Maximum size is 50MB.");
+        setIsLoading(false);
+        return;
+      }
+      if (file.size > LARGE_FILE_SIZE) {
+        setWarning("Large file detected. Parsing may take a moment...");
+      }
 
       try {
         const ext = file.name.split(".").pop()?.toLowerCase();
@@ -119,10 +133,16 @@ export default function FileUpload({ onDataParsed }: FileUploadProps) {
           };
 
           setParsedFile(parsed);
+          if (parsed.rowCount > 100000) {
+            setWarning(`Very large dataset (${parsed.rowCount.toLocaleString()} rows). Consider sampling to improve performance.`);
+          }
         } else {
           // Handle CSV/TSV files
           const parsed = await parseCSV(file);
           setParsedFile(parsed);
+          if (parsed.rowCount > 100000) {
+            setWarning(`Very large dataset (${parsed.rowCount.toLocaleString()} rows). Consider sampling to improve performance.`);
+          }
         }
       } catch (err) {
         setError(
@@ -157,6 +177,7 @@ export default function FileUpload({ onDataParsed }: FileUploadProps) {
   const handleClear = () => {
     setParsedFile(null);
     setError(null);
+    setWarning(null);
   };
 
   return (
@@ -164,6 +185,12 @@ export default function FileUpload({ onDataParsed }: FileUploadProps) {
       {error && (
         <div className="error-banner">
           <strong>Error:</strong> {error}
+        </div>
+      )}
+
+      {warning && !error && (
+        <div className="warning-banner">
+          <strong>Warning:</strong> {warning}
         </div>
       )}
 
@@ -366,6 +393,15 @@ export default function FileUpload({ onDataParsed }: FileUploadProps) {
           font-size: 0.85rem;
           color: var(--color-text-muted);
           text-align: center;
+        }
+
+        .warning-banner {
+          background: #fef9c3;
+          color: #854d0e;
+          padding: 12px 16px;
+          border-radius: var(--radius);
+          margin-bottom: 16px;
+          font-size: 0.9rem;
         }
 
         .file-preview-actions {

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Beaker } from "lucide-react";
 import {
   fetchCampaigns,
   searchCampaigns,
@@ -8,6 +9,8 @@ import {
   deleteCampaign,
   type CampaignSummary,
 } from "../api";
+import ErrorBoundary from "../components/ErrorBoundary";
+import EmptyState from "../components/EmptyState";
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
@@ -61,6 +64,7 @@ export default function Dashboard() {
   };
 
   return (
+    <ErrorBoundary>
     <div className="page">
       <div className="page-header">
         <h1>Campaigns</h1>
@@ -91,9 +95,13 @@ export default function Dashboard() {
       {loading ? (
         <div className="loading">Loading campaigns...</div>
       ) : campaigns.length === 0 ? (
-        <div className="empty-state">
-          <p>No campaigns found.</p>
-        </div>
+        <EmptyState
+          icon={Beaker}
+          title="No campaigns yet"
+          description="Create your first optimization campaign by uploading experimental data. The AI agent will help you discover patterns and suggest better experiments."
+          actionLabel="+ Create First Campaign"
+          onAction={() => navigate("/new-campaign")}
+        />
       ) : (
         <div className="table-wrapper">
           <table className="data-table">
@@ -162,5 +170,6 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   );
 }

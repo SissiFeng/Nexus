@@ -20,6 +20,7 @@ interface DiagnosticCardsProps {
     best_kpi_value: number;
     improvement_velocity: number;
   };
+  tooltips?: Record<string, string>;
 }
 
 interface MetricConfig {
@@ -89,7 +90,7 @@ const METRICS: Record<string, MetricConfig> = {
   },
 };
 
-export default function DiagnosticCards({ diagnostics }: DiagnosticCardsProps) {
+export default function DiagnosticCards({ diagnostics, tooltips }: DiagnosticCardsProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'green':
@@ -120,7 +121,7 @@ export default function DiagnosticCards({ diagnostics }: DiagnosticCardsProps) {
         const statusColor = getStatusColor(status);
 
         return (
-          <div key={key} className="stat-card">
+          <div key={key} className="stat-card" title={tooltips?.[key] ?? config.description}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
               <Icon size={18} color="#718096" />
               <span className="stat-label" style={{ textTransform: 'none', margin: 0 }}>

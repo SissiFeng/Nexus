@@ -7,6 +7,7 @@ import LoopView from "./pages/LoopView";
 import AnalysisView from "./pages/AnalysisView";
 import NewCampaign from "./pages/NewCampaign";
 import Workspace from "./pages/Workspace";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 function App() {
   return (
@@ -34,16 +35,18 @@ function App() {
         </div>
       </nav>
       <main className="main-content">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/new-campaign" element={<NewCampaign />} />
-          <Route path="/workspace/:id" element={<Workspace />} />
-          <Route path="/campaigns/:id" element={<CampaignDetail />} />
-          <Route path="/loop" element={<LoopView />} />
-          <Route path="/analysis" element={<AnalysisView />} />
-          <Route path="/compare" element={<Compare />} />
-          <Route path="/reports/:id" element={<Reports />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/new-campaign" element={<NewCampaign />} />
+            <Route path="/workspace/:id" element={<Workspace />} />
+            <Route path="/campaigns/:id" element={<CampaignDetail />} />
+            <Route path="/loop" element={<LoopView />} />
+            <Route path="/analysis" element={<AnalysisView />} />
+            <Route path="/compare" element={<Compare />} />
+            <Route path="/reports/:id" element={<Reports />} />
+          </Routes>
+        </ErrorBoundary>
       </main>
     </div>
   );

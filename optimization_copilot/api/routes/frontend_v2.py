@@ -10,11 +10,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -28,6 +29,7 @@ from optimization_copilot.core.models import (
 from optimization_copilot.platform.workspace import CampaignNotFoundError
 
 router = APIRouter(tags=["frontend-v2"])
+logger = logging.getLogger(__name__)
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -92,6 +94,10 @@ class SuggestionResponse(BaseModel):
     predicted_uncertainties: list[float] = Field(default_factory=list)
     backend_used: str = "builtin"
     phase: str = "exploitation"
+
+
+class AppendRequest(BaseModel):
+    data: list[dict[str, str]]
 
 
 class SteerRequest(BaseModel):
@@ -421,6 +427,67 @@ def create_campaign_from_upload(req: CreateFromUploadRequest) -> dict[str, Any]:
     manager = get_manager()
     workspace = get_workspace()
 
+    # ── Input validation ────────────────────────────────────────────
+    if not req.mapping.parameters:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one parameter and one objective are required",
+        )
+    if not req.mapping.objectives:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one parameter and one objective are required",
+        )
+
+    if not (1 <= req.batch_size <= 100):
+        raise HTTPException(
+            status_code=422,
+            detail=f"batch_size must be between 1 and 100, got {req.batch_size}",
+        )
+
+    for p in req.mapping.parameters:
+        if p.type == "continuous" and p.lower is not None and p.upper is not None:
+            if p.lower >= p.upper:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Parameter '{p.name}' has invalid bounds: lower ({p.lower}) must be less than upper ({p.upper})",
+                )
+
+    if len(req.data) < 3:
+        raise HTTPException(
+            status_code=422,
+            detail="At least 3 observations are required to create a campaign",
+        )
+
+    # Check for missing objective values
+    obj_names = [o.name for o in req.mapping.objectives]
+    total_obj_cells = len(req.data) * len(obj_names)
+    missing_count = 0
+    for row in req.data:
+        for oname in obj_names:
+            raw = row.get(oname, "")
+            if not raw:
+                missing_count += 1
+            else:
+                try:
+                    float(raw)
+                except ValueError:
+                    missing_count += 1
+    missing_pct = missing_count / total_obj_cells if total_obj_cells > 0 else 0.0
+
+    if missing_pct > 0.5:
+        raise HTTPException(
+            status_code=422,
+            detail=f"More than 50% of objective values are missing or non-numeric ({missing_count}/{total_obj_cells}). Please provide more complete data.",
+        )
+
+    warnings: list[str] = []
+    if 0.1 <= missing_pct <= 0.5:
+        warnings.append(
+            f"{missing_count}/{total_obj_cells} objective values ({missing_pct:.0%}) are missing or non-numeric. Results may be affected."
+        )
+    # ── End validation ──────────────────────────────────────────────
+
     # Build spec from mapping
     parameters = []
     for p in req.mapping.parameters:
@@ -505,7 +572,7 @@ def create_campaign_from_upload(req: CreateFromUploadRequest) -> dict[str, Any]:
                 best_kpi=best_kpi,
             )
 
-    return {
+    result: dict[str, Any] = {
         "campaign_id": record.campaign_id,
         "id": record.campaign_id,
         "name": record.name,
@@ -513,30 +580,188 @@ def create_campaign_from_upload(req: CreateFromUploadRequest) -> dict[str, Any]:
         "total_trials": len(initial_observations),
         "best_kpi": best_kpi,
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+@router.post("/campaigns/{campaign_id}/append")
+def append_observations(campaign_id: str, req: AppendRequest) -> dict[str, Any]:
+    """Append new observations to an existing campaign.
+
+    Validates that new data columns match the existing parameter and
+    objective names, parses rows into observations, and updates the
+    campaign checkpoint.
+    """
+    workspace = get_workspace()
+    manager = get_manager()
+
+    if not workspace.campaign_exists(campaign_id):
+        raise HTTPException(status_code=404, detail=f"Campaign not found: {campaign_id}")
+
+    if not req.data:
+        raise HTTPException(status_code=422, detail="No data rows provided")
+
+    spec = workspace.load_spec(campaign_id)
+    checkpoint = workspace.load_checkpoint(campaign_id) or {
+        "iteration": 0,
+        "completed_trials": [],
+        "phase_history": [],
+    }
+
+    param_defs = spec.get("parameters", [])
+    obj_defs = spec.get("objectives", [])
+    metadata_cols = spec.get("metadata_columns", [])
+    param_names = {p["name"] for p in param_defs}
+    obj_names = {o["name"] for o in obj_defs}
+
+    # Validate column presence in new data
+    all_expected = param_names | obj_names
+    first_row_keys = set(req.data[0].keys()) if req.data else set()
+    missing_cols = all_expected - first_row_keys
+    if missing_cols:
+        raise HTTPException(
+            status_code=422,
+            detail=f"New data is missing required columns: {sorted(missing_cols)}",
+        )
+
+    existing_trials = checkpoint.get("completed_trials", [])
+    start_iteration = checkpoint.get("iteration", len(existing_trials))
+
+    new_observations = []
+    for i, row in enumerate(req.data):
+        params: dict[str, Any] = {}
+        kpi_values: dict[str, float] = {}
+        metadata_vals: dict[str, str] = {}
+
+        for p in param_defs:
+            raw = row.get(p["name"], "")
+            try:
+                params[p["name"]] = float(raw) if raw else 0.0
+            except ValueError:
+                params[p["name"]] = raw  # categorical
+
+        for o in obj_defs:
+            raw = row.get(o["name"], "")
+            try:
+                kpi_values[o["name"]] = float(raw) if raw else 0.0
+            except ValueError:
+                pass
+
+        for m in metadata_cols:
+            metadata_vals[m] = row.get(m, "")
+
+        new_observations.append({
+            "iteration": start_iteration + i,
+            "parameters": params,
+            "kpi_values": kpi_values,
+            "metadata": metadata_vals,
+        })
+
+    # Append to existing checkpoint
+    all_trials = existing_trials + new_observations
+    new_iteration = start_iteration + len(new_observations)
+
+    checkpoint["completed_trials"] = all_trials
+    checkpoint["iteration"] = new_iteration
+
+    # Recalculate best_kpi
+    best_kpi = None
+    if obj_defs:
+        primary = obj_defs[0]["name"]
+        direction = obj_defs[0].get("direction", "minimize")
+        kpi_vals = [
+            t["kpi_values"].get(primary)
+            for t in all_trials
+            if t["kpi_values"].get(primary) is not None
+        ]
+        if kpi_vals:
+            best_kpi = min(kpi_vals) if direction == "minimize" else max(kpi_vals)
+
+    workspace.save_checkpoint(campaign_id, checkpoint)
+
+    # Update campaign record progress
+    manager.update_progress(
+        campaign_id,
+        iteration=new_iteration,
+        total_trials=len(all_trials),
+        best_kpi=best_kpi,
+    )
+
+    return {
+        "campaign_id": campaign_id,
+        "appended": len(new_observations),
+        "total": len(all_trials),
+        "best_kpi": best_kpi,
+    }
 
 
 @router.get("/campaigns/{campaign_id}/diagnostics")
-def get_diagnostics(campaign_id: str) -> DiagnosticsResponse:
+def get_diagnostics(campaign_id: str) -> dict[str, Any]:
     """Compute real-time diagnostic health metrics for a campaign."""
     snapshot = _load_snapshot(campaign_id)
-    return _compute_diagnostics(snapshot)
+    diag = _compute_diagnostics(snapshot)
+    result: dict[str, Any] = diag.model_dump()
+    n = len(snapshot.observations)
+    if n < 3:
+        result["warning"] = f"Only {n} observations — diagnostics may be unreliable"
+    return result
 
 
 @router.get("/campaigns/{campaign_id}/importance")
-def get_importance(campaign_id: str) -> ImportanceResponse:
+def get_importance(campaign_id: str) -> dict[str, Any]:
     """Compute parameter importance scores via fANOVA or correlation."""
     snapshot = _load_snapshot(campaign_id)
-    return _compute_importance(snapshot)
+    n = len(snapshot.observations)
+    if n < 5:
+        # Return placeholder equal importances with a warning
+        n_params = max(len(snapshot.parameter_specs), 1)
+        equal_importance = round(1.0 / n_params, 6)
+        return {
+            "importances": [
+                {"name": p.name, "importance": equal_importance}
+                for p in snapshot.parameter_specs
+            ],
+            "warning": f"Only {n} observations — at least 5 needed for reliable importance estimates. Showing equal placeholder values.",
+        }
+    importance = _compute_importance(snapshot)
+    return importance.model_dump()
 
 
 @router.get("/campaigns/{campaign_id}/suggestions")
 def get_suggestions(
     campaign_id: str,
     n: int = Query(default=5, ge=1, le=50),
-) -> SuggestionResponse:
+) -> dict[str, Any]:
     """Generate next experiment suggestions based on campaign history."""
     snapshot = _load_snapshot(campaign_id)
-    return _generate_suggestions(snapshot, n)
+    obs_count = len(snapshot.observations)
+    if obs_count < 3:
+        # Use only random sampling with a warning
+        import random
+        suggestions = []
+        for _ in range(n):
+            params: dict[str, Any] = {}
+            for spec in snapshot.parameter_specs:
+                if spec.type == VariableType.CATEGORICAL and spec.categories:
+                    params[spec.name] = random.choice(spec.categories)
+                elif spec.lower is not None and spec.upper is not None:
+                    params[spec.name] = round(
+                        spec.lower + random.random() * (spec.upper - spec.lower), 6
+                    )
+                else:
+                    params[spec.name] = round(random.gauss(0, 1), 6)
+            suggestions.append(params)
+        return {
+            "suggestions": suggestions,
+            "predicted_values": [],
+            "predicted_uncertainties": [],
+            "backend_used": "random_fallback",
+            "phase": "exploration",
+            "warning": f"Using random sampling — insufficient data for model-based suggestions (have {obs_count}, need at least 3)",
+        }
+    result = _generate_suggestions(snapshot, n)
+    return result.model_dump()
 
 
 @router.post("/campaigns/{campaign_id}/steer")
@@ -587,6 +812,23 @@ def chat(campaign_id: str, req: ChatRequest) -> ChatResponse:
         )
 
     # Route based on intent
+
+    # Help intent
+    if any(kw in message for kw in ["help", "how", "what can", "tutorial"]):
+        return ChatResponse(
+            reply=(
+                "I can help you with your optimization campaign. Try asking me:\n"
+                "- 'Discover insights from data' -- Find patterns, correlations, and optimal regions\n"
+                "- 'Suggest next experiments' -- Get AI-recommended parameter values\n"
+                "- 'Show diagnostics' -- View campaign health metrics\n"
+                "- 'Which parameter matters most?' -- See parameter importance ranking\n"
+                "- 'Why is it stuck?' -- Understand optimization status\n"
+                "- 'Focus on specific region' -- Steer the search direction\n"
+                "- 'Export results' -- Download your data"
+            ),
+            role="system",
+        )
+
     if any(kw in message for kw in ["suggest", "next", "recommend", "what should"]):
         suggestions = _generate_suggestions(snapshot, n=5)
         formatted = []
@@ -653,6 +895,12 @@ def chat(campaign_id: str, req: ChatRequest) -> ChatResponse:
         )
 
     if any(kw in message for kw in ["insight", "discover", "pattern", "trend", "find", "learn"]):
+        obs_count = len(snapshot.observations)
+        if obs_count < 5:
+            return ChatResponse(
+                reply=f"I need at least 5 observations to discover meaningful insights. You currently have {obs_count}. Please add more experimental data.",
+                role="agent",
+            )
         from optimization_copilot.api.routes.insights import (
             _find_top_conditions,
             _compute_correlations,

@@ -12,6 +12,7 @@ Automatically analyzes campaign data to surface actionable insights:
 
 from __future__ import annotations
 
+import logging
 import math
 import statistics
 from typing import Any
@@ -27,6 +28,7 @@ from optimization_copilot.api.routes.frontend_v2 import (
 from optimization_copilot.core.models import CampaignSnapshot, Observation, VariableType
 
 router = APIRouter(tags=["insights"])
+logger = logging.getLogger(__name__)
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -711,22 +713,71 @@ def get_insights(
     """
     snapshot = _load_snapshot(campaign_id)
 
-    top_conditions = _find_top_conditions(snapshot, top_n)
-    correlations = _compute_correlations(snapshot)
-    interactions = _detect_interactions(snapshot)
-    optimal_regions = _find_optimal_regions(snapshot)
-    failure_patterns = _detect_failure_patterns(snapshot)
-    trends = _detect_trends(snapshot)
+    top_conditions: list[TopCondition] = []
+    correlations: list[CorrelationInsight] = []
+    interactions: list[InteractionInsight] = []
+    optimal_regions: list[OptimalRegion] = []
+    failure_patterns: list[FailurePattern] = []
+    trends: list[TrendInsight] = []
+    errors: list[str] = []
 
-    summaries = _generate_summaries(
-        snapshot,
-        top_conditions,
-        correlations,
-        interactions,
-        optimal_regions,
-        failure_patterns,
-        trends,
-    )
+    try:
+        top_conditions = _find_top_conditions(snapshot, top_n)
+    except Exception as exc:
+        logger.error("Failed to compute top conditions for campaign %s: %s", campaign_id, exc, exc_info=True)
+        errors.append("top_conditions")
+
+    try:
+        correlations = _compute_correlations(snapshot)
+    except Exception as exc:
+        logger.error("Failed to compute correlations for campaign %s: %s", campaign_id, exc, exc_info=True)
+        errors.append("correlations")
+
+    try:
+        interactions = _detect_interactions(snapshot)
+    except Exception as exc:
+        logger.error("Failed to detect interactions for campaign %s: %s", campaign_id, exc, exc_info=True)
+        errors.append("interactions")
+
+    try:
+        optimal_regions = _find_optimal_regions(snapshot)
+    except Exception as exc:
+        logger.error("Failed to find optimal regions for campaign %s: %s", campaign_id, exc, exc_info=True)
+        errors.append("optimal_regions")
+
+    try:
+        failure_patterns = _detect_failure_patterns(snapshot)
+    except Exception as exc:
+        logger.error("Failed to detect failure patterns for campaign %s: %s", campaign_id, exc, exc_info=True)
+        errors.append("failure_patterns")
+
+    try:
+        trends = _detect_trends(snapshot)
+    except Exception as exc:
+        logger.error("Failed to detect trends for campaign %s: %s", campaign_id, exc, exc_info=True)
+        errors.append("trends")
+
+    summaries: list[InsightSummary] = []
+    try:
+        summaries = _generate_summaries(
+            snapshot,
+            top_conditions,
+            correlations,
+            interactions,
+            optimal_regions,
+            failure_patterns,
+            trends,
+        )
+    except Exception as exc:
+        logger.error("Failed to generate summaries for campaign %s: %s", campaign_id, exc, exc_info=True)
+        errors.append("summaries")
+
+    if errors:
+        logger.warning(
+            "Partial insight results for campaign %s — failed analyses: %s",
+            campaign_id,
+            ", ".join(errors),
+        )
 
     return InsightsResponse(
         campaign_id=campaign_id,

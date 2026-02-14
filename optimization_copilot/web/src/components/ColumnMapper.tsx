@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { AlertCircle } from "lucide-react";
 
 export interface ParamConfig {
@@ -54,6 +54,8 @@ export default function ColumnMapper({
         min: number;
         max: number;
         distinctValues: string[];
+        distinctCount: number;
+        rangeDisplay: string;
         suggestedRole: ColumnRole;
         suggestedParamType?: "continuous" | "categorical";
         suggestedObjDirection?: "minimize" | "maximize";
@@ -73,11 +75,18 @@ export default function ColumnMapper({
         numericValues.length > 0 && numericValues.length === values.length;
 
       // Get distinct values
-      const distinctValues = Array.from(new Set(values)).slice(0, 3);
+      const allDistinct = Array.from(new Set(values));
+      const distinctValues = allDistinct.slice(0, 3);
+      const distinctCount = allDistinct.length;
 
       // Calculate min/max for numeric columns
       const min = isNumeric ? Math.min(...numericValues) : 0;
       const max = isNumeric ? Math.max(...numericValues) : 0;
+
+      // Build range display string
+      const rangeDisplay = isNumeric
+        ? `(${min} \u2013 ${max})`
+        : `(${distinctCount} unique value${distinctCount !== 1 ? "s" : ""})`;
 
       // Auto-detect role based on column name
       const lowerName = col.toLowerCase();
@@ -132,6 +141,8 @@ export default function ColumnMapper({
         min,
         max,
         distinctValues,
+        distinctCount,
+        rangeDisplay,
         suggestedRole,
         suggestedParamType,
         suggestedObjDirection,
@@ -183,6 +194,59 @@ export default function ColumnMapper({
 
     updateColumnState(col, updates);
   };
+
+  // Validation logic
+  const validationError = useMemo((): string | null => {
+    const states = Object.entries(columnStates);
+    if (states.length === 0) return null;
+
+    const hasParams = states.some(([, s]) => s.role === "parameter");
+    const hasObjs = states.some(([, s]) => s.role === "objective");
+
+    if (!hasParams) return "At least 1 parameter column must be mapped.";
+    if (!hasObjs) return "At least 1 objective column must be mapped.";
+
+    // Check continuous parameters have valid bounds
+    for (const [col, s] of states) {
+      if (s.role === "parameter" && s.paramType === "continuous") {
+        const lower = s.lower;
+        const upper = s.upper;
+        if (lower === undefined || upper === undefined || isNaN(lower) || isNaN(upper)) {
+          return `Parameter "${col}": bounds are required for continuous parameters.`;
+        }
+        if (lower >= upper) {
+          return `Parameter "${col}": Min (${lower}) must be less than Max (${upper}).`;
+        }
+      }
+    }
+
+    // Check objective columns have at least 2 distinct values in the data
+    for (const [col, s] of states) {
+      if (s.role === "objective") {
+        const colAnalysis = columnAnalysis[col];
+        if (colAnalysis && colAnalysis.distinctCount < 2) {
+          return `Objective "${col}" has only ${colAnalysis.distinctCount} distinct value(s). At least 2 are needed for optimization.`;
+        }
+      }
+    }
+
+    return null;
+  }, [columnStates, columnAnalysis]);
+
+  // Helper to check bounds validity for individual row styling
+  const getBoundsStatus = useCallback(
+    (state: ColumnState): "valid" | "empty" | "invalid" => {
+      if (state.role !== "parameter" || state.paramType !== "continuous") return "valid";
+      const lower = state.lower;
+      const upper = state.upper;
+      if (lower === undefined || upper === undefined || isNaN(lower) || isNaN(upper)) {
+        return "empty";
+      }
+      if (lower >= upper) return "invalid";
+      return "valid";
+    },
+    []
+  );
 
   const handleConfirm = () => {
     const mapping: ColumnMapping = {
@@ -280,6 +344,9 @@ export default function ColumnMapper({
                     >
                       {analysis.isNumeric ? "Numeric" : "Text"}
                     </span>
+                    <span className="type-range-hint">
+                      {analysis.rangeDisplay}
+                    </span>
                   </td>
                   <td>
                     <select
@@ -313,30 +380,56 @@ export default function ColumnMapper({
                           <option value="categorical">Categorical</option>
                         </select>
                         {state.paramType === "continuous" && (
-                          <div className="bounds-inputs">
-                            <input
-                              type="number"
-                              className="bound-input"
-                              placeholder="Min"
-                              value={state.lower ?? ""}
-                              onChange={(e) =>
-                                updateColumnState(col, {
-                                  lower: parseFloat(e.target.value),
-                                })
-                              }
-                            />
-                            <span className="bounds-separator">to</span>
-                            <input
-                              type="number"
-                              className="bound-input"
-                              placeholder="Max"
-                              value={state.upper ?? ""}
-                              onChange={(e) =>
-                                updateColumnState(col, {
-                                  upper: parseFloat(e.target.value),
-                                })
-                              }
-                            />
+                          <div className="bounds-inputs-wrapper">
+                            <div className="bounds-inputs">
+                              <input
+                                type="number"
+                                className="bound-input"
+                                placeholder="Min"
+                                value={state.lower ?? ""}
+                                style={
+                                  getBoundsStatus(state) === "invalid"
+                                    ? { borderColor: "#ef4444" }
+                                    : getBoundsStatus(state) === "empty"
+                                    ? { borderColor: "#eab308" }
+                                    : undefined
+                                }
+                                onChange={(e) =>
+                                  updateColumnState(col, {
+                                    lower: e.target.value === "" ? undefined : parseFloat(e.target.value),
+                                  })
+                                }
+                              />
+                              <span className="bounds-separator">to</span>
+                              <input
+                                type="number"
+                                className="bound-input"
+                                placeholder="Max"
+                                value={state.upper ?? ""}
+                                style={
+                                  getBoundsStatus(state) === "invalid"
+                                    ? { borderColor: "#ef4444" }
+                                    : getBoundsStatus(state) === "empty"
+                                    ? { borderColor: "#eab308" }
+                                    : undefined
+                                }
+                                onChange={(e) =>
+                                  updateColumnState(col, {
+                                    upper: e.target.value === "" ? undefined : parseFloat(e.target.value),
+                                  })
+                                }
+                              />
+                            </div>
+                            {getBoundsStatus(state) === "invalid" && (
+                              <span className="bounds-hint bounds-hint-error">
+                                Min must be less than Max
+                              </span>
+                            )}
+                            {getBoundsStatus(state) === "empty" && (
+                              <span className="bounds-hint bounds-hint-warning">
+                                Required for continuous parameters
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -403,11 +496,18 @@ export default function ColumnMapper({
         </div>
       </div>
 
+      {validationError && (
+        <div className="validation-error">
+          <AlertCircle size={16} />
+          <span>{validationError}</span>
+        </div>
+      )}
+
       <div className="mapper-actions">
         <button
           className="btn btn-primary"
           onClick={handleConfirm}
-          disabled={!hasParameters || !hasObjectives}
+          disabled={!hasParameters || !hasObjectives || validationError !== null}
         >
           Confirm Mapping
         </button>
@@ -606,6 +706,45 @@ export default function ColumnMapper({
         .summary-label {
           font-size: 0.85rem;
           color: var(--color-text-muted);
+          font-weight: 500;
+        }
+
+        .type-range-hint {
+          display: block;
+          font-size: 0.72rem;
+          color: var(--color-text-muted);
+          margin-top: 2px;
+        }
+
+        .bounds-inputs-wrapper {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .bounds-hint {
+          font-size: 0.72rem;
+          font-weight: 500;
+        }
+
+        .bounds-hint-error {
+          color: #ef4444;
+        }
+
+        .bounds-hint-warning {
+          color: #eab308;
+        }
+
+        .validation-error {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #fef2f2;
+          color: #dc2626;
+          padding: 10px 14px;
+          border-radius: var(--radius);
+          margin-bottom: 16px;
+          font-size: 0.85rem;
           font-weight: 500;
         }
 

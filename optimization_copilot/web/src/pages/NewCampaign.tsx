@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CheckCircle2, Circle } from "lucide-react";
 import FileUpload from "../components/FileUpload";
 import ColumnMapper, { type ColumnMapping } from "../components/ColumnMapper";
+import DataQualityReport from "../components/DataQualityReport";
 
 // Main NewCampaign Component
 export default function NewCampaign() {
@@ -95,7 +96,8 @@ export default function NewCampaign() {
           ) : (
             <Circle className="step-icon" size={24} />
           )}
-          <span className="step-label">Upload</span>
+          <span className="step-label">Upload Data</span>
+          <span className="step-description">Upload your CSV file with experimental results</span>
         </div>
         <div className="step-line" />
         <div className={`step-item ${currentStep >= 2 ? "active" : ""}`}>
@@ -104,12 +106,14 @@ export default function NewCampaign() {
           ) : (
             <Circle className="step-icon" size={24} />
           )}
-          <span className="step-label">Configure</span>
+          <span className="step-label">Map Columns</span>
+          <span className="step-description">Tell us which columns are parameters and which are objectives</span>
         </div>
         <div className="step-line" />
         <div className={`step-item ${currentStep >= 3 ? "active" : ""}`}>
           <Circle className="step-icon" size={24} />
-          <span className="step-label">Review</span>
+          <span className="step-label">Review & Create</span>
+          <span className="step-description">Review data quality and create your campaign</span>
         </div>
       </div>
 
@@ -267,6 +271,12 @@ export default function NewCampaign() {
             </div>
           </div>
 
+          <DataQualityReport
+            data={rows}
+            parameters={mapping.parameters}
+            objectives={mapping.objectives}
+          />
+
           <div className="step-actions">
             <button className="btn btn-secondary" onClick={() => setCurrentStep(2)}>
               Back
@@ -314,6 +324,19 @@ export default function NewCampaign() {
         .step-label {
           font-size: 0.85rem;
           font-weight: 500;
+        }
+
+        .step-description {
+          font-size: 0.72rem;
+          color: var(--color-text-muted);
+          text-align: center;
+          max-width: 160px;
+          line-height: 1.3;
+        }
+
+        .step-item.active .step-description {
+          color: var(--color-primary);
+          opacity: 0.8;
         }
 
         .step-line {
@@ -418,6 +441,10 @@ export default function NewCampaign() {
 
           .step-label {
             font-size: 0.75rem;
+          }
+
+          .step-description {
+            display: none;
           }
 
           .form-grid {
