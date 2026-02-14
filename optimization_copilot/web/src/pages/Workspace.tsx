@@ -54,6 +54,10 @@ import {
   Hexagon,
   RotateCcw,
   X,
+  Layers,
+  Timer,
+  Brain,
+  BarChart2,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -220,6 +224,9 @@ export default function Workspace() {
   // Replay animation (Overview convergence)
   const [replayIdx, setReplayIdx] = useState<number | null>(null);
   const [replayPlaying, setReplayPlaying] = useState(false);
+
+  // Statistical quick-compare (History tab)
+  const [showStatCompare, setShowStatCompare] = useState(false);
 
   const HISTORY_PAGE_SIZE = 25;
 
@@ -1418,6 +1425,158 @@ export default function Workspace() {
                 <PhaseTimeline phases={campaign.phases} />
               </div>
 
+              {/* Experiment Cost / Time Tracker */}
+              {convergenceData.length >= 3 && (() => {
+                const totalIter = campaign.iteration ?? convergenceData.length;
+                const startTime = campaign.created_at ? new Date(campaign.created_at).getTime() : 0;
+                const elapsed = startTime ? Date.now() - startTime : 0;
+                const elapsedHrs = elapsed / (1000 * 60 * 60);
+                const avgPerIter = totalIter > 0 ? elapsed / totalIter : 0;
+                const avgPerIterMin = avgPerIter / (1000 * 60);
+                // Estimate remaining: compute improvement velocity
+                const recent = convergenceData.slice(-10);
+                const bestSoFar = Math.min(...convergenceData.map(d => d.best));
+                const recentBest = Math.min(...recent.map(d => d.best));
+                const firstBest = convergenceData[0]?.best ?? 0;
+                const totalImprovement = firstBest - bestSoFar;
+                const recentImprovement = recent.length > 1 ? (recent[0]?.best ?? 0) - recentBest : 0;
+                const velocitySlowing = recentImprovement < totalImprovement * 0.02;
+                const budgetPct = Math.min((totalIter / Math.max(totalIter + 20, 100)) * 100, 100);
+                const efficiencyScore = totalImprovement !== 0 && totalIter > 0 ? Math.abs(totalImprovement) / totalIter : 0;
+
+                return (
+                  <div className="card cost-tracker-card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                      <Timer size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Experiment Tracker</h2>
+                    </div>
+                    <div className="cost-tracker-grid">
+                      <div className="cost-tracker-item">
+                        <span className="cost-tracker-label">Total Iterations</span>
+                        <span className="cost-tracker-value">{totalIter}</span>
+                      </div>
+                      <div className="cost-tracker-item">
+                        <span className="cost-tracker-label">Elapsed Time</span>
+                        <span className="cost-tracker-value">{elapsedHrs < 1 ? `${(elapsedHrs * 60).toFixed(0)}m` : `${elapsedHrs.toFixed(1)}h`}</span>
+                      </div>
+                      <div className="cost-tracker-item">
+                        <span className="cost-tracker-label">Avg per Iteration</span>
+                        <span className="cost-tracker-value">{avgPerIterMin < 1 ? `${(avgPerIterMin * 60).toFixed(0)}s` : `${avgPerIterMin.toFixed(1)}m`}</span>
+                      </div>
+                      <div className="cost-tracker-item">
+                        <span className="cost-tracker-label">Efficiency</span>
+                        <span className="cost-tracker-value">{efficiencyScore.toFixed(4)}/iter</span>
+                      </div>
+                    </div>
+                    <div className="cost-tracker-bar-section">
+                      <div className="cost-tracker-bar-header">
+                        <span>Optimization Progress</span>
+                        <span className="mono" style={{ fontSize: "0.78rem" }}>{budgetPct.toFixed(0)}%</span>
+                      </div>
+                      <div className="cost-tracker-bar">
+                        <div className="cost-tracker-bar-fill" style={{ width: `${budgetPct}%`, background: velocitySlowing ? "var(--color-yellow, #eab308)" : "var(--color-primary)" }} />
+                      </div>
+                      {velocitySlowing && (
+                        <div className="cost-tracker-warn">
+                          <AlertTriangle size={12} /> Improvement velocity is slowing — consider changing strategy
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Auto-generated Findings Summary */}
+              {trials.length >= 5 && (() => {
+                const findings: Array<{ icon: string; text: string; type: "success" | "info" | "warning" }> = [];
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const objVals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                const bestVal = Math.min(...objVals);
+                const worstVal = Math.max(...objVals);
+                const meanVal = objVals.reduce((a, b) => a + b, 0) / objVals.length;
+                const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const bestTrial = chrono.find(t => Number(t.kpis[objKey]) === bestVal);
+
+                // Finding 1: Best result
+                if (bestTrial) {
+                  findings.push({ icon: "trophy", text: `Best result of ${bestVal.toFixed(4)} found at iteration ${bestTrial.iteration} out of ${trials.length} trials.`, type: "success" });
+                }
+
+                // Finding 2: Parameter importance
+                if (importance && importance.importances.length > 0) {
+                  const sorted = [...importance.importances].sort((a, b) => b.importance - a.importance);
+                  const top = sorted[0];
+                  const topPct = (top.importance * 100).toFixed(1);
+                  findings.push({ icon: "target", text: `${top.name} is the most influential parameter (${topPct}% importance).`, type: "info" });
+                  if (sorted.length > 1) {
+                    const bottom = sorted[sorted.length - 1];
+                    if (bottom.importance < 0.05) {
+                      findings.push({ icon: "info", text: `${bottom.name} has minimal impact (${(bottom.importance * 100).toFixed(1)}%) — consider fixing it to reduce dimensionality.`, type: "warning" });
+                    }
+                  }
+                }
+
+                // Finding 3: Plateau detection
+                const recent20 = chrono.slice(-20);
+                if (recent20.length >= 10) {
+                  const recentBests = recent20.map(t => Number(t.kpis[objKey]) || 0);
+                  const recentBest = Math.min(...recentBests);
+                  const recentWorst = Math.max(...recentBests);
+                  const recentRange = Math.abs(recentWorst - recentBest);
+                  const totalRange = Math.abs(worstVal - bestVal);
+                  if (totalRange > 0 && recentRange / totalRange < 0.05) {
+                    findings.push({ icon: "pause", text: `Optimization has plateaued — the last ${recent20.length} trials show <5% variation. Consider exploring new regions.`, type: "warning" });
+                  }
+                }
+
+                // Finding 4: Improvement rate
+                if (chrono.length >= 10) {
+                  const firstHalf = chrono.slice(0, Math.floor(chrono.length / 2));
+                  const secondHalf = chrono.slice(Math.floor(chrono.length / 2));
+                  const firstBest = Math.min(...firstHalf.map(t => Number(t.kpis[objKey]) || 0));
+                  const secondBest = Math.min(...secondHalf.map(t => Number(t.kpis[objKey]) || 0));
+                  if (secondBest < firstBest) {
+                    const improvPct = ((firstBest - secondBest) / Math.abs(firstBest) * 100).toFixed(1);
+                    findings.push({ icon: "trending", text: `Second half of trials improved ${improvPct}% over the first half — optimization is progressing well.`, type: "success" });
+                  }
+                }
+
+                // Finding 5: Spread
+                const cv = meanVal !== 0 ? (Math.sqrt(objVals.reduce((a, v) => a + (v - meanVal) ** 2, 0) / objVals.length) / Math.abs(meanVal)) : 0;
+                if (cv > 0.5) {
+                  findings.push({ icon: "scatter", text: `High variability (CV=${(cv * 100).toFixed(0)}%) in objective values suggests the search space has diverse outcomes.`, type: "info" });
+                }
+
+                if (findings.length === 0) return null;
+
+                const iconMap: Record<string, React.ReactNode> = {
+                  trophy: <Trophy size={14} />,
+                  target: <Target size={14} />,
+                  info: <Info size={14} />,
+                  pause: <Pause size={14} />,
+                  trending: <TrendingDown size={14} />,
+                  scatter: <Activity size={14} />,
+                };
+
+                return (
+                  <div className="card findings-card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                      <Brain size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Key Findings</h2>
+                      <span className="findings-badge">{findings.length}</span>
+                    </div>
+                    <div className="findings-list">
+                      {findings.map((f, i) => (
+                        <div key={i} className={`findings-item findings-${f.type}`}>
+                          <span className="findings-icon">{iconMap[f.icon] || <Info size={14} />}</span>
+                          <span className="findings-text">{f.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -1962,6 +2121,96 @@ export default function Workspace() {
                       <span>Zero</span>
                       <span style={{ display: "inline-block", width: "14px", height: "14px", borderRadius: "3px", background: "rgba(37, 99, 235, 0.7)" }} />
                       <span>Positive</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parallel Coordinates Plot */}
+              {trials.length >= 3 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                if (paramNames.length < 2) return null;
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const objVals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                const objMin = Math.min(...objVals);
+                const objMax = Math.max(...objVals);
+                const objRange = objMax - objMin || 1;
+                // Compute min/max for each param
+                const paramBounds = paramNames.map(p => {
+                  const vals = trials.map(t => Number(t.parameters[p]) || 0);
+                  const min = Math.min(...vals);
+                  const max = Math.max(...vals);
+                  return { name: p, min, max, range: max - min || 1 };
+                });
+                const W = Math.max(500, paramNames.length * 100);
+                const H = 260;
+                const padL = 50, padR = 30, padT = 30, padB = 40;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const axisSpacing = plotW / (paramNames.length - 1);
+                // Color function: green(good) → yellow → red(bad) for minimization
+                const trialColor = (objVal: number) => {
+                  const t = (objVal - objMin) / objRange;
+                  if (t < 0.33) return `rgba(34, 197, 94, ${0.35 + t * 0.5})`;
+                  if (t < 0.67) return `rgba(234, 179, 8, ${0.35 + (t - 0.33) * 0.5})`;
+                  return `rgba(239, 68, 68, ${0.35 + (t - 0.67) * 0.5})`;
+                };
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Layers size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Parallel Coordinates</h2>
+                    </div>
+                    <p className="range-desc">Each line represents a trial. Lines are colored by objective value (green = best, red = worst). Hover for details.</p>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={W} height={H} style={{ display: "block" }}>
+                        {/* Axis lines + labels */}
+                        {paramBounds.map((pb, i) => {
+                          const x = padL + i * axisSpacing;
+                          return (
+                            <g key={pb.name}>
+                              <line x1={x} y1={padT} x2={x} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                              <text x={x} y={padT + plotH + 16} textAnchor="middle" fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                                {pb.name.length > 10 ? pb.name.slice(0, 9) + "…" : pb.name}
+                              </text>
+                              <text x={x} y={padT - 6} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                                {pb.max.toPrecision(3)}
+                              </text>
+                              <text x={x} y={padT + plotH + 30} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                                {pb.min.toPrecision(3)}
+                              </text>
+                            </g>
+                          );
+                        })}
+                        {/* Trial polylines */}
+                        {trials.map((trial, ti) => {
+                          const objVal = Number(trial.kpis[objKey]) || 0;
+                          const pts = paramBounds.map((pb, i) => {
+                            const val = Number(trial.parameters[pb.name]) || 0;
+                            const y = padT + plotH - ((val - pb.min) / pb.range) * plotH;
+                            const x = padL + i * axisSpacing;
+                            return `${x.toFixed(1)},${y.toFixed(1)}`;
+                          });
+                          return (
+                            <polyline
+                              key={ti}
+                              points={pts.join(" ")}
+                              fill="none"
+                              stroke={trialColor(objVal)}
+                              strokeWidth="1.2"
+                              strokeLinejoin="round"
+                              className="pcoord-line"
+                            >
+                              <title>Trial #{trial.iteration} — {objKey}: {objVal.toFixed(4)}</title>
+                            </polyline>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                    <div className="pcoord-legend">
+                      <span className="pcoord-legend-item"><span className="pcoord-dot" style={{ background: "rgba(34,197,94,0.8)" }} /> Best</span>
+                      <span className="pcoord-legend-item"><span className="pcoord-dot" style={{ background: "rgba(234,179,8,0.8)" }} /> Mid</span>
+                      <span className="pcoord-legend-item"><span className="pcoord-dot" style={{ background: "rgba(239,68,68,0.8)" }} /> Worst</span>
                     </div>
                   </div>
                 );
@@ -2593,6 +2842,86 @@ export default function Workspace() {
                   <p className="empty-state">No experiments recorded yet.</p>
                 )}
               </div>
+
+              {/* Statistical Quick-Compare */}
+              {trials.length >= 8 && (() => {
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const allVals = trials.map(t => Number(t.kpis[objKey]) || 0).sort((a, b) => a - b);
+                const q25idx = Math.floor(allVals.length * 0.25);
+                const q75idx = Math.ceil(allVals.length * 0.75);
+                const topVals = allVals.slice(0, q25idx); // best 25% (lowest for minimize)
+                const bottomVals = allVals.slice(q75idx); // worst 25%
+                const stats = (vals: number[]) => {
+                  if (vals.length === 0) return { mean: 0, std: 0, min: 0, max: 0, n: 0 };
+                  const n = vals.length;
+                  const mean = vals.reduce((a, b) => a + b, 0) / n;
+                  const variance = vals.reduce((a, v) => a + (v - mean) ** 2, 0) / n;
+                  return { mean, std: Math.sqrt(variance), min: Math.min(...vals), max: Math.max(...vals), n };
+                };
+                const topS = stats(topVals);
+                const botS = stats(bottomVals);
+                // Cohen's d effect size
+                const pooledStd = Math.sqrt(((topS.std ** 2) * topS.n + (botS.std ** 2) * botS.n) / (topS.n + botS.n));
+                const cohenD = pooledStd > 0 ? Math.abs(topS.mean - botS.mean) / pooledStd : 0;
+                const effectLabel = cohenD > 0.8 ? "Large" : cohenD > 0.5 ? "Medium" : cohenD > 0.2 ? "Small" : "Negligible";
+                const effectColor = cohenD > 0.8 ? "#22c55e" : cohenD > 0.5 ? "#eab308" : "#94a3b8";
+                // Improvement %
+                const improvement = botS.mean !== 0 ? ((botS.mean - topS.mean) / Math.abs(botS.mean) * 100) : 0;
+
+                return (
+                  <div className="card stat-compare-card">
+                    <div className="stat-compare-header" onClick={() => setShowStatCompare(p => !p)} style={{ cursor: "pointer" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <BarChart2 size={16} style={{ color: "var(--color-primary)" }} />
+                        <h2 style={{ margin: 0 }}>Statistical Quick-Compare</h2>
+                        <span className="stat-compare-badge" style={{ background: effectColor }}>{effectLabel} effect</span>
+                      </div>
+                      <ChevronRight size={16} style={{ transform: showStatCompare ? "rotate(90deg)" : "none", transition: "transform 0.2s", color: "var(--color-text-muted)" }} />
+                    </div>
+                    {showStatCompare && (
+                      <div className="stat-compare-body">
+                        <p className="range-desc" style={{ marginBottom: "12px" }}>Comparing best 25% of trials vs worst 25% by {objKey}.</p>
+                        <div className="stat-compare-grid">
+                          <div className="stat-compare-group stat-compare-top">
+                            <div className="stat-compare-group-title">Best 25% ({topS.n} trials)</div>
+                            <div className="stat-compare-row">
+                              <span>Mean</span><span className="mono">{topS.mean.toFixed(4)}</span>
+                            </div>
+                            <div className="stat-compare-row">
+                              <span>Std Dev</span><span className="mono">{topS.std.toFixed(4)}</span>
+                            </div>
+                            <div className="stat-compare-row">
+                              <span>Range</span><span className="mono">[{topS.min.toFixed(4)}, {topS.max.toFixed(4)}]</span>
+                            </div>
+                          </div>
+                          <div className="stat-compare-group stat-compare-bottom">
+                            <div className="stat-compare-group-title">Worst 25% ({botS.n} trials)</div>
+                            <div className="stat-compare-row">
+                              <span>Mean</span><span className="mono">{botS.mean.toFixed(4)}</span>
+                            </div>
+                            <div className="stat-compare-row">
+                              <span>Std Dev</span><span className="mono">{botS.std.toFixed(4)}</span>
+                            </div>
+                            <div className="stat-compare-row">
+                              <span>Range</span><span className="mono">[{botS.min.toFixed(4)}, {botS.max.toFixed(4)}]</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="stat-compare-summary">
+                          <div className="stat-compare-row">
+                            <span>Effect Size (Cohen's d)</span>
+                            <span className="mono" style={{ color: effectColor, fontWeight: 600 }}>{cohenD.toFixed(3)} ({effectLabel})</span>
+                          </div>
+                          <div className="stat-compare-row">
+                            <span>Improvement</span>
+                            <span className="mono" style={{ fontWeight: 600 }}>{improvement > 0 ? "+" : ""}{improvement.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Trial Comparison Modal */}
               {showCompareModal && compareSet.size >= 2 && (() => {
@@ -4499,6 +4828,202 @@ export default function Workspace() {
           background: var(--color-primary);
           margin-left: 4px;
           vertical-align: middle;
+        }
+
+        /* ── Parallel Coordinates Plot ── */
+        .pcoord-line {
+          transition: opacity 0.15s;
+        }
+        .pcoord-line:hover {
+          stroke-width: 2.5 !important;
+          opacity: 1 !important;
+        }
+        svg:has(.pcoord-line:hover) .pcoord-line:not(:hover) {
+          opacity: 0.15 !important;
+        }
+        .pcoord-legend {
+          display: flex;
+          justify-content: center;
+          gap: 16px;
+          margin-top: 8px;
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+        }
+        .pcoord-legend-item {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .pcoord-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
+        }
+
+        /* ── Statistical Quick-Compare ── */
+        .stat-compare-card {}
+        .stat-compare-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .stat-compare-badge {
+          font-size: 0.7rem;
+          font-weight: 600;
+          padding: 2px 8px;
+          border-radius: 10px;
+          color: white;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        .stat-compare-body {
+          margin-top: 12px;
+        }
+        .stat-compare-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+        .stat-compare-group {
+          padding: 10px 14px;
+          border-radius: 8px;
+          border: 1px solid var(--color-border);
+        }
+        .stat-compare-top {
+          background: rgba(34, 197, 94, 0.04);
+          border-color: rgba(34, 197, 94, 0.2);
+        }
+        .stat-compare-bottom {
+          background: rgba(239, 68, 68, 0.04);
+          border-color: rgba(239, 68, 68, 0.2);
+        }
+        .stat-compare-group-title {
+          font-weight: 600;
+          font-size: 0.82rem;
+          margin-bottom: 6px;
+        }
+        .stat-compare-top .stat-compare-group-title { color: #22c55e; }
+        .stat-compare-bottom .stat-compare-group-title { color: #ef4444; }
+        .stat-compare-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.82rem;
+          padding: 3px 0;
+        }
+        .stat-compare-summary {
+          padding: 10px 14px;
+          background: var(--color-bg);
+          border-radius: 8px;
+          border: 1px solid var(--color-border);
+        }
+
+        /* ── Experiment Cost / Time Tracker ── */
+        .cost-tracker-card {}
+        .cost-tracker-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+        .cost-tracker-item {
+          text-align: center;
+          padding: 8px;
+          background: var(--color-bg);
+          border-radius: 8px;
+          border: 1px solid var(--color-border);
+        }
+        .cost-tracker-label {
+          display: block;
+          font-size: 0.72rem;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: var(--color-text-muted);
+          margin-bottom: 4px;
+        }
+        .cost-tracker-value {
+          display: block;
+          font-size: 1.1rem;
+          font-weight: 700;
+          font-family: var(--font-mono);
+        }
+        .cost-tracker-bar-section { margin-top: 4px; }
+        .cost-tracker-bar-header {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.78rem;
+          margin-bottom: 4px;
+          color: var(--color-text-muted);
+        }
+        .cost-tracker-bar {
+          height: 8px;
+          background: var(--color-border);
+          border-radius: 4px;
+          overflow: hidden;
+        }
+        .cost-tracker-bar-fill {
+          height: 100%;
+          border-radius: 4px;
+          transition: width 0.4s ease;
+        }
+        .cost-tracker-warn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-top: 8px;
+          font-size: 0.78rem;
+          color: var(--color-yellow, #eab308);
+          font-weight: 500;
+        }
+
+        /* ── Key Findings Summary ── */
+        .findings-card {}
+        .findings-badge {
+          font-size: 0.72rem;
+          font-weight: 700;
+          padding: 2px 7px;
+          border-radius: 10px;
+          background: var(--color-primary);
+          color: white;
+        }
+        .findings-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .findings-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 10px 14px;
+          border-radius: 8px;
+          font-size: 0.84rem;
+          line-height: 1.5;
+          border-left: 3px solid transparent;
+        }
+        .findings-success {
+          background: rgba(34, 197, 94, 0.06);
+          border-left-color: #22c55e;
+        }
+        .findings-info {
+          background: rgba(59, 130, 246, 0.06);
+          border-left-color: #3b82f6;
+        }
+        .findings-warning {
+          background: rgba(234, 179, 8, 0.06);
+          border-left-color: #eab308;
+        }
+        .findings-icon {
+          flex-shrink: 0;
+          margin-top: 2px;
+          color: var(--color-text-muted);
+        }
+        .findings-success .findings-icon { color: #22c55e; }
+        .findings-info .findings-icon { color: #3b82f6; }
+        .findings-warning .findings-icon { color: #eab308; }
+        .findings-text {
+          color: var(--color-text);
         }
 
         /* ── Radar Chart ── */
