@@ -64,6 +64,10 @@ import {
   Eye,
   Shuffle,
   PieChart,
+  Radar,
+  GitBranch,
+  BoxSelect,
+  Compass,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { useToast } from "../components/Toast";
@@ -1622,6 +1626,115 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Objective Distribution by Window */}
+              {trials.length >= 15 && (() => {
+                const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const objKey = Object.keys(chrono[0].kpis)[0];
+                const vals = chrono.map(t => Number(t.kpis[objKey]) || 0);
+                const n = vals.length;
+
+                // Split into 3 equal windows
+                const windowSize = Math.ceil(n / 3);
+                const windows = [
+                  { label: "Early", sublabel: `1–${Math.min(windowSize, n)}`, vals: vals.slice(0, windowSize), color: "rgba(239,68,68,0.5)" },
+                  { label: "Mid", sublabel: `${windowSize + 1}–${Math.min(windowSize * 2, n)}`, vals: vals.slice(windowSize, windowSize * 2), color: "rgba(234,179,8,0.5)" },
+                  { label: "Late", sublabel: `${windowSize * 2 + 1}–${n}`, vals: vals.slice(windowSize * 2), color: "rgba(34,197,94,0.5)" },
+                ].filter(w => w.vals.length > 0);
+
+                // Compute stats per window
+                const windowStats = windows.map(w => {
+                  const sorted = [...w.vals].sort((a, b) => a - b);
+                  return {
+                    ...w,
+                    min: sorted[0],
+                    max: sorted[sorted.length - 1],
+                    q1: sorted[Math.floor(sorted.length * 0.25)],
+                    median: sorted[Math.floor(sorted.length * 0.5)],
+                    q3: sorted[Math.floor(sorted.length * 0.75)],
+                    mean: w.vals.reduce((a, b) => a + b, 0) / w.vals.length,
+                  };
+                });
+
+                const allMin = Math.min(...windowStats.map(w => w.min));
+                const allMax = Math.max(...windowStats.map(w => w.max));
+                const valRange = allMax - allMin || 1;
+
+                // Detect trend: compare early vs late median
+                const earlyMed = windowStats[0]?.median ?? 0;
+                const lateMed = windowStats[windowStats.length - 1]?.median ?? 0;
+                const improving = lateMed < earlyMed;
+                const improvePct = earlyMed !== 0 ? (((earlyMed - lateMed) / Math.abs(earlyMed)) * 100).toFixed(1) : "0";
+
+                const W = 460, H = 140, padL = 50, padR = 12, padT = 10, padB = 28;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const boxWidth = Math.min(60, plotW / (windows.length * 2));
+                const scaleY = (v: number) => padT + (1 - (v - allMin) / valRange) * plotH;
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <BoxSelect size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Distribution by Window</h2>
+                      <span className={`findings-badge findings-badge-${improving ? "success" : "warning"}`} style={{ marginLeft: "auto" }}>
+                        {improving ? `${improvePct}% shift` : "Not improving"}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Box plots of {objKey} for early, mid, and late trial windows. A leftward/downward shift indicates improving outcomes.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Horizontal grid lines */}
+                      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+                        <line key={f} x1={padL} y1={padT + f * plotH} x2={padL + plotW} y2={padT + f * plotH}
+                          stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                      ))}
+                      {/* Y-axis labels */}
+                      {[0, 0.5, 1].map(f => (
+                        <text key={f} x={padL - 4} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                          {(allMin + f * valRange).toFixed(3)}
+                        </text>
+                      ))}
+                      {/* Box plots */}
+                      {windowStats.map((ws, wi) => {
+                        const cx = padL + ((wi + 0.5) / windows.length) * plotW;
+                        const x1 = cx - boxWidth / 2;
+                        return (
+                          <g key={wi}>
+                            {/* Whisker: min to max */}
+                            <line x1={cx} y1={scaleY(ws.min)} x2={cx} y2={scaleY(ws.max)} stroke={ws.color.replace("0.5", "0.8")} strokeWidth="1" />
+                            {/* Min and max caps */}
+                            <line x1={cx - 8} y1={scaleY(ws.min)} x2={cx + 8} y2={scaleY(ws.min)} stroke={ws.color.replace("0.5", "0.8")} strokeWidth="1" />
+                            <line x1={cx - 8} y1={scaleY(ws.max)} x2={cx + 8} y2={scaleY(ws.max)} stroke={ws.color.replace("0.5", "0.8")} strokeWidth="1" />
+                            {/* Box: Q1 to Q3 */}
+                            <rect x={x1} y={scaleY(ws.q3)} width={boxWidth} height={Math.max(1, scaleY(ws.q1) - scaleY(ws.q3))}
+                              fill={ws.color} stroke={ws.color.replace("0.5", "0.9")} strokeWidth="1" rx="2" />
+                            {/* Median line */}
+                            <line x1={x1} y1={scaleY(ws.median)} x2={x1 + boxWidth} y2={scaleY(ws.median)}
+                              stroke={ws.color.replace("0.5", "1")} strokeWidth="2" />
+                            {/* Label */}
+                            <text x={cx} y={H - 8} textAnchor="middle" fontSize="10" fontWeight="500" fill="var(--color-text-secondary)">
+                              {ws.label}
+                            </text>
+                            <text x={cx} y={H - 0} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">
+                              {ws.sublabel}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
+                      {windowStats.map((ws, i) => (
+                        <span key={i} className="efficiency-legend-item" style={{ fontFamily: "var(--font-mono)", fontSize: "0.72rem" }}>
+                          <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: ws.color, marginRight: 4, verticalAlign: "middle" }} />
+                          {ws.label}: med={ws.median.toFixed(4)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Auto-generated Findings Summary */}
               {trials.length >= 5 && (() => {
                 const findings: Array<{ icon: string; text: string; type: "success" | "info" | "warning" }> = [];
@@ -2612,6 +2725,99 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Parameter Space Sampling Density */}
+              {trials.length >= 10 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                if (paramNames.length < 2) return null;
+                const xParam = paramNames[0];
+                const yParam = paramNames[1];
+                const xVals = trials.map(t => Number(t.parameters[xParam]) || 0);
+                const yVals = trials.map(t => Number(t.parameters[yParam]) || 0);
+                const xMin = Math.min(...xVals), xMax = Math.max(...xVals);
+                const yMin = Math.min(...yVals), yMax = Math.max(...yVals);
+                const xRange = xMax - xMin || 1;
+                const yRange = yMax - yMin || 1;
+                const res = 12;
+                const W = 380, H = 320, padL = 48, padR = 14, padT = 10, padB = 36;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const cellW = plotW / res;
+                const cellH = plotH / res;
+
+                // Count trials per cell
+                const density: number[][] = Array.from({ length: res }, () => Array(res).fill(0));
+                for (let i = 0; i < trials.length; i++) {
+                  const gx = Math.min(Math.floor(((xVals[i] - xMin) / xRange) * res), res - 1);
+                  const gy = Math.min(Math.floor(((yVals[i] - yMin) / yRange) * res), res - 1);
+                  density[gy][gx]++;
+                }
+                const maxDensity = Math.max(...density.flat());
+                const emptyCells = density.flat().filter(d => d === 0).length;
+                const totalCells = res * res;
+                const coveragePct = ((1 - emptyCells / totalCells) * 100).toFixed(0);
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Radar size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Sampling Density</h2>
+                      <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginLeft: "auto", fontFamily: "var(--font-mono)" }}>
+                        {coveragePct}% cells sampled
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      Trial density across the {xParam} × {yParam} space. Dark cells = well-sampled, light/white = gaps to explore.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {density.map((row, gy) =>
+                        row.map((count, gx) => {
+                          const opacity = count > 0 ? 0.15 + (count / maxDensity) * 0.75 : 0;
+                          return (
+                            <rect
+                              key={`${gy}-${gx}`}
+                              x={padL + gx * cellW}
+                              y={padT + gy * cellH}
+                              width={cellW - 0.5}
+                              height={cellH - 0.5}
+                              rx="2"
+                              fill={count > 0 ? "var(--color-primary)" : "var(--color-border)"}
+                              opacity={count > 0 ? opacity : 0.3}
+                              stroke="var(--color-bg)"
+                              strokeWidth="0.5"
+                            >
+                              <title>{xParam}:[{(xMin + gx * xRange / res).toFixed(2)},{(xMin + (gx + 1) * xRange / res).toFixed(2)}] × {yParam}:[{(yMin + gy * yRange / res).toFixed(2)},{(yMin + (gy + 1) * yRange / res).toFixed(2)}] — {count} trial{count !== 1 ? "s" : ""}</title>
+                            </rect>
+                          );
+                        })
+                      )}
+                      {/* Gap markers for empty cells */}
+                      {density.flatMap((row, gy) =>
+                        row.map((count, gx) =>
+                          count === 0 ? (
+                            <text key={`gap-${gy}-${gx}`} x={padL + (gx + 0.5) * cellW} y={padT + (gy + 0.5) * cellH + 3} textAnchor="middle" fontSize="7" fill="var(--color-text-muted)" opacity="0.4">?</text>
+                          ) : null
+                        )
+                      )}
+                      {/* Axes */}
+                      <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      {[0, 0.5, 1].map(f => (
+                        <Fragment key={`xl-${f}`}>
+                          <text x={padL + f * plotW} y={H - 18} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">{(xMin + f * xRange).toFixed(2)}</text>
+                          <text x={padL - 4} y={padT + f * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">{(yMin + f * yRange).toFixed(2)}</text>
+                        </Fragment>
+                      ))}
+                      <text x={padL + plotW / 2} y={H - 4} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">{xParam}</text>
+                      <text x={12} y={padT + plotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" transform={`rotate(-90, 12, ${padT + plotH / 2})`}>{yParam}</text>
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-text-muted)", maxWidth: `${W}px`, padding: "2px 0" }}>
+                      <span>{emptyCells} empty cells (gaps)</span>
+                      <span>Max density: {maxDensity} trials/cell</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Surrogate Landscape Heatmap */}
               {trials.length >= 10 && (() => {
                 const paramNames = Object.keys(trials[0].parameters);
@@ -2828,6 +3034,74 @@ export default function Workspace() {
                   </div>
                 )}
               </div>
+
+              {/* Suggestion Context Cards */}
+              {trials.length >= 3 && (() => {
+                const objKey = Object.keys(trials[0].kpis)[0];
+                const objVals = trials.map(t => Number(t.kpis[objKey]) || 0);
+                const bestVal = Math.min(...objVals);
+                const meanVal = objVals.reduce((a, b) => a + b, 0) / objVals.length;
+                const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                const recentN = Math.min(10, chrono.length);
+                const recentTrials = chrono.slice(-recentN);
+                const recentBest = Math.min(...recentTrials.map(t => Number(t.kpis[objKey]) || 0));
+                const recentImproving = recentBest < meanVal;
+
+                // Parameter diversity: coefficient of variation across parameters
+                const paramNames = Object.keys(trials[0].parameters);
+                const paramDiversity = paramNames.length > 0 ? (() => {
+                  let totalCv = 0;
+                  for (const p of paramNames) {
+                    const pVals = recentTrials.map(t => Number(t.parameters[p]) || 0);
+                    const pMean = pVals.reduce((a, b) => a + b, 0) / pVals.length;
+                    const pStd = Math.sqrt(pVals.reduce((a, v) => a + (v - pMean) ** 2, 0) / pVals.length);
+                    totalCv += pMean !== 0 ? Math.abs(pStd / pMean) : 0;
+                  }
+                  return Math.min((totalCv / paramNames.length) * 100, 100);
+                })() : 0;
+
+                const phase = suggestions?.phase ?? campaign.phases[campaign.phases.length - 1]?.name ?? "Unknown";
+                const contextItems = [
+                  { icon: <Trophy size={14} />, label: "Best Found", value: bestVal.toFixed(4), sub: objKey },
+                  { icon: <Target size={14} />, label: "Recent Trend", value: recentImproving ? "Improving" : "Plateaued", sub: `Last ${recentN} trials` },
+                  { icon: <Compass size={14} />, label: "Param Diversity", value: `${paramDiversity.toFixed(0)}%`, sub: "Recent spread" },
+                  { icon: <Rocket size={14} />, label: "Phase", value: String(phase).charAt(0).toUpperCase() + String(phase).slice(1), sub: `${trials.length} trials total` },
+                ];
+
+                return (
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                    gap: "10px",
+                    marginBottom: "16px",
+                  }}>
+                    {contextItems.map((item, i) => (
+                      <div key={i} style={{
+                        background: "var(--color-card-bg)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: "8px",
+                        padding: "10px 12px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "4px",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--color-text-muted)" }}>
+                          {item.icon}
+                          <span style={{ fontSize: "0.72rem", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            {item.label}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "1.1rem", fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--color-text-primary)" }}>
+                          {item.value}
+                        </div>
+                        <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)" }}>
+                          {item.sub}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
@@ -3189,6 +3463,166 @@ export default function Workspace() {
                     <div className="efficiency-legend" style={{ maxWidth: `${W}px` }}>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(59,130,246,0.7)", marginRight: 4, verticalAlign: "middle" }} />Explore ({exploreCount})</span>
                       <span className="efficiency-legend-item"><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "rgba(249,115,22,0.65)", marginRight: 4, verticalAlign: "middle" }} />Exploit ({exploitCount})</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Trial Clustering Visualization */}
+              {trials.length >= 12 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                if (paramNames.length < 2) return null;
+                const objKey = Object.keys(trials[0].kpis)[0];
+
+                // Normalize parameter values to [0,1]
+                const mins = paramNames.map(p => Math.min(...trials.map(t => Number(t.parameters[p]) || 0)));
+                const maxs = paramNames.map(p => Math.max(...trials.map(t => Number(t.parameters[p]) || 0)));
+                const ranges = paramNames.map((_, i) => maxs[i] - mins[i] || 1);
+                const normalized = trials.map(t =>
+                  paramNames.map((p, i) => ((Number(t.parameters[p]) || 0) - mins[i]) / ranges[i])
+                );
+
+                // Simple k-means clustering (k=3)
+                const k = Math.min(3, Math.floor(trials.length / 4));
+                // Initialize centroids via spread
+                const centroids: number[][] = [];
+                for (let c = 0; c < k; c++) {
+                  const idx = Math.floor((c / k) * normalized.length);
+                  centroids.push([...normalized[idx]]);
+                }
+
+                // Run 15 iterations of k-means
+                const assignments = new Array(trials.length).fill(0);
+                for (let iter = 0; iter < 15; iter++) {
+                  // Assign
+                  for (let i = 0; i < normalized.length; i++) {
+                    let bestDist = Infinity;
+                    for (let c = 0; c < k; c++) {
+                      let dist = 0;
+                      for (let d = 0; d < paramNames.length; d++) {
+                        dist += (normalized[i][d] - centroids[c][d]) ** 2;
+                      }
+                      if (dist < bestDist) { bestDist = dist; assignments[i] = c; }
+                    }
+                  }
+                  // Update centroids
+                  for (let c = 0; c < k; c++) {
+                    const members = normalized.filter((_, i) => assignments[i] === c);
+                    if (members.length === 0) continue;
+                    for (let d = 0; d < paramNames.length; d++) {
+                      centroids[c][d] = members.reduce((a, m) => a + m[d], 0) / members.length;
+                    }
+                  }
+                }
+
+                // Cluster stats
+                const clusterColors = ["rgba(59,130,246,0.7)", "rgba(239,68,68,0.65)", "rgba(34,197,94,0.7)"];
+                const clusterLabels = ["Cluster A", "Cluster B", "Cluster C"];
+                const clusterStats = Array.from({ length: k }, (_, c) => {
+                  const members = trials.filter((_, i) => assignments[i] === c);
+                  const objVals = members.map(t => Number(t.kpis[objKey]) || 0);
+                  return {
+                    count: members.length,
+                    bestObj: objVals.length > 0 ? Math.min(...objVals) : Infinity,
+                    meanObj: objVals.length > 0 ? objVals.reduce((a, b) => a + b, 0) / objVals.length : 0,
+                  };
+                });
+
+                // Plot using first two parameters
+                const xParam = paramNames[0];
+                const yParam = paramNames[1];
+                const W = 460, H = 200, padL = 50, padR = 12, padT = 10, padB = 32;
+                const plotW = W - padL - padR;
+                const plotH = H - padT - padB;
+                const xVals = trials.map(t => Number(t.parameters[xParam]) || 0);
+                const yVals = trials.map(t => Number(t.parameters[yParam]) || 0);
+                const xMin = Math.min(...xVals), xMax = Math.max(...xVals);
+                const yMin = Math.min(...yVals), yMax = Math.max(...yVals);
+                const xRange = xMax - xMin || 1;
+                const yRange = yMax - yMin || 1;
+                const sx = (v: number) => padL + ((v - xMin) / xRange) * plotW;
+                const sy = (v: number) => padT + (1 - (v - yMin) / yRange) * plotH;
+
+                return (
+                  <div className="card">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <GitBranch size={16} style={{ color: "var(--color-primary)" }} />
+                      <h2 style={{ margin: 0 }}>Trial Clusters</h2>
+                      <span style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginLeft: "auto", fontFamily: "var(--font-mono)" }}>
+                        k={k} · {paramNames.length}D
+                      </span>
+                    </div>
+                    <p style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", margin: "0 0 8px" }}>
+                      K-means clustering of trials in parameter space. Colors indicate cluster membership, diamonds mark centroids.
+                    </p>
+                    <svg width={W} height={H} style={{ display: "block", width: "100%", maxWidth: `${W}px` }}>
+                      {/* Grid */}
+                      {[0, 0.5, 1].map(f => (
+                        <Fragment key={f}>
+                          <line x1={padL} y1={padT + f * plotH} x2={padL + plotW} y2={padT + f * plotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                          <line x1={padL + f * plotW} y1={padT} x2={padL + f * plotW} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="0.5" strokeDasharray="3,3" />
+                        </Fragment>
+                      ))}
+                      {/* Data points */}
+                      {trials.map((t, i) => (
+                        <circle
+                          key={i}
+                          cx={sx(xVals[i])}
+                          cy={sy(yVals[i])}
+                          r="3.5"
+                          fill={clusterColors[assignments[i] % k]}
+                          stroke="white"
+                          strokeWidth="0.5"
+                          opacity="0.8"
+                        >
+                          <title>Trial #{t.iteration}: {clusterLabels[assignments[i]]} · {objKey}={Number(t.kpis[objKey]).toFixed(4)}</title>
+                        </circle>
+                      ))}
+                      {/* Centroids as diamonds */}
+                      {centroids.map((c, ci) => {
+                        const cx = padL + c[0] * plotW;
+                        const cy = padT + (1 - c[1]) * plotH;
+                        const s = 6;
+                        return (
+                          <polygon
+                            key={ci}
+                            points={`${cx},${cy - s} ${cx + s},${cy} ${cx},${cy + s} ${cx - s},${cy}`}
+                            fill={clusterColors[ci % k]}
+                            stroke="white"
+                            strokeWidth="1.5"
+                          >
+                            <title>{clusterLabels[ci]}: {clusterStats[ci].count} trials, best={clusterStats[ci].bestObj.toFixed(4)}</title>
+                          </polygon>
+                        );
+                      })}
+                      {/* Axes */}
+                      <line x1={padL} y1={padT} x2={padL} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      <line x1={padL} y1={padT + plotH} x2={padL + plotW} y2={padT + plotH} stroke="var(--color-border)" strokeWidth="1" />
+                      {/* Axis labels */}
+                      {[0, 0.5, 1].map(f => (
+                        <Fragment key={`a${f}`}>
+                          <text x={padL + f * plotW} y={H - 8} textAnchor="middle" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                            {(xMin + f * xRange).toFixed(2)}
+                          </text>
+                          <text x={padL - 4} y={padT + (1 - f) * plotH + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)">
+                            {(yMin + f * yRange).toFixed(2)}
+                          </text>
+                        </Fragment>
+                      ))}
+                      <text x={padL + plotW / 2} y={H - 0} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)">{xParam}</text>
+                      <text x={10} y={padT + plotH / 2} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" transform={`rotate(-90, 10, ${padT + plotH / 2})`}>{yParam}</text>
+                    </svg>
+                    {/* Cluster summary */}
+                    <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginTop: "8px" }}>
+                      {clusterStats.map((cs, ci) => (
+                        <div key={ci} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem" }}>
+                          <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: clusterColors[ci % k] }} />
+                          <span style={{ fontWeight: 500 }}>{clusterLabels[ci]}</span>
+                          <span style={{ color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                            n={cs.count} · best={cs.bestObj.toFixed(4)} · avg={cs.meanObj.toFixed(4)}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
