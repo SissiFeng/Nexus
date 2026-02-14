@@ -51,10 +51,10 @@ export default class ErrorBoundary extends Component<
             style={{
               maxWidth: "480px",
               width: "100%",
-              background: "#ffffff",
+              background: "var(--color-surface)",
               borderRadius: "12px",
-              border: "1px solid #e2e8f0",
-              boxShadow: "0 4px 24px rgba(0, 0, 0, 0.06)",
+              border: "1px solid var(--color-border)",
+              boxShadow: "var(--shadow-md)",
               padding: "40px 32px",
               textAlign: "center",
             }}
@@ -64,7 +64,7 @@ export default class ErrorBoundary extends Component<
                 width: "56px",
                 height: "56px",
                 borderRadius: "50%",
-                background: "#fef2f2",
+                background: "var(--color-error-banner-bg)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -78,7 +78,7 @@ export default class ErrorBoundary extends Component<
               style={{
                 fontSize: "1.25rem",
                 fontWeight: 600,
-                color: "#1a202c",
+                color: "var(--color-text)",
                 margin: "0 0 8px",
               }}
             >
@@ -87,7 +87,7 @@ export default class ErrorBoundary extends Component<
             <p
               style={{
                 fontSize: "0.9rem",
-                color: "#718096",
+                color: "var(--color-text-muted)",
                 margin: "0 0 24px",
                 lineHeight: 1.5,
               }}
@@ -96,23 +96,13 @@ export default class ErrorBoundary extends Component<
             </p>
             <button
               onClick={this.handleReset}
+              className="btn btn-primary"
               style={{
                 padding: "10px 24px",
                 fontSize: "0.9rem",
                 fontWeight: 500,
-                color: "#ffffff",
-                background: "#3b82f6",
-                border: "none",
                 borderRadius: "8px",
-                cursor: "pointer",
-                transition: "background 0.15s",
               }}
-              onMouseOver={(e) =>
-                ((e.target as HTMLButtonElement).style.background = "#2563eb")
-              }
-              onMouseOut={(e) =>
-                ((e.target as HTMLButtonElement).style.background = "#3b82f6")
-              }
             >
               Try Again
             </button>

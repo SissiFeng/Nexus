@@ -50,6 +50,14 @@ export interface Campaign {
   tags: string[];
   phases: { name: string; start: number; end: number }[];
   kpi_history: { iterations: number[]; values: number[] };
+  // Multi-objective support
+  objective_names?: string[];
+  observations?: Array<{
+    iteration: number;
+    parameters: Record<string, number>;
+    kpi_values: Record<string, number>;
+  }>;
+  objective_directions?: Record<string, string>;
 }
 
 export interface CampaignSummary {
@@ -59,6 +67,10 @@ export interface CampaignSummary {
   iteration: number;
   best_kpi: number | null;
   tags: string[];
+  created_at: number;
+  updated_at: number;
+  total_trials: number;
+  objective_names: string[];
 }
 
 export interface Trial {
@@ -135,6 +147,16 @@ export function resumeCampaign(campaignId: string): Promise<Campaign> {
 
 export function deleteCampaign(campaignId: string): Promise<void> {
   return request<void>(`/campaigns/${campaignId}`, { method: "DELETE" });
+}
+
+export function updateCampaignStatus(
+  campaignId: string,
+  status: string
+): Promise<CampaignSummary> {
+  return request<CampaignSummary>(`/campaigns/${campaignId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
 }
 
 export function fetchBatch(campaignId: string): Promise<Batch> {
@@ -477,4 +499,40 @@ export interface InsightsData {
 export function fetchInsights(campaignId: string, topN?: number): Promise<InsightsData> {
   const qs = topN ? `?top_n=${topN}` : "";
   return request<InsightsData>(`/campaigns/${campaignId}/insights${qs}`);
+}
+
+/* ── Demo Datasets ── */
+
+export interface DemoDatasetSummary {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  filename: string;
+  row_count: number;
+  n_parameters: number;
+  n_objectives: number;
+  parameter_names: string[];
+  objective_names: string[];
+}
+
+export interface DemoDatasetDetail {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  columns: string[];
+  row_count: number;
+  rows_returned: number;
+  data: Array<Record<string, string>>;
+  mapping: ColumnMapping;
+}
+
+export function fetchDemoDatasets(): Promise<DemoDatasetSummary[]> {
+  return request<DemoDatasetSummary[]>("/demo-datasets");
+}
+
+export function fetchDemoDataset(datasetId: string, maxRows?: number): Promise<DemoDatasetDetail> {
+  const qs = maxRows ? `?max_rows=${maxRows}` : "";
+  return request<DemoDatasetDetail>(`/demo-datasets/${datasetId}${qs}`);
 }

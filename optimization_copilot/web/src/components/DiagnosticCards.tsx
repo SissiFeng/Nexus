@@ -123,7 +123,7 @@ export default function DiagnosticCards({ diagnostics, tooltips }: DiagnosticCar
         return (
           <div key={key} className="stat-card" title={tooltips?.[key] ?? config.description}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-              <Icon size={18} color="#718096" />
+              <Icon size={18} style={{ color: "var(--color-text-muted)" }} />
               <span className="stat-label" style={{ textTransform: 'none', margin: 0 }}>
                 {config.label}
               </span>
@@ -143,7 +143,7 @@ export default function DiagnosticCards({ diagnostics, tooltips }: DiagnosticCar
             >
               {config.format(value)}
             </div>
-            <div style={{ fontSize: '0.78rem', color: '#718096' }}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
               {config.description}
             </div>
           </div>

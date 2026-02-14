@@ -21,6 +21,7 @@ from optimization_copilot.api.schemas import (
     StatusResponse,
     SubmitTrialsRequest,
     TrialResponse,
+    UpdateCampaignStatusRequest,
 )
 from optimization_copilot.platform.campaign_manager import InvalidTransitionError
 from optimization_copilot.platform.campaign_runner import RunnerError
@@ -31,6 +32,11 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 
 def _to_response(record: CampaignRecord) -> CampaignResponse:
+    objective_names = [
+        obj.get("name", "")
+        for obj in record.spec.get("objectives", [])
+        if obj.get("name")
+    ]
     return CampaignResponse(
         campaign_id=record.campaign_id,
         name=record.name,
@@ -42,6 +48,7 @@ def _to_response(record: CampaignRecord) -> CampaignResponse:
         total_trials=record.total_trials,
         error_message=record.error_message,
         tags=record.tags,
+        objective_names=objective_names,
     )
 
 
@@ -49,6 +56,11 @@ def _to_response(record: CampaignRecord) -> CampaignResponse:
 def create_campaign(req: CreateCampaignRequest) -> CampaignDetailResponse:
     manager = get_manager()
     record = manager.create(spec_dict=req.spec, name=req.name, tags=req.tags)
+    obj_names = [
+        obj.get("name", "")
+        for obj in record.spec.get("objectives", [])
+        if obj.get("name")
+    ]
     return CampaignDetailResponse(
         campaign_id=record.campaign_id,
         name=record.name,
@@ -58,6 +70,7 @@ def create_campaign(req: CreateCampaignRequest) -> CampaignDetailResponse:
         updated_at=record.updated_at,
         tags=record.tags,
         metadata=record.metadata,
+        objective_names=obj_names,
     )
 
 
@@ -85,6 +98,7 @@ def get_campaign(campaign_id: str) -> CampaignDetailResponse:
     best_parameters = None
     phases: list[dict] = []
     kpi_history: dict = {"iterations": [], "values": []}
+    observations: list[dict] = []
 
     # Try to extract best_parameters from result
     result = workspace.load_result(campaign_id)
@@ -111,17 +125,24 @@ def get_campaign(campaign_id: str) -> CampaignDetailResponse:
                 "end": end_iter,
             })
 
-        # Build kpi_history from completed_trials
+        # Build kpi_history and observations from completed_trials
         completed = checkpoint.get("completed_trials", [])
         iter_kpi_pairs: list[tuple[int, float]] = []
         for trial in completed:
             trial_iter = trial.get("iteration", 0)
             kpi_values = trial.get("kpi_values", {})
+            trial_params = trial.get("parameters", {})
             if kpi_values:
                 # Use the first KPI value as the primary metric
                 primary_value = next(iter(kpi_values.values()), None)
                 if primary_value is not None:
                     iter_kpi_pairs.append((trial_iter, primary_value))
+                # Build full observation for multi-objective support
+                observations.append({
+                    "iteration": trial_iter,
+                    "parameters": trial_params,
+                    "kpi_values": kpi_values,
+                })
 
         # Sort by iteration and build the history arrays
         iter_kpi_pairs.sort(key=lambda p: p[0])
@@ -130,6 +151,21 @@ def get_campaign(campaign_id: str) -> CampaignDetailResponse:
                 "iterations": [p[0] for p in iter_kpi_pairs],
                 "values": [p[1] for p in iter_kpi_pairs],
             }
+
+    # Extract objective directions from spec
+    objective_directions: dict[str, str] = {}
+    spec_objectives = record.spec.get("objectives", [])
+    for obj in spec_objectives:
+        obj_name = obj.get("name", "")
+        obj_dir = obj.get("direction", "minimize")
+        if obj_name:
+            objective_directions[obj_name] = obj_dir
+
+    objective_names = [
+        obj.get("name", "")
+        for obj in spec_objectives
+        if obj.get("name")
+    ]
 
     return CampaignDetailResponse(
         campaign_id=record.campaign_id,
@@ -147,7 +183,38 @@ def get_campaign(campaign_id: str) -> CampaignDetailResponse:
         best_parameters=best_parameters,
         phases=phases,
         kpi_history=kpi_history,
+        observations=observations,
+        objective_directions=objective_directions,
+        objective_names=objective_names,
     )
+
+
+@router.patch("/{campaign_id}", response_model=CampaignResponse)
+def update_campaign_status(
+    campaign_id: str, req: UpdateCampaignStatusRequest
+) -> CampaignResponse:
+    """Update a campaign's status (archive / unarchive)."""
+    try:
+        manager = get_manager()
+        target_status = CampaignStatus(req.status)
+        record = manager.get(campaign_id)
+
+        if target_status == CampaignStatus.ARCHIVED:
+            manager.delete(campaign_id)  # delete() does soft-archive
+        elif target_status == CampaignStatus.DRAFT and record.status == CampaignStatus.ARCHIVED:
+            manager._transition(campaign_id, CampaignStatus.DRAFT)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot update status to '{req.status}' from '{record.status.value}'",
+            )
+
+        updated = manager.get(campaign_id)
+        return _to_response(updated)
+    except CampaignNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Campaign not found: {campaign_id}")
+    except InvalidTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.delete("/{campaign_id}", response_model=StatusResponse)

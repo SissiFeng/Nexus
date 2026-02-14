@@ -69,28 +69,28 @@ const CATEGORY_COLORS: Record<
   { bg: string; border: string; text: string; badge: string }
 > = {
   discovery: {
-    bg: "#f0f7ff",
-    border: "#3b82f6",
-    text: "#1e40af",
-    badge: "#dbeafe",
+    bg: "var(--color-insight-discovery-bg)",
+    border: "var(--color-insight-discovery-border)",
+    text: "var(--color-insight-discovery-text)",
+    badge: "var(--color-insight-discovery-badge)",
   },
   warning: {
-    bg: "#fff8f0",
-    border: "#f59e0b",
-    text: "#92400e",
-    badge: "#fef3c7",
+    bg: "var(--color-insight-warning-bg)",
+    border: "var(--color-insight-warning-border)",
+    text: "var(--color-insight-warning-text)",
+    badge: "var(--color-insight-warning-badge)",
   },
   recommendation: {
-    bg: "#f0fdf4",
-    border: "#22c55e",
-    text: "#166534",
-    badge: "#dcfce7",
+    bg: "var(--color-insight-recommendation-bg)",
+    border: "var(--color-insight-recommendation-border)",
+    text: "var(--color-insight-recommendation-text)",
+    badge: "var(--color-insight-recommendation-badge)",
   },
   trend: {
-    bg: "#faf5ff",
-    border: "#a855f7",
-    text: "#6b21a8",
-    badge: "#f3e8ff",
+    bg: "var(--color-insight-trend-bg)",
+    border: "var(--color-insight-trend-border)",
+    text: "var(--color-insight-trend-text)",
+    badge: "var(--color-insight-trend-badge)",
   },
 };
 
@@ -135,7 +135,7 @@ function InsightCards({ insights }: { insights: InsightMeta[] }) {
                 {ins.category}
               </span>
             </div>
-            <div style={{ color: "#4b5563", lineHeight: 1.4 }}>{ins.body}</div>
+            <div style={{ color: "var(--color-insight-body)", lineHeight: 1.4 }}>{ins.body}</div>
           </div>
         );
       })}
@@ -151,7 +151,7 @@ function CorrelationBars({ correlations }: { correlations: CorrelationMeta[] }) 
         style={{
           fontSize: "0.78rem",
           fontWeight: 600,
-          color: "#374151",
+          color: "var(--color-label-secondary)",
           marginBottom: "6px",
         }}
       >
@@ -182,7 +182,7 @@ function CorrelationBars({ correlations }: { correlations: CorrelationMeta[] }) 
               style={{
                 width: "90px",
                 textAlign: "right",
-                color: "#6b7280",
+                color: "var(--color-label-tertiary)",
                 flexShrink: 0,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -195,7 +195,7 @@ function CorrelationBars({ correlations }: { correlations: CorrelationMeta[] }) 
               style={{
                 flex: 1,
                 height: "12px",
-                background: "#f3f4f6",
+                background: "var(--color-bar-bg)",
                 borderRadius: "6px",
                 overflow: "hidden",
               }}
@@ -210,7 +210,7 @@ function CorrelationBars({ correlations }: { correlations: CorrelationMeta[] }) 
                 }}
               />
             </div>
-            <span style={{ width: "55px", color: "#374151", fontFamily: "monospace", fontSize: "0.75rem" }}>
+            <span style={{ width: "55px", color: "var(--color-label-secondary)", fontFamily: "monospace", fontSize: "0.75rem" }}>
               {c.direction === "positive" ? "+" : ""}
               {c.correlation.toFixed(3)}
             </span>
@@ -230,7 +230,7 @@ function TopConditionsTable({ conditions }: { conditions: TopConditionMeta[] }) 
         style={{
           fontSize: "0.78rem",
           fontWeight: 600,
-          color: "#374151",
+          color: "var(--color-label-secondary)",
           marginBottom: "6px",
         }}
       >
@@ -246,14 +246,14 @@ function TopConditionsTable({ conditions }: { conditions: TopConditionMeta[] }) 
           }}
         >
           <thead>
-            <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
-              <th style={{ padding: "3px 6px", textAlign: "left", color: "#6b7280", fontWeight: 500 }}>#</th>
+            <tr style={{ borderBottom: "1px solid var(--color-table-border)" }}>
+              <th style={{ padding: "3px 6px", textAlign: "left", color: "var(--color-label-tertiary)", fontWeight: 500 }}>#</th>
               {paramKeys.map((k) => (
-                <th key={k} style={{ padding: "3px 6px", textAlign: "right", color: "#6b7280", fontWeight: 500 }}>
+                <th key={k} style={{ padding: "3px 6px", textAlign: "right", color: "var(--color-label-tertiary)", fontWeight: 500 }}>
                   {k}
                 </th>
               ))}
-              <th style={{ padding: "3px 6px", textAlign: "right", color: "#6b7280", fontWeight: 500 }}>
+              <th style={{ padding: "3px 6px", textAlign: "right", color: "var(--color-label-tertiary)", fontWeight: 500 }}>
                 {conditions[0].objective_name}
               </th>
             </tr>
@@ -263,8 +263,8 @@ function TopConditionsTable({ conditions }: { conditions: TopConditionMeta[] }) 
               <tr
                 key={tc.rank}
                 style={{
-                  borderBottom: "1px solid #f3f4f6",
-                  background: tc.rank === 1 ? "#f0fdf4" : "transparent",
+                  borderBottom: "1px solid var(--color-table-border-light)",
+                  background: tc.rank === 1 ? "var(--color-row-winner)" : "transparent",
                 }}
               >
                 <td style={{ padding: "3px 6px", fontWeight: tc.rank === 1 ? 600 : 400 }}>
@@ -283,7 +283,7 @@ function TopConditionsTable({ conditions }: { conditions: TopConditionMeta[] }) 
                     padding: "3px 6px",
                     textAlign: "right",
                     fontWeight: 600,
-                    color: "#1e40af",
+                    color: "var(--color-blue)",
                   }}
                 >
                   {tc.objective_value.toPrecision(4)}
@@ -305,7 +305,7 @@ function OptimalRegions({ regions }: { regions: OptimalRegionMeta[] }) {
         style={{
           fontSize: "0.78rem",
           fontWeight: 600,
-          color: "#374151",
+          color: "var(--color-label-secondary)",
           marginBottom: "6px",
         }}
       >
@@ -326,7 +326,7 @@ function OptimalRegions({ regions }: { regions: OptimalRegionMeta[] }) {
                 marginBottom: "2px",
               }}
             >
-              <span style={{ color: "#374151", fontWeight: 500 }}>{r.parameter}</span>
+              <span style={{ color: "var(--color-label-secondary)", fontWeight: 500 }}>{r.parameter}</span>
               <span style={{ color: impColor, fontWeight: 600, fontSize: "0.75rem" }}>
                 {r.improvement_pct > 0 ? "+" : ""}
                 {r.improvement_pct.toFixed(1)}%
@@ -335,7 +335,7 @@ function OptimalRegions({ regions }: { regions: OptimalRegionMeta[] }) {
             <div
               style={{
                 height: "10px",
-                background: "#f3f4f6",
+                background: "var(--color-bar-bg)",
                 borderRadius: "5px",
                 position: "relative",
                 overflow: "hidden",
@@ -357,7 +357,7 @@ function OptimalRegions({ regions }: { regions: OptimalRegionMeta[] }) {
                 display: "flex",
                 justifyContent: "space-between",
                 fontSize: "0.68rem",
-                color: "#9ca3af",
+                color: "var(--color-label-quaternary)",
                 marginTop: "1px",
               }}
             >
@@ -441,7 +441,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
           {message.metadata?.interactions && message.metadata.interactions.length > 0 && (
             <div style={{ marginTop: "10px" }}>
-              <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#374151", marginBottom: "4px" }}>
+              <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-label-secondary)", marginBottom: "4px" }}>
                 Parameter Interactions
               </div>
               {message.metadata.interactions.map((ix, i) => (
@@ -449,15 +449,15 @@ export function ChatMessage({ message }: ChatMessageProps) {
                   key={i}
                   style={{
                     fontSize: "0.78rem",
-                    color: "#4b5563",
+                    color: "var(--color-insight-body)",
                     padding: "3px 0",
-                    borderBottom: "1px solid #f3f4f6",
+                    borderBottom: "1px solid var(--color-table-border-light)",
                   }}
                 >
                   <span style={{ fontWeight: 500 }}>
                     {ix.param_a} × {ix.param_b}
                   </span>{" "}
-                  <span style={{ fontFamily: "monospace", color: "#6b7280" }}>
+                  <span style={{ fontFamily: "monospace", color: "var(--color-label-tertiary)" }}>
                     (r={ix.interaction_strength.toFixed(3)})
                   </span>
                 </div>
@@ -467,7 +467,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
           {message.metadata?.failure_patterns && message.metadata.failure_patterns.length > 0 && (
             <div style={{ marginTop: "10px" }}>
-              <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#92400e", marginBottom: "4px" }}>
+              <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-failure-zone-text)", marginBottom: "4px" }}>
                 Risk Zones
               </div>
               {message.metadata.failure_patterns.map((fp, i) => (
@@ -475,8 +475,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
                   key={i}
                   style={{
                     fontSize: "0.78rem",
-                    color: "#92400e",
-                    background: "#fff8f0",
+                    color: "var(--color-failure-zone-text)",
+                    background: "var(--color-failure-zone-bg)",
                     padding: "4px 8px",
                     borderRadius: "4px",
                     marginBottom: "4px",

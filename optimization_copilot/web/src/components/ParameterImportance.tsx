@@ -49,7 +49,7 @@ export default function ParameterImportance({
         layout="vertical"
         margin={{ top: 20, right: 30, left: 150, bottom: 20 }}
       >
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" horizontal={false} />
 
         <XAxis
           type="number"
@@ -72,10 +72,11 @@ export default function ParameterImportance({
 
         <Tooltip
           contentStyle={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
+            background: 'var(--color-chart-tooltip-bg)',
+            border: '1px solid var(--color-chart-tooltip-border)',
             borderRadius: '6px',
             fontSize: '0.85rem',
+            color: 'var(--color-text)',
           }}
           formatter={(value: unknown) => [typeof value === 'number' ? value.toFixed(4) : '-', 'Importance']}
         />

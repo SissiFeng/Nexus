@@ -533,7 +533,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   subScore: {
     fontSize: "0.8rem",
-    color: "#64748b",
+    color: "var(--color-text-muted)",
   },
   card: {
     marginBottom: 12,
@@ -576,7 +576,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
   },
   issueMessage: {
-    color: "#64748b",
+    color: "var(--color-text-muted)",
     fontSize: "0.82rem",
     fontStyle: "italic",
   },

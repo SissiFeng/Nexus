@@ -19,6 +19,7 @@ import RealDiagnosticCards from "../components/DiagnosticCards";
 import RealParameterImportance from "../components/ParameterImportance";
 import RealScatterMatrix from "../components/ScatterMatrix";
 import RealSuggestionCard from "../components/SuggestionCard";
+import ParetoPlot from "../components/ParetoPlot";
 import InsightsPanel from "../components/InsightsPanel";
 import ErrorBoundary from "../components/ErrorBoundary";
 import {
@@ -300,6 +301,34 @@ export default function Workspace() {
                   </p>
                 )}
               </div>
+
+              {/* Pareto Front — shown when 2+ objectives are configured */}
+              {(() => {
+                const objNames = campaign.objective_names ?? [];
+                const objDirs = campaign.objective_directions ?? {};
+                const obs = campaign.observations ?? [];
+                if (objNames.length >= 2) {
+                  return (
+                    <div className="card">
+                      <h2>Pareto Front</h2>
+                      {obs.length > 0 ? (
+                        <ParetoPlot
+                          observations={obs}
+                          objectiveNames={objNames}
+                          objectiveDirections={objNames.map(
+                            (n) => objDirs[n] ?? "minimize"
+                          )}
+                        />
+                      ) : (
+                        <p className="empty-state">
+                          No observation data yet. Run some experiments to see the Pareto front.
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
           )}
 

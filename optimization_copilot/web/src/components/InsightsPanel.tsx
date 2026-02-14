@@ -6,31 +6,31 @@ interface InsightsPanelProps {
 }
 
 const CATEGORY_STYLES: Record<InsightSummary["category"], { bg: string; border: string; text: string; label: string }> = {
-  discovery: { bg: "#e3f2fd", border: "#1565c0", text: "#1565c0", label: "Discovery" },
-  warning: { bg: "#fff3e0", border: "#e65100", text: "#e65100", label: "Warning" },
-  recommendation: { bg: "#e8f5e9", border: "#2e7d32", text: "#2e7d32", label: "Recommendation" },
-  trend: { bg: "#f3e5f5", border: "#6a1b9a", text: "#6a1b9a", label: "Trend" },
+  discovery: { bg: "var(--color-insight-discovery-bg)", border: "var(--color-insight-discovery-border)", text: "var(--color-insight-discovery-text)", label: "Discovery" },
+  warning: { bg: "var(--color-insight-warning-bg)", border: "var(--color-insight-warning-border)", text: "var(--color-insight-warning-text)", label: "Warning" },
+  recommendation: { bg: "var(--color-insight-recommendation-bg)", border: "var(--color-insight-recommendation-border)", text: "var(--color-insight-recommendation-text)", label: "Recommendation" },
+  trend: { bg: "var(--color-insight-trend-bg)", border: "var(--color-insight-trend-border)", text: "var(--color-insight-trend-text)", label: "Trend" },
 };
 
-const STRENGTH_COLORS: Record<string, string> = { strong: "#1565c0", moderate: "#f59e0b", weak: "#94a3b8" };
+const STRENGTH_COLORS: Record<string, string> = { strong: "var(--color-blue)", moderate: "var(--color-yellow)", weak: "var(--color-gray)" };
 
 const S: Record<string, React.CSSProperties> = {
   container: { padding: "1rem" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" },
   heading: { fontSize: "1.25rem", fontWeight: 600, margin: 0 },
-  meta: { fontSize: "0.8rem", color: "#718096" },
-  btn: { padding: "6px 14px", fontSize: "0.85rem", fontWeight: 500, background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: "6px", cursor: "pointer", color: "#334155" },
+  meta: { fontSize: "0.8rem", color: "var(--color-text-muted)" },
+  btn: { padding: "6px 14px", fontSize: "0.85rem", fontWeight: 500, background: "var(--color-insights-btn-bg)", border: "1px solid var(--color-insights-btn-border)", borderRadius: "6px", cursor: "pointer", color: "var(--color-insights-btn-text)" },
   section: { marginBottom: "1.5rem" },
-  secTitle: { fontSize: "1rem", fontWeight: 600, marginBottom: "0.75rem", color: "#1e293b", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.4rem" },
+  secTitle: { fontSize: "1rem", fontWeight: 600, marginBottom: "0.75rem", color: "var(--color-insights-section-title)", borderBottom: "1px solid var(--color-insights-section-border)", paddingBottom: "0.4rem" },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "12px" },
-  empty: { fontSize: "0.85rem", color: "#94a3b8", fontStyle: "italic", padding: "0.5rem 0" },
+  empty: { fontSize: "0.85rem", color: "var(--color-text-muted)", fontStyle: "italic", padding: "0.5rem 0" },
   tblWrap: { overflowX: "auto" as const },
   tbl: { width: "100%", borderCollapse: "collapse" as const, fontSize: "0.85rem" },
-  th: { textAlign: "left" as const, padding: "8px 12px", fontWeight: 600, borderBottom: "2px solid #e2e8f0", color: "#475569", fontSize: "0.8rem", textTransform: "uppercase" as const, letterSpacing: "0.03em" },
-  td: { padding: "8px 12px", borderBottom: "1px solid #f1f5f9" },
+  th: { textAlign: "left" as const, padding: "8px 12px", fontWeight: 600, borderBottom: "2px solid var(--color-insights-th-border)", color: "var(--color-insights-th-text)", fontSize: "0.8rem", textTransform: "uppercase" as const, letterSpacing: "0.03em" },
+  td: { padding: "8px 12px", borderBottom: "1px solid var(--color-insights-td-border)" },
   mono: { fontFamily: "monospace", fontSize: "0.85rem" },
   row: { display: "flex", justifyContent: "space-between", fontSize: "0.85rem", marginBottom: "4px" },
-  bar: { height: "6px", background: "#f1f5f9", borderRadius: "3px", overflow: "hidden" },
+  bar: { height: "6px", background: "var(--color-insights-bar-bg)", borderRadius: "3px", overflow: "hidden" },
 };
 
 function SummaryCard({ summary }: { summary: InsightSummary }) {
@@ -41,7 +41,7 @@ function SummaryCard({ summary }: { summary: InsightSummary }) {
         <span style={{ fontWeight: 600, fontSize: "0.9rem", color: c.text }}>{summary.title}</span>
         <span style={{ fontSize: "0.7rem", fontWeight: 600, textTransform: "uppercase", color: c.text, opacity: 0.8, flexShrink: 0, marginLeft: "8px" }}>{c.label}</span>
       </div>
-      <div style={{ fontSize: "0.85rem", color: "#334155", lineHeight: 1.5 }}>{summary.body}</div>
+      <div style={{ fontSize: "0.85rem", color: "var(--color-insights-body-text)", lineHeight: 1.5 }}>{summary.body}</div>
     </div>
   );
 }
@@ -108,10 +108,10 @@ function OptimalRegionBar({ region }: { region: OptimalRegion }) {
         <span style={{ fontWeight: 500 }}>{region.parameter}</span>
         <span style={{ color: "#2e7d32", fontWeight: 600, fontSize: "0.8rem" }}>+{region.improvement_pct.toFixed(1)}% improvement</span>
       </div>
-      <div style={{ position: "relative", height: "16px", background: "#f1f5f9", borderRadius: "4px", overflow: "hidden" }}>
+      <div style={{ position: "relative", height: "16px", background: "var(--color-insights-region-bar-bg)", borderRadius: "4px", overflow: "hidden" }}>
         <div style={{ position: "absolute", left: `${leftPct}%`, width: `${Math.max(widthPct, 2)}%`, height: "100%", background: "linear-gradient(90deg, #3b82f6, #2563eb)", borderRadius: "3px", transition: "all 0.3s ease" }} />
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "#94a3b8", marginTop: "2px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "2px" }}>
         <span>{oLow.toPrecision(3)}</span>
         <span style={{ color: "#3b82f6", fontWeight: 500 }}>Best: [{bLow.toPrecision(3)}, {bHigh.toPrecision(3)}]</span>
         <span>{oHigh.toPrecision(3)}</span>
@@ -216,7 +216,7 @@ export default function InsightsPanel({ campaignId }: InsightsPanelProps) {
                     <td style={{ ...S.td, fontWeight: 500 }}>{ix.param_a}</td>
                     <td style={{ ...S.td, fontWeight: 500 }}>{ix.param_b}</td>
                     <td style={{ ...S.td, ...S.mono }}>{ix.interaction_strength.toFixed(3)}</td>
-                    <td style={{ ...S.td, color: "#475569" }}>{ix.description}</td>
+                    <td style={{ ...S.td, color: "var(--color-insights-desc-text)" }}>{ix.description}</td>
                   </tr>
                 ))}
               </tbody>
@@ -230,9 +230,9 @@ export default function InsightsPanel({ campaignId }: InsightsPanelProps) {
         <div style={S.section}>
           <div style={S.secTitle}>Failure Patterns</div>
           {failure_patterns.map((fp, i) => (
-            <div key={i} style={{ background: "#fff3e0", borderLeft: "4px solid #e65100", borderRadius: "6px", padding: "10px 14px", marginBottom: "8px", fontSize: "0.85rem" }}>
+            <div key={i} style={{ background: "var(--color-insights-failure-bg)", borderLeft: "4px solid var(--color-insights-failure-border)", borderRadius: "6px", padding: "10px 14px", marginBottom: "8px", fontSize: "0.85rem" }}>
               <div style={{ fontWeight: 500, marginBottom: "4px" }}>{fp.description}</div>
-              <div style={{ color: "#718096" }}>
+              <div style={{ color: "var(--color-text-muted)" }}>
                 <span style={S.mono}>{fp.parameter}</span> risky range: [{fp.risky_range[0].toPrecision(3)}, {fp.risky_range[1].toPrecision(3)}]
                 &mdash; failure rate {(fp.failure_rate_in_range * 100).toFixed(1)}% vs overall {(fp.overall_failure_rate * 100).toFixed(1)}%
               </div>
@@ -246,7 +246,7 @@ export default function InsightsPanel({ campaignId }: InsightsPanelProps) {
         <div style={S.section}>
           <div style={S.secTitle}>Trends</div>
           {trends.map((t, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < trends.length - 1 ? "1px solid #f1f5f9" : "none", fontSize: "0.85rem" }}>
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < trends.length - 1 ? "1px solid var(--color-insights-trend-border)" : "none", fontSize: "0.85rem" }}>
               <span>{t.description}</span>
               <span style={{ ...S.mono, color: "#6a1b9a", fontWeight: 600 }}>{t.metric}: {typeof t.value === "number" ? t.value.toPrecision(4) : t.value}</span>
             </div>

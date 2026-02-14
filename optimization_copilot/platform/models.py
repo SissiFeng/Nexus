@@ -33,7 +33,7 @@ VALID_TRANSITIONS: dict[CampaignStatus, set[CampaignStatus]] = {
     CampaignStatus.COMPLETED: {CampaignStatus.ARCHIVED},
     CampaignStatus.STOPPED: {CampaignStatus.ARCHIVED},
     CampaignStatus.FAILED: {CampaignStatus.ARCHIVED},
-    CampaignStatus.ARCHIVED: set(),
+    CampaignStatus.ARCHIVED: {CampaignStatus.DRAFT},
 }
 
 

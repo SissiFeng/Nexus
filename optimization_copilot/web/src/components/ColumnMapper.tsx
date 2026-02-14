@@ -537,8 +537,8 @@ export default function ColumnMapper({
           display: flex;
           align-items: center;
           gap: 12px;
-          background: #fef9c3;
-          color: #854d0e;
+          background: var(--color-warning-bg);
+          color: var(--color-warning-text);
           padding: 12px 16px;
           border-radius: var(--radius);
           margin-bottom: 20px;
@@ -574,13 +574,13 @@ export default function ColumnMapper({
         }
 
         .type-badge.numeric {
-          background: #dbeafe;
-          color: #1e40af;
+          background: var(--color-type-numeric-bg);
+          color: var(--color-type-numeric-text);
         }
 
         .type-badge.text {
-          background: #fef3c7;
-          color: #92400e;
+          background: var(--color-type-text-bg);
+          color: var(--color-type-text-text);
         }
 
         .role-select,
@@ -634,6 +634,8 @@ export default function ColumnMapper({
           font-family: var(--font-mono);
           outline: none;
           transition: border-color 0.15s;
+          background: var(--color-surface);
+          color: var(--color-text);
         }
 
         .bound-input:focus {
@@ -684,23 +686,23 @@ export default function ColumnMapper({
         }
 
         .summary-badge.badge-parameter {
-          background: #dcfce7;
-          color: #166534;
+          background: var(--color-summary-param-bg);
+          color: var(--color-summary-param-text);
         }
 
         .summary-badge.badge-objective {
-          background: #dbeafe;
-          color: #1e40af;
+          background: var(--color-summary-obj-bg);
+          color: var(--color-summary-obj-text);
         }
 
         .summary-badge.badge-metadata {
-          background: #fef3c7;
-          color: #92400e;
+          background: var(--color-summary-meta-bg);
+          color: var(--color-summary-meta-text);
         }
 
         .summary-badge.badge-ignored {
-          background: #f1f5f9;
-          color: #475569;
+          background: var(--color-summary-ignored-bg);
+          color: var(--color-summary-ignored-text);
         }
 
         .summary-label {
@@ -739,8 +741,8 @@ export default function ColumnMapper({
           display: flex;
           align-items: center;
           gap: 8px;
-          background: #fef2f2;
-          color: #dc2626;
+          background: var(--color-validation-error-bg);
+          color: var(--color-validation-error-text);
           padding: 10px 14px;
           border-radius: var(--radius);
           margin-bottom: 16px;

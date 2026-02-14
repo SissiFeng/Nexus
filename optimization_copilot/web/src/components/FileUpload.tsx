@@ -294,7 +294,7 @@ export default function FileUpload({ onDataParsed }: FileUploadProps) {
 
         .dropzone-active {
           border-color: var(--color-primary);
-          background: #eff6ff;
+          background: var(--color-upload-active-bg);
         }
 
         .dropzone-icon {
@@ -396,8 +396,8 @@ export default function FileUpload({ onDataParsed }: FileUploadProps) {
         }
 
         .warning-banner {
-          background: #fef9c3;
-          color: #854d0e;
+          background: var(--color-warning-bg);
+          color: var(--color-warning-text);
           padding: 12px 16px;
           border-radius: var(--radius);
           margin-bottom: 16px;

@@ -101,17 +101,18 @@ export default function ScatterMatrix({
       return (
         <div
           style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
+            background: 'var(--color-chart-tooltip-bg)',
+            border: '1px solid var(--color-chart-tooltip-border)',
             borderRadius: '6px',
             padding: '8px 12px',
             fontSize: '0.85rem',
+            color: 'var(--color-text)',
           }}
         >
           <div><strong>{selectedX}:</strong> {point.x.toFixed(3)}</div>
           <div><strong>{selectedY}:</strong> {point.y.toFixed(3)}</div>
           <div><strong>{objectiveName}:</strong> {point.objective.toFixed(4)}</div>
-          <div style={{ marginTop: '4px', fontSize: '0.78rem', color: '#718096' }}>
+          <div style={{ marginTop: '4px', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
             {Object.entries(dataPoint)
               .filter(([k]) => k !== selectedX && k !== selectedY && k !== objectiveName)
               .slice(0, 3)
@@ -173,7 +174,7 @@ export default function ScatterMatrix({
       {/* Scatter chart */}
       <ResponsiveContainer width="100%" height={400}>
         <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
 
           <XAxis
             type="number"
@@ -220,7 +221,7 @@ export default function ScatterMatrix({
 
       {/* Color scale legend */}
       <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <span style={{ fontSize: '0.85rem', fontWeight: 500, color: '#718096' }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--color-text-muted)' }}>
           {objectiveName} ({objectiveDirection}):
         </span>
         <div style={{ flex: 1, maxWidth: '300px', height: '20px', position: 'relative' }}>
@@ -240,7 +241,7 @@ export default function ScatterMatrix({
               display: 'flex',
               justifyContent: 'space-between',
               fontSize: '0.78rem',
-              color: '#718096',
+              color: 'var(--color-text-muted)',
               marginTop: '4px',
             }}
           >

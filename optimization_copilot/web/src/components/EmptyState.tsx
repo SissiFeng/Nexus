@@ -36,20 +36,20 @@ export default function EmptyState({
             width: "64px",
             height: "64px",
             borderRadius: "50%",
-            background: "#f0f4ff",
+            background: "var(--color-badge-completed-bg)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             margin: "0 auto 20px",
           }}
         >
-          <Icon size={28} color="#6366f1" />
+          <Icon size={28} style={{ color: "var(--color-primary)" }} />
         </div>
         <h3
           style={{
             fontSize: "1.15rem",
             fontWeight: 600,
-            color: "#1a202c",
+            color: "var(--color-text)",
             margin: "0 0 8px",
           }}
         >
@@ -58,7 +58,7 @@ export default function EmptyState({
         <p
           style={{
             fontSize: "0.9rem",
-            color: "#718096",
+            color: "var(--color-text-muted)",
             margin: "0 0 24px",
             lineHeight: 1.6,
           }}
@@ -68,23 +68,13 @@ export default function EmptyState({
         {actionLabel && onAction && (
           <button
             onClick={onAction}
+            className="btn btn-primary"
             style={{
               padding: "10px 24px",
               fontSize: "0.9rem",
               fontWeight: 500,
-              color: "#ffffff",
-              background: "#6366f1",
-              border: "none",
               borderRadius: "8px",
-              cursor: "pointer",
-              transition: "background 0.15s",
             }}
-            onMouseOver={(e) =>
-              ((e.target as HTMLButtonElement).style.background = "#4f46e5")
-            }
-            onMouseOut={(e) =>
-              ((e.target as HTMLButtonElement).style.background = "#6366f1")
-            }
           >
             {actionLabel}
           </button>

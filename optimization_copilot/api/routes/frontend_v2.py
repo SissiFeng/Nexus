@@ -13,6 +13,7 @@ import json
 import logging
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -1033,3 +1034,260 @@ def export_campaign(campaign_id: str, fmt: str) -> StreamingResponse:
         )
 
     raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}. Use csv, json, or xlsx.")
+
+
+# ── Demo Datasets ───────────────────────────────────────────────────
+
+_DEMO_DATASETS_DIR = Path(__file__).resolve().parents[3] / "data" / "gollum"
+
+_DEMO_CATALOG: list[dict[str, Any]] = [
+    {
+        "id": "oer_catalyst",
+        "filename": "oer_data.csv",
+        "name": "OER Catalyst",
+        "description": "Oxygen Evolution Reaction catalyst composition optimization. Explores metal loading ratios (Ni, Fe, Co, Mn, Ce, La) to minimize overpotential for water splitting electrocatalysis.",
+        "tags": ["Chemistry", "Catalysis", "Materials"],
+        "parameters": [
+            {"name": "ni_load", "type": "continuous"},
+            {"name": "fe_load", "type": "continuous"},
+            {"name": "co_load", "type": "continuous"},
+            {"name": "mn_load", "type": "continuous"},
+            {"name": "ce_load", "type": "continuous"},
+            {"name": "la_load", "type": "continuous"},
+        ],
+        "objectives": [{"name": "objective", "direction": "minimize"}],
+        "metadata_cols": ["procedure"],
+    },
+    {
+        "id": "suzuki_miyaura",
+        "filename": "suzuki_miyaura_data.csv",
+        "name": "Suzuki-Miyaura Coupling",
+        "description": "Palladium-catalyzed cross-coupling reaction optimization. Varies reactants, catalysts, ligands, reagents, and solvents to maximize product yield.",
+        "tags": ["Chemistry", "Organic", "Cross-coupling"],
+        "parameters": [
+            {"name": "reactant_1_smiles", "type": "categorical"},
+            {"name": "reactant_2_smiles", "type": "categorical"},
+            {"name": "catalyst_smiles", "type": "categorical"},
+            {"name": "ligand_smiles", "type": "categorical"},
+            {"name": "reagent_1_smiles", "type": "categorical"},
+            {"name": "solvent_1_smiles", "type": "categorical"},
+        ],
+        "objectives": [{"name": "objective", "direction": "maximize"}],
+        "metadata_cols": ["rxn", "product", "procedure"],
+    },
+    {
+        "id": "hplc_separation",
+        "filename": "hplc_data.csv",
+        "name": "HPLC Separation",
+        "description": "High-Performance Liquid Chromatography condition optimization. Tunes sample loop volume, flow rates, tubing parameters, and timing to maximize separation quality.",
+        "tags": ["Analytical", "Chromatography"],
+        "parameters": [
+            {"name": "sample_loop", "type": "continuous"},
+            {"name": "additional_volume", "type": "continuous"},
+            {"name": "tubing_volume", "type": "continuous"},
+            {"name": "sample_flow", "type": "continuous"},
+            {"name": "push_speed", "type": "continuous"},
+            {"name": "wait_time", "type": "continuous"},
+        ],
+        "objectives": [{"name": "objective", "direction": "maximize"}],
+        "metadata_cols": ["procedure"],
+    },
+    {
+        "id": "additives",
+        "filename": "additives_plate_1.csv",
+        "name": "Reaction Additives",
+        "description": "Chemical additive screening for C-H functionalization reactions. Explores different aryl halides, acids, and additives to maximize product formation.",
+        "tags": ["Chemistry", "Organic", "Screening"],
+        "parameters": [
+            {"name": "ArX_Smiles", "type": "categorical"},
+            {"name": "Acid_Smiles", "type": "categorical"},
+            {"name": "additives", "type": "categorical"},
+        ],
+        "objectives": [{"name": "objective", "direction": "maximize"}],
+        "metadata_cols": ["product", "rxn"],
+    },
+    {
+        "id": "c2_yield",
+        "filename": "c2_yield_data.csv",
+        "name": "C2 Yield (OCM)",
+        "description": "Oxidative Coupling of Methane (OCM) catalyst and condition optimization. Optimizes metal compositions, reaction temperature, gas flow rates, and contact time to maximize C2 hydrocarbon yield.",
+        "tags": ["Chemistry", "Catalysis", "Gas-phase"],
+        "parameters": [
+            {"name": "sup", "type": "categorical"},
+            {"name": "m1", "type": "categorical"},
+            {"name": "m1_mol", "type": "continuous"},
+            {"name": "m2", "type": "categorical"},
+            {"name": "m2_mol", "type": "continuous"},
+            {"name": "m3", "type": "categorical"},
+            {"name": "m3_mol", "type": "continuous"},
+            {"name": "react_temp", "type": "continuous"},
+            {"name": "flow_vol", "type": "continuous"},
+            {"name": "ar_vol", "type": "continuous"},
+            {"name": "ch4_vol", "type": "continuous"},
+            {"name": "o2_vol", "type": "continuous"},
+            {"name": "contact", "type": "continuous"},
+        ],
+        "objectives": [{"name": "objective", "direction": "maximize"}],
+        "metadata_cols": ["name", "default_features", "procedure"],
+    },
+    {
+        "id": "bh_reaction",
+        "filename": "bh_reaction_1.csv",
+        "name": "Buchwald-Hartwig Amination",
+        "description": "Palladium-catalyzed C-N bond formation optimization. Screens ligands, additives, bases, and aryl halides to maximize amination reaction yield.",
+        "tags": ["Chemistry", "Organic", "Cross-coupling"],
+        "parameters": [
+            {"name": "ligand", "type": "categorical"},
+            {"name": "additive", "type": "categorical"},
+            {"name": "base", "type": "categorical"},
+            {"name": "aryl halide", "type": "categorical"},
+        ],
+        "objectives": [{"name": "objective", "direction": "maximize"}],
+        "metadata_cols": ["rxn", "procedure"],
+    },
+    {
+        "id": "vapor_diffusion",
+        "filename": "vapdiff_data.csv",
+        "name": "Vapor Diffusion Crystallization",
+        "description": "Perovskite crystal growth via vapor diffusion. Optimizes organic compound, solvent, molarities, vial volumes, reaction time, and temperature to maximize crystal quality.",
+        "tags": ["Materials", "Crystallography"],
+        "parameters": [
+            {"name": "organic", "type": "categorical"},
+            {"name": "organic_molarity", "type": "continuous"},
+            {"name": "solvent", "type": "categorical"},
+            {"name": "solvent_molarity", "type": "continuous"},
+            {"name": "inorganic_molarity", "type": "continuous"},
+            {"name": "acid_molarity", "type": "continuous"},
+            {"name": "alpha_vial_volume", "type": "continuous"},
+            {"name": "beta_vial_volume", "type": "continuous"},
+            {"name": "reaction_time", "type": "continuous"},
+            {"name": "reaction_temperature", "type": "continuous"},
+        ],
+        "objectives": [{"name": "objective", "direction": "maximize"}],
+        "metadata_cols": ["crystal_score", "default_features", "procedure"],
+    },
+]
+
+
+def _read_demo_csv(filename: str, max_rows: int = 0) -> tuple[list[str], list[dict[str, str]], int]:
+    """Read a demo CSV file and return (columns, rows, total_row_count).
+
+    If max_rows > 0 only the first max_rows data rows are returned,
+    but total_row_count always reflects the full file.
+    """
+    filepath = _DEMO_DATASETS_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail=f"Demo dataset file not found: {filename}")
+
+    with open(filepath, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        columns = reader.fieldnames or []
+        all_rows: list[dict[str, str]] = []
+        total = 0
+        for row in reader:
+            total += 1
+            if max_rows <= 0 or total <= max_rows:
+                all_rows.append({k: (v or "") for k, v in row.items()})
+
+    return list(columns), all_rows, total
+
+
+def _auto_detect_bounds(
+    rows: list[dict[str, str]], param_name: str
+) -> tuple[float | None, float | None]:
+    """Detect numeric bounds from data rows for a parameter."""
+    values: list[float] = []
+    for row in rows:
+        raw = row.get(param_name, "")
+        try:
+            values.append(float(raw))
+        except (ValueError, TypeError):
+            pass
+    if len(values) < 2:
+        return None, None
+    return round(min(values), 6), round(max(values), 6)
+
+
+@router.get("/demo-datasets")
+def list_demo_datasets() -> list[dict[str, Any]]:
+    """List available demo datasets with metadata."""
+    results: list[dict[str, Any]] = []
+    for ds in _DEMO_CATALOG:
+        filepath = _DEMO_DATASETS_DIR / ds["filename"]
+        row_count = 0
+        if filepath.exists():
+            with open(filepath, encoding="utf-8") as f:
+                row_count = sum(1 for _ in f) - 1  # subtract header
+
+        results.append({
+            "id": ds["id"],
+            "name": ds["name"],
+            "description": ds["description"],
+            "tags": ds["tags"],
+            "filename": ds["filename"],
+            "row_count": row_count,
+            "n_parameters": len(ds["parameters"]),
+            "n_objectives": len(ds["objectives"]),
+            "parameter_names": [p["name"] for p in ds["parameters"]],
+            "objective_names": [o["name"] for o in ds["objectives"]],
+        })
+    return results
+
+
+@router.get("/demo-datasets/{dataset_id}")
+def get_demo_dataset(
+    dataset_id: str,
+    max_rows: int = Query(default=50, ge=1, le=10000),
+) -> dict[str, Any]:
+    """Return parsed demo dataset with suggested column mapping.
+
+    Returns up to *max_rows* data rows (default 50) plus full metadata
+    and a pre-built column mapping ready for ``/campaigns/from-upload``.
+    """
+    catalog_entry = None
+    for ds in _DEMO_CATALOG:
+        if ds["id"] == dataset_id:
+            catalog_entry = ds
+            break
+
+    if catalog_entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown demo dataset: {dataset_id}")
+
+    columns, rows, total_rows = _read_demo_csv(catalog_entry["filename"], max_rows=max_rows)
+
+    # Build mapping with auto-detected bounds for continuous params
+    param_mapping: list[dict[str, Any]] = []
+    for p in catalog_entry["parameters"]:
+        entry: dict[str, Any] = {"name": p["name"], "type": p["type"]}
+        if p["type"] == "continuous":
+            lo, hi = _auto_detect_bounds(rows, p["name"])
+            if lo is not None and hi is not None:
+                entry["lower"] = lo
+                entry["upper"] = hi
+        param_mapping.append(entry)
+
+    obj_mapping = catalog_entry["objectives"]
+    metadata_cols = [c for c in catalog_entry.get("metadata_cols", []) if c in columns]
+    ignored_cols = [
+        c for c in columns
+        if c not in {p["name"] for p in catalog_entry["parameters"]}
+        and c not in {o["name"] for o in catalog_entry["objectives"]}
+        and c not in metadata_cols
+    ]
+
+    return {
+        "id": catalog_entry["id"],
+        "name": catalog_entry["name"],
+        "description": catalog_entry["description"],
+        "tags": catalog_entry["tags"],
+        "columns": columns,
+        "row_count": total_rows,
+        "rows_returned": len(rows),
+        "data": rows,
+        "mapping": {
+            "parameters": param_mapping,
+            "objectives": obj_mapping,
+            "metadata": metadata_cols,
+            "ignored": ignored_cols,
+        },
+    }

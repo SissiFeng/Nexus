@@ -6,8 +6,10 @@ import Reports from "./pages/Reports";
 import LoopView from "./pages/LoopView";
 import AnalysisView from "./pages/AnalysisView";
 import NewCampaign from "./pages/NewCampaign";
+import DemoGallery from "./pages/DemoGallery";
 import Workspace from "./pages/Workspace";
 import ErrorBoundary from "./components/ErrorBoundary";
+import ThemeToggle from "./components/ThemeToggle";
 
 function App() {
   return (
@@ -23,6 +25,9 @@ function App() {
           <Link to="/new-campaign" className="nav-link">
             New Campaign
           </Link>
+          <Link to="/demos" className="nav-link">
+            Demos
+          </Link>
           <Link to="/loop" className="nav-link">
             Loop
           </Link>
@@ -33,12 +38,16 @@ function App() {
             Compare
           </Link>
         </div>
+        <div className="nav-right">
+          <ThemeToggle />
+        </div>
       </nav>
       <main className="main-content">
         <ErrorBoundary>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/new-campaign" element={<NewCampaign />} />
+            <Route path="/demos" element={<DemoGallery />} />
             <Route path="/workspace/:id" element={<Workspace />} />
             <Route path="/campaigns/:id" element={<CampaignDetail />} />
             <Route path="/loop" element={<LoopView />} />

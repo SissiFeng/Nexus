@@ -27,6 +27,11 @@ class CampaignResponse(BaseModel):
     total_trials: int = 0
     error_message: str | None = None
     tags: list[str] = Field(default_factory=list)
+    objective_names: list[str] = Field(default_factory=list)
+
+
+class UpdateCampaignStatusRequest(BaseModel):
+    status: str = Field(..., description="New status: 'archived' or 'draft'")
 
 
 class CampaignListResponse(BaseModel):
@@ -42,6 +47,15 @@ class CampaignDetailResponse(CampaignResponse):
     phases: list[dict[str, Any]] = Field(default_factory=list)
     kpi_history: dict[str, Any] = Field(
         default_factory=lambda: {"iterations": [], "values": []}
+    )
+    # Multi-objective support
+    observations: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Full observation history with all kpi_values for Pareto analysis",
+    )
+    objective_directions: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map of objective name to 'minimize' or 'maximize'",
     )
 
 

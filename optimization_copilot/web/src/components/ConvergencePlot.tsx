@@ -31,7 +31,7 @@ export default function ConvergencePlot({
   return (
     <ResponsiveContainer width="100%" height={400}>
       <ComposedChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
 
         {/* Phase regions */}
         {phases.map((phase, idx) => (
@@ -67,10 +67,11 @@ export default function ConvergencePlot({
 
         <Tooltip
           contentStyle={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
+            background: 'var(--color-chart-tooltip-bg)',
+            border: '1px solid var(--color-chart-tooltip-border)',
             borderRadius: '6px',
             fontSize: '0.85rem',
+            color: 'var(--color-text)',
           }}
           formatter={(value: unknown, name: unknown) => [
             typeof value === 'number' ? value.toFixed(4) : '-',
