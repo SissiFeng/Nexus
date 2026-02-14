@@ -15,6 +15,7 @@ import {
   BookOpen,
   Sparkles,
   ArrowRight,
+  Clock,
 } from "lucide-react";
 import {
   fetchCampaigns,
@@ -111,14 +112,37 @@ function CampaignCard({
         </div>
       )}
 
-      <div className="dashboard-card-progress">
-        {c.total_trials > 0
-          ? `Trial ${c.iteration}/${c.total_trials}`
-          : `Iteration ${c.iteration}`}
+      <div className="dashboard-card-progress-section">
+        <div className="dashboard-card-progress-header">
+          <span className="dashboard-card-progress-label">
+            {c.total_trials > 0
+              ? `Trial ${c.iteration} / ${c.total_trials}`
+              : `Iteration ${c.iteration}`}
+          </span>
+          {c.total_trials > 0 && (
+            <span className="dashboard-card-progress-pct">
+              {Math.round((c.iteration / c.total_trials) * 100)}%
+            </span>
+          )}
+        </div>
+        {c.total_trials > 0 && (
+          <div className="dashboard-card-progress-track">
+            <div
+              className={`dashboard-card-progress-fill ${c.status === "completed" ? "progress-complete" : ""}`}
+              style={{ width: `${Math.min(100, (c.iteration / c.total_trials) * 100)}%` }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="dashboard-card-meta">
         <span className="dashboard-card-date">{formatRelativeTime(c.created_at)}</span>
+        {c.updated_at && c.updated_at !== c.created_at && (
+          <span className="dashboard-card-updated">
+            <Clock size={11} />
+            {formatRelativeTime(c.updated_at)}
+          </span>
+        )}
       </div>
 
       {c.objective_names.length > 0 && (
@@ -353,7 +377,30 @@ export default function Dashboard() {
         {error && <div className="error-banner">{error}</div>}
 
         {loading ? (
-          <div className="loading">Loading campaigns...</div>
+          <div className="dashboard-skeleton">
+            <div className="dashboard-stats">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="stat-card skel-pulse">
+                  <div className="skel-line" style={{ width: "60%", height: "12px" }} />
+                  <div className="skel-line" style={{ width: "40%", height: "24px", marginTop: "8px" }} />
+                </div>
+              ))}
+            </div>
+            <div className="skel-line" style={{ width: "280px", height: "36px", borderRadius: "8px", margin: "16px 0" }} />
+            <div className="dashboard-grid">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="dashboard-card skel-pulse">
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <div className="skel-line" style={{ width: "65%", height: "16px" }} />
+                    <div className="skel-line" style={{ width: "60px", height: "20px", borderRadius: "10px" }} />
+                  </div>
+                  <div className="skel-line" style={{ width: "100%", height: "48px", borderRadius: "8px" }} />
+                  <div className="skel-line" style={{ width: "80%", height: "4px", borderRadius: "2px" }} />
+                  <div className="skel-line" style={{ width: "45%", height: "12px" }} />
+                </div>
+              ))}
+            </div>
+          </div>
         ) : !hasCampaigns ? (
           <>
             {/* Getting Started */}

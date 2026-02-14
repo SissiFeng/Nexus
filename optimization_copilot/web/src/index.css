@@ -3017,10 +3017,49 @@ a:hover {
   letter-spacing: -0.02em;
 }
 
-.dashboard-card-progress {
-  font-size: 0.85rem;
+.dashboard-card-progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-card-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dashboard-card-progress-label {
+  font-size: 0.8rem;
   color: var(--color-text-muted);
   font-weight: 500;
+  font-family: var(--font-mono);
+}
+
+.dashboard-card-progress-pct {
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-primary);
+}
+
+.dashboard-card-progress-track {
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.dashboard-card-progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.dashboard-card-progress-fill.progress-complete {
+  background: var(--color-green);
 }
 
 .dashboard-card-meta {
@@ -3030,8 +3069,22 @@ a:hover {
 }
 
 .dashboard-card-date {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--color-text-muted);
+}
+
+.dashboard-card-updated {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.7;
+}
+
+.dashboard-card-updated::before {
+  content: "·";
+  margin-right: 2px;
 }
 
 .dashboard-card-tags {
