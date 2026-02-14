@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { useParams } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -32,6 +32,9 @@ import {
   BarChart3,
   Table,
   ClipboardList,
+  Filter,
+  TrendingDown,
+  Hash,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { ChatPanel } from "../components/ChatPanel";
@@ -87,6 +90,10 @@ export default function Workspace() {
   const [copied, setCopied] = useState(false);
   const [historySortCol, setHistorySortCol] = useState<string | null>(null);
   const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("asc");
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyFilter, setHistoryFilter] = useState("");
+  const [expandedTrialId, setExpandedTrialId] = useState<string | null>(null);
+  const HISTORY_PAGE_SIZE = 25;
 
   const handleCopyBest = useCallback((params: Record<string, number>) => {
     navigator.clipboard.writeText(JSON.stringify(params, null, 2)).then(() => {
@@ -418,6 +425,36 @@ export default function Workspace() {
                   <div className="stat-label">Phase</div>
                   <div className="stat-value">
                     {campaign.phases[campaign.phases.length - 1]?.name || "—"}
+                  </div>
+                </div>
+                {/* Iterations since last improvement */}
+                {convergenceData.length > 2 && (() => {
+                  const bestVal = Math.min(...convergenceData.map((d) => d.best));
+                  const lastImprovementIdx = convergenceData.reduce((acc, d, i) => d.best === bestVal ? i : acc, 0);
+                  const itersSinceImprovement = convergenceData.length - 1 - lastImprovementIdx;
+                  const isStale = itersSinceImprovement > 30;
+                  return (
+                    <div className={`stat-card ${isStale ? "stat-card-warning" : ""}`}>
+                      <div className="stat-label">
+                        <TrendingDown size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                        Since Improvement
+                      </div>
+                      <div className="stat-value">
+                        {itersSinceImprovement} <span style={{ fontSize: "0.7rem", fontWeight: 400, color: "var(--color-text-muted)" }}>iter</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div className="stat-card">
+                  <div className="stat-label">
+                    <Hash size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                    Unique Configs
+                  </div>
+                  <div className="stat-value">
+                    {(() => {
+                      const seen = new Set(trials.map((t) => JSON.stringify(t.parameters)));
+                      return seen.size;
+                    })()}
                   </div>
                 </div>
               </div>
@@ -833,88 +870,189 @@ export default function Workspace() {
               <div className="card">
                 <div className="history-header">
                   <h2>Trial History ({trials.length} experiments)</h2>
-                  <span className="history-sort-hint">Click column headers to sort</span>
-                </div>
-                {trials.length > 0 ? (
-                  <div className="history-table-wrapper">
-                    <table className="history-table">
-                      <thead>
-                        <tr>
-                          <th
-                            className="history-th-sortable"
-                            onClick={() => handleHistorySort("__iter__")}
-                          >
-                            # {historySortCol === "__iter__" && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
-                            {historySortCol !== "__iter__" && <ArrowUpDown size={11} className="history-sort-idle" />}
-                          </th>
-                          {Object.keys(trials[0].parameters).map((p) => (
-                            <th
-                              key={p}
-                              className="history-th-sortable"
-                              onClick={() => handleHistorySort(`p:${p}`)}
-                            >
-                              {p}
-                              {historySortCol === `p:${p}` && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
-                              {historySortCol !== `p:${p}` && <ArrowUpDown size={11} className="history-sort-idle" />}
-                            </th>
-                          ))}
-                          {Object.keys(trials[0].kpis).map((k) => (
-                            <th
-                              key={k}
-                              className="history-kpi-col history-th-sortable"
-                              onClick={() => handleHistorySort(`k:${k}`)}
-                            >
-                              {k}
-                              {historySortCol === `k:${k}` && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
-                              {historySortCol !== `k:${k}` && <ArrowUpDown size={11} className="history-sort-idle" />}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(() => {
-                          let sorted = [...trials];
-                          if (historySortCol) {
-                            sorted.sort((a, b) => {
-                              let va: number, vb: number;
-                              if (historySortCol === "__iter__") {
-                                va = a.iteration; vb = b.iteration;
-                              } else if (historySortCol.startsWith("p:")) {
-                                const key = historySortCol.slice(2);
-                                va = Number(a.parameters[key]) || 0;
-                                vb = Number(b.parameters[key]) || 0;
-                              } else {
-                                const key = historySortCol.slice(2);
-                                va = Number(a.kpis[key]) || 0;
-                                vb = Number(b.kpis[key]) || 0;
-                              }
-                              return historySortDir === "asc" ? va - vb : vb - va;
-                            });
-                          } else {
-                            sorted.reverse(); // default: reverse chronological
-                          }
-                          return sorted.map((trial) => {
-                            const isBest = bestResult && trial.iteration === bestResult.iteration;
-                            return (
-                              <tr key={trial.id} className={isBest ? "history-row-best" : ""}>
-                                <td className="history-iter">{trial.iteration}</td>
-                                {Object.values(trial.parameters).map((v, j) => (
-                                  <td key={j} className="mono">{typeof v === "number" ? v.toFixed(3) : String(v)}</td>
-                                ))}
-                                {Object.values(trial.kpis).map((v, j) => (
-                                  <td key={j} className={`mono history-kpi-val ${isBest ? "history-best-val" : ""}`}>
-                                    {typeof v === "number" ? v.toFixed(4) : String(v)}
-                                    {isBest && <span className="history-best-badge">Best</span>}
-                                  </td>
-                                ))}
-                              </tr>
-                            );
-                          });
-                        })()}
-                      </tbody>
-                    </table>
+                  <div className="history-toolbar">
+                    <div className="history-search">
+                      <Filter size={14} />
+                      <input
+                        type="text"
+                        className="history-search-input"
+                        placeholder="Filter trials..."
+                        value={historyFilter}
+                        onChange={(e) => { setHistoryFilter(e.target.value); setHistoryPage(0); }}
+                      />
+                      {historyFilter && (
+                        <button className="history-search-clear" onClick={() => setHistoryFilter("")}>&times;</button>
+                      )}
+                    </div>
+                    <span className="history-sort-hint">Click headers to sort</span>
                   </div>
-                ) : (
+                </div>
+                {trials.length > 0 ? (() => {
+                  // Apply filter
+                  const filterLower = historyFilter.toLowerCase();
+                  let filtered = trials;
+                  if (filterLower) {
+                    filtered = trials.filter((t) => {
+                      const iterStr = String(t.iteration);
+                      const paramStr = Object.entries(t.parameters).map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`).join(" ");
+                      const kpiStr = Object.entries(t.kpis).map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`).join(" ");
+                      return `${iterStr} ${paramStr} ${kpiStr}`.toLowerCase().includes(filterLower);
+                    });
+                  }
+                  // Sort
+                  let sorted = [...filtered];
+                  if (historySortCol) {
+                    sorted.sort((a, b) => {
+                      let va: number, vb: number;
+                      if (historySortCol === "__iter__") {
+                        va = a.iteration; vb = b.iteration;
+                      } else if (historySortCol.startsWith("p:")) {
+                        const key = historySortCol.slice(2);
+                        va = Number(a.parameters[key]) || 0;
+                        vb = Number(b.parameters[key]) || 0;
+                      } else {
+                        const key = historySortCol.slice(2);
+                        va = Number(a.kpis[key]) || 0;
+                        vb = Number(b.kpis[key]) || 0;
+                      }
+                      return historySortDir === "asc" ? va - vb : vb - va;
+                    });
+                  } else {
+                    sorted.reverse();
+                  }
+                  // Paginate
+                  const totalPages = Math.ceil(sorted.length / HISTORY_PAGE_SIZE);
+                  const pageTrials = sorted.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE);
+                  const paramKeys = Object.keys(trials[0].parameters);
+                  const kpiKeys = Object.keys(trials[0].kpis);
+
+                  return (
+                    <>
+                      {filterLower && (
+                        <div className="history-filter-info">
+                          Showing {filtered.length} of {trials.length} trials
+                        </div>
+                      )}
+                      <div className="history-table-wrapper">
+                        <table className="history-table">
+                          <thead>
+                            <tr>
+                              <th className="history-th-sortable" onClick={() => handleHistorySort("__iter__")}>
+                                # {historySortCol === "__iter__" && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                                {historySortCol !== "__iter__" && <ArrowUpDown size={11} className="history-sort-idle" />}
+                              </th>
+                              {paramKeys.map((p) => (
+                                <th key={p} className="history-th-sortable" onClick={() => handleHistorySort(`p:${p}`)}>
+                                  {p}
+                                  {historySortCol === `p:${p}` && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                                  {historySortCol !== `p:${p}` && <ArrowUpDown size={11} className="history-sort-idle" />}
+                                </th>
+                              ))}
+                              {kpiKeys.map((k) => (
+                                <th key={k} className="history-kpi-col history-th-sortable" onClick={() => handleHistorySort(`k:${k}`)}>
+                                  {k}
+                                  {historySortCol === `k:${k}` && (historySortDir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                                  {historySortCol !== `k:${k}` && <ArrowUpDown size={11} className="history-sort-idle" />}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pageTrials.map((trial) => {
+                              const isBest = bestResult && trial.iteration === bestResult.iteration;
+                              const isExpanded = expandedTrialId === trial.id;
+                              return (
+                                <Fragment key={trial.id}>
+                                  <tr
+                                    className={`history-row-clickable ${isBest ? "history-row-best" : ""} ${isExpanded ? "history-row-expanded" : ""}`}
+                                    onClick={() => setExpandedTrialId(isExpanded ? null : trial.id)}
+                                  >
+                                    <td className="history-iter">{trial.iteration}</td>
+                                    {paramKeys.map((p) => (
+                                      <td key={p} className="mono">{typeof trial.parameters[p] === "number" ? (trial.parameters[p] as number).toFixed(3) : String(trial.parameters[p])}</td>
+                                    ))}
+                                    {kpiKeys.map((k) => (
+                                      <td key={k} className={`mono history-kpi-val ${isBest ? "history-best-val" : ""}`}>
+                                        {typeof trial.kpis[k] === "number" ? (trial.kpis[k] as number).toFixed(4) : String(trial.kpis[k])}
+                                        {isBest && <span className="history-best-badge">Best</span>}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                  {isExpanded && (
+                                    <tr className="history-detail-row">
+                                      <td colSpan={1 + paramKeys.length + kpiKeys.length}>
+                                        <div className="history-detail">
+                                          <div className="history-detail-section">
+                                            <span className="history-detail-label">Iteration</span>
+                                            <span className="history-detail-value mono">{trial.iteration}</span>
+                                          </div>
+                                          {paramKeys.map((p) => (
+                                            <div key={p} className="history-detail-section">
+                                              <span className="history-detail-label">{p}</span>
+                                              <span className="history-detail-value mono">
+                                                {typeof trial.parameters[p] === "number" ? (trial.parameters[p] as number).toPrecision(6) : String(trial.parameters[p])}
+                                              </span>
+                                            </div>
+                                          ))}
+                                          {kpiKeys.map((k) => (
+                                            <div key={k} className="history-detail-section">
+                                              <span className="history-detail-label">{k}</span>
+                                              <span className="history-detail-value mono" style={{ fontWeight: 600 }}>
+                                                {typeof trial.kpis[k] === "number" ? (trial.kpis[k] as number).toPrecision(6) : String(trial.kpis[k])}
+                                              </span>
+                                            </div>
+                                          ))}
+                                          {bestResult && (
+                                            <div className="history-detail-section">
+                                              <span className="history-detail-label">vs Best</span>
+                                              <span className="history-detail-value mono">
+                                                {(() => {
+                                                  const trialVal = Object.values(trial.kpis)[0] ?? 0;
+                                                  const bestVal = Object.values(bestResult.kpis)[0] ?? 0;
+                                                  const diff = trialVal - bestVal;
+                                                  return diff === 0 ? "= Best" : `${diff > 0 ? "+" : ""}${diff.toFixed(4)}`;
+                                                })()}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      {/* Pagination */}
+                      {totalPages > 1 && (
+                        <div className="history-pagination">
+                          <button
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
+                            disabled={historyPage === 0}
+                          >
+                            <ChevronLeft size={14} /> Prev
+                          </button>
+                          <span className="history-page-info">
+                            Page {historyPage + 1} of {totalPages}
+                            <span className="history-page-range">
+                              ({historyPage * HISTORY_PAGE_SIZE + 1}–{Math.min((historyPage + 1) * HISTORY_PAGE_SIZE, sorted.length)} of {sorted.length})
+                            </span>
+                          </span>
+                          <button
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => setHistoryPage((p) => Math.min(totalPages - 1, p + 1))}
+                            disabled={historyPage >= totalPages - 1}
+                          >
+                            Next <ChevronRight size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })() : (
                   <p className="empty-state">No experiments recorded yet.</p>
                 )}
               </div>
