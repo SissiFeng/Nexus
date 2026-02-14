@@ -4291,6 +4291,73 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Exploration Debt (Batch 30) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 10) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const edVals = campaign.observations.map((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey]).filter((v: number) => v != null);
+                if (edVals.length < 10) return null;
+                const edGlobalBest = Math.max(...edVals);
+                // actual cumulative regret
+                const edActual: number[] = [];
+                let edCumRegret = 0;
+                edVals.forEach(v => { edCumRegret += edGlobalBest - v; edActual.push(edCumRegret); });
+                // random baseline: average regret per trial * n
+                const edMeanVal = edVals.reduce((s, v) => s + v, 0) / edVals.length;
+                const edRandomRegretPerTrial = edGlobalBest - edMeanVal;
+                const edRandom = edVals.map((_: number, i: number) => edRandomRegretPerTrial * (i + 1));
+                // greedy baseline: sort best-first, cumulative regret
+                const edSorted = [...edVals].sort((a, b) => b - a);
+                const edGreedy: number[] = [];
+                let edGreedyCum = 0;
+                edSorted.forEach(v => { edGreedyCum += edGlobalBest - v; edGreedy.push(edGreedyCum); });
+                // ratio: actual / random at final point
+                const edRatio = edRandom[edRandom.length - 1] > 0 ? edActual[edActual.length - 1] / edRandom[edRandom.length - 1] : 1;
+                const edBadge = edRatio < 0.6 ? "Efficient" : edRatio < 0.85 ? "Exploratory" : "Overpaying";
+                const edBadgeColor = edBadge === "Efficient" ? "var(--color-green, #22c55e)" : edBadge === "Exploratory" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // chart
+                const edW = 260, edH = 75;
+                const edPad = { l: 5, r: 5, t: 6, b: 14 };
+                const edPlotW = edW - edPad.l - edPad.r;
+                const edPlotH = edH - edPad.t - edPad.b;
+                const edMaxY = Math.max(edActual[edActual.length - 1], edRandom[edRandom.length - 1], edGreedy[edGreedy.length - 1]);
+                const edLine = (arr: number[]) => arr.map((v, i) => {
+                  const x = edPad.l + (i / (arr.length - 1)) * edPlotW;
+                  const y = edPad.t + (1 - v / (edMaxY || 1)) * edPlotH;
+                  return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+                }).join(" ");
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Banknote size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Exploration Debt</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: edBadgeColor, color: "#fff" }}>{edBadge}</span>
+                    </div>
+                    <svg width={edW} height={edH} viewBox={`0 0 ${edW} ${edH}`} style={{ display: "block", width: "100%" }}>
+                      {/* random baseline */}
+                      <path d={edLine(edRandom)} fill="none" stroke="var(--color-text-muted, #94a3b8)" strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+                      {/* greedy baseline */}
+                      <path d={edLine(edGreedy)} fill="none" stroke="var(--color-green, #22c55e)" strokeWidth="1" strokeDasharray="2,2" opacity="0.5" />
+                      {/* actual regret */}
+                      <path d={edLine(edActual)} fill="none" stroke={edBadgeColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      {/* legend */}
+                      <line x1={edW - 130} y1={edPad.t + 2} x2={edW - 120} y2={edPad.t + 2} stroke={edBadgeColor} strokeWidth="1.8" />
+                      <text x={edW - 117} y={edPad.t + 5} fontSize="7" fill="var(--color-text-muted, #64748b)">actual</text>
+                      <line x1={edW - 85} y1={edPad.t + 2} x2={edW - 75} y2={edPad.t + 2} stroke="var(--color-text-muted, #94a3b8)" strokeWidth="1" strokeDasharray="4,3" />
+                      <text x={edW - 72} y={edPad.t + 5} fontSize="7" fill="var(--color-text-muted, #64748b)">random</text>
+                      <line x1={edW - 42} y1={edPad.t + 2} x2={edW - 32} y2={edPad.t + 2} stroke="var(--color-green, #22c55e)" strokeWidth="1" strokeDasharray="2,2" />
+                      <text x={edW - 29} y={edPad.t + 5} fontSize="7" fill="var(--color-text-muted, #64748b)">greedy</text>
+                      <text x={edPad.l} y={edH - 1} fontSize="8" fill="var(--color-text-muted, #64748b)">1</text>
+                      <text x={edW - edPad.r} y={edH - 1} textAnchor="end" fontSize="8" fill="var(--color-text-muted, #64748b)">{edVals.length}</text>
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      Regret ratio: {(edRatio * 100).toFixed(0)}% of random — {edBadge === "Efficient" ? "exploration budget well spent." : edBadge === "Exploratory" ? "still gathering useful information." : "high exploration cost, consider more exploitation."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -6815,6 +6882,98 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
                       KPI correlation per unit range explored — higher = more informative parameter.
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Embedding Fidelity (Batch 30) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 10) return null;
+                const efSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (efSpecs.length < 3) return null; // need ≥3 dims for projection to matter
+                const efObs = campaign.observations;
+                const efN = Math.min(efObs.length, 50); // cap for performance
+                const efSample = efObs.slice(-efN);
+                // normalize to [0,1] per parameter
+                const efNorm = efSample.map((o: { parameters: Record<string, number> }) =>
+                  efSpecs.map((s: { name: string; lower?: number; upper?: number }) => {
+                    const range = (s.upper || 1) - (s.lower || 0);
+                    return range > 0 ? ((o.parameters[s.name] || 0) - (s.lower || 0)) / range : 0;
+                  })
+                );
+                // simple PCA: use first 2 principal components via power iteration on covariance
+                const efD = efSpecs.length;
+                const efMeans = Array(efD).fill(0);
+                efNorm.forEach(row => row.forEach((v: number, j: number) => { efMeans[j] += v / efN; }));
+                const efCentered = efNorm.map((row: number[]) => row.map((v: number, j: number) => v - efMeans[j]));
+                // compute 2D projection via simplified SVD: project onto top-2 variance directions
+                // for k-NN preservation, we just need the pairwise distances in original and projected space
+                // Use random projection (fast, good enough for fidelity check)
+                const efSeed = 42;
+                const efRandVec = (seed: number) => {
+                  const v: number[] = [];
+                  let s = seed;
+                  for (let i = 0; i < efD; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; v.push((s / 0x7fffffff) * 2 - 1); }
+                  const norm = Math.sqrt(v.reduce((a, x) => a + x * x, 0)) || 1;
+                  return v.map(x => x / norm);
+                };
+                const efV1 = efRandVec(efSeed);
+                const efV2 = efRandVec(efSeed + 1);
+                // project
+                const efProj = efCentered.map((row: number[]) => [
+                  row.reduce((s: number, v: number, j: number) => s + v * efV1[j], 0),
+                  row.reduce((s: number, v: number, j: number) => s + v * efV2[j], 0),
+                ]);
+                // compute k-NN preservation (k=5)
+                const efK = Math.min(5, efN - 1);
+                const efDist = (a: number[], b: number[]) => Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0));
+                let efPreserved = 0;
+                for (let i = 0; i < efN; i++) {
+                  // high-D neighbors
+                  const efHdDists = efCentered.map((r: number[], j: number) => ({ j, d: j === i ? Infinity : efDist(efCentered[i], r) })).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                  const efHdNeighbors = new Set(efHdDists.slice(0, efK).map((x: { j: number }) => x.j));
+                  // low-D neighbors
+                  const efLdDists = efProj.map((r: number[], j: number) => ({ j, d: j === i ? Infinity : efDist(efProj[i], r) })).sort((a: { d: number }, b: { d: number }) => a.d - b.d);
+                  const efLdNeighbors = new Set(efLdDists.slice(0, efK).map((x: { j: number }) => x.j));
+                  // count intersection
+                  let efIntersect = 0;
+                  efHdNeighbors.forEach(j => { if (efLdNeighbors.has(j)) efIntersect++; });
+                  efPreserved += efIntersect / efK;
+                }
+                const efScore = efPreserved / efN;
+                const efBadge = efScore > 0.7 ? "High Fidelity" : efScore > 0.45 ? "Moderate" : "Low Fidelity";
+                const efBadgeColor = efBadge === "High Fidelity" ? "var(--color-green, #22c55e)" : efBadge === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // gauge arc
+                const efW = 180, efH2 = 100;
+                const efCx = efW / 2, efCy = 85, efR = 65;
+                const efValAngle = Math.PI - efScore * Math.PI;
+                const efArc = (sA: number, eA: number) => {
+                  const x1 = efCx + efR * Math.cos(sA), y1 = efCy - efR * Math.sin(sA);
+                  const x2 = efCx + efR * Math.cos(eA), y2 = efCy - efR * Math.sin(eA);
+                  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${efR},${efR} 0 ${Math.abs(sA - eA) > Math.PI ? 1 : 0} 0 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+                };
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Fingerprint size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Embedding Fidelity</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: efBadgeColor, color: "#fff" }}>{efBadge}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <svg width={efW} height={efH2} viewBox={`0 0 ${efW} ${efH2}`}>
+                        <path d={efArc(Math.PI, 0)} fill="none" stroke="var(--color-border, #e2e8f0)" strokeWidth="10" strokeLinecap="round" />
+                        <path d={efArc(Math.PI, efValAngle)} fill="none" stroke={efBadgeColor} strokeWidth="10" strokeLinecap="round" opacity="0.85" />
+                        <line x1={efCx} y1={efCy} x2={efCx + (efR - 10) * Math.cos(efValAngle)} y2={efCy - (efR - 10) * Math.sin(efValAngle)} stroke="var(--color-text, #1e293b)" strokeWidth="1.5" strokeLinecap="round" />
+                        <circle cx={efCx} cy={efCy} r="3" fill="var(--color-text, #1e293b)" />
+                        <text x={efCx} y={efCy - 18} textAnchor="middle" fontSize="18" fontWeight="700" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">{(efScore * 100).toFixed(0)}%</text>
+                        <text x={efCx} y={efCy - 4} textAnchor="middle" fontSize="9" fill="var(--color-text-muted, #64748b)">k-NN preserved</text>
+                      </svg>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", textAlign: "center", marginTop: "2px" }}>
+                      {efBadge === "High Fidelity" ? "2D projections reliably represent high-D structure." : efBadge === "Moderate" ? "Some distortion — interpret visual clusters cautiously." : "Low preservation — 2D views may be misleading."}
                     </div>
                   </div>
                 );
@@ -10503,6 +10662,92 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* ── Experiment Value Estimate (Batch 30) ── */}
+              {(() => {
+                if (!suggestions?.suggestions?.length || !campaign?.observations?.length || campaign.observations.length < 5) return null;
+                const evSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (evSpecs.length === 0) return null;
+                const kpiKey = Object.keys(campaign.observations[0].kpi_values || {})[0];
+                if (!kpiKey) return null;
+                const evObs = campaign.observations.filter((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey] != null);
+                if (evObs.length < 5) return null;
+                const evBestKpi = Math.max(...evObs.map((o: { kpi_values: Record<string, number> }) => o.kpi_values[kpiKey]));
+                // for each suggestion, predict KPI via k=5 nearest neighbors
+                const evK = Math.min(5, evObs.length);
+                const evData = suggestions.suggestions.map((sug: Record<string, number>, idx: number) => {
+                  const dists: { d: number; kpi: number }[] = [];
+                  evObs.forEach((o: { parameters: Record<string, number>; kpi_values: Record<string, number> }) => {
+                    let sum = 0;
+                    evSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                      const range = (s.upper || 1) - (s.lower || 0);
+                      sum += ((sug[s.name] - o.parameters[s.name]) / (range || 1)) ** 2;
+                    });
+                    dists.push({ d: Math.sqrt(sum), kpi: o.kpi_values[kpiKey] });
+                  });
+                  dists.sort((a, b) => a.d - b.d);
+                  const neighbors = dists.slice(0, evK);
+                  // inverse-distance weighted average
+                  let evWSum = 0, evWTotal = 0;
+                  neighbors.forEach(n => {
+                    const w = 1 / (n.d + 0.001);
+                    evWSum += w * n.kpi;
+                    evWTotal += w;
+                  });
+                  const predicted = evWTotal > 0 ? evWSum / evWTotal : 0;
+                  const delta = predicted - evBestKpi;
+                  // also compute std of neighbors for uncertainty
+                  const nMean = neighbors.reduce((s, n) => s + n.kpi, 0) / neighbors.length;
+                  const nStd = Math.sqrt(neighbors.reduce((s, n) => s + (n.kpi - nMean) ** 2, 0) / neighbors.length);
+                  return { idx: idx + 1, predicted, delta, uncertainty: nStd };
+                });
+                const evMaxDelta = Math.max(...evData.map((d: { delta: number }) => Math.abs(d.delta)), 0.001);
+                const evAvgDelta = evData.reduce((s: number, d: { delta: number }) => s + d.delta, 0) / evData.length;
+                const evBadge = evAvgDelta > -evMaxDelta * 0.1 ? "High Potential" : evAvgDelta > -evMaxDelta * 0.5 ? "Moderate" : "Low Upside";
+                const evBadgeColor = evBadge === "High Potential" ? "var(--color-green, #22c55e)" : evBadge === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const evW = 220, evBarH = 18, evGap = 6;
+                const evH = evData.length * (evBarH + evGap) + 8;
+                const evMidX = evW / 2;
+                const evMaxBar = (evW - 50) / 2;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Calculator size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Experiment Value Estimate</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: evBadgeColor, color: "#fff" }}>{evBadge}</span>
+                    </div>
+                    <svg width={evW} height={evH} viewBox={`0 0 ${evW} ${evH}`} style={{ display: "block", width: "100%" }}>
+                      {/* center = current best */}
+                      <line x1={evMidX} y1={0} x2={evMidX} y2={evH - 4} stroke="var(--color-border, #e2e8f0)" strokeWidth="1" />
+                      <text x={evMidX} y={evH - 1} textAnchor="middle" fontSize="7" fill="var(--color-text-muted, #64748b)">current best</text>
+                      {evData.map((d: { idx: number; delta: number; uncertainty: number }, i: number) => {
+                        const y = i * (evBarH + evGap) + 4;
+                        const barLen = Math.abs(d.delta) / evMaxDelta * evMaxBar;
+                        const barX = d.delta >= 0 ? evMidX : evMidX - barLen;
+                        const color = d.delta >= 0 ? "var(--color-green, #22c55e)" : "var(--color-red, #ef4444)";
+                        // uncertainty whisker
+                        const uncLen = (d.uncertainty / evMaxDelta) * evMaxBar * 0.5;
+                        const tipX = d.delta >= 0 ? evMidX + barLen : evMidX - barLen;
+                        return (
+                          <g key={d.idx}>
+                            <text x="2" y={y + 13} fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text, #1e293b)">#{d.idx}</text>
+                            <rect x={barX} y={y} width={Math.max(barLen, 2)} height={evBarH} rx="3" fill={color} opacity="0.6" />
+                            {/* uncertainty whisker */}
+                            <line x1={tipX - uncLen} y1={y + evBarH / 2} x2={tipX + uncLen} y2={y + evBarH / 2} stroke="var(--color-text-muted, #94a3b8)" strokeWidth="1" />
+                            <line x1={tipX - uncLen} y1={y + 4} x2={tipX - uncLen} y2={y + evBarH - 4} stroke="var(--color-text-muted, #94a3b8)" strokeWidth="0.5" />
+                            <line x1={tipX + uncLen} y1={y + 4} x2={tipX + uncLen} y2={y + evBarH - 4} stroke="var(--color-text-muted, #94a3b8)" strokeWidth="0.5" />
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      k-NN predicted Δ from best — whiskers show neighbor variance.
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -13372,6 +13617,77 @@ export default function Workspace() {
                     </svg>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {psSurpriseCount} of {psObs.length} trials exceeded 2σ surprise — {psBadge === "Predictable" ? "model fits the data well." : psBadge === "Some Surprises" ? "a few unexpected results worth investigating." : "many observations defy local predictions."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Effective Sample Size (Batch 30) ── */}
+              {(() => {
+                if (!campaign?.observations?.length || campaign.observations.length < 10) return null;
+                const esSpecs = (campaign.spec?.parameters || []).filter(
+                  (s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null
+                );
+                if (esSpecs.length === 0) return null;
+                const esObs = campaign.observations;
+                // compute effective N over windows: for each window, count "non-redundant" observations
+                // two observations are redundant if their normalized distance < threshold
+                const esThreshold = 0.1; // 10% of range = too close
+                const esWinSize = Math.max(5, Math.floor(esObs.length / 8));
+                const esRatios: { n: number; effective: number; ratio: number }[] = [];
+                for (let start = 0; start + esWinSize <= esObs.length; start += Math.max(1, Math.floor(esWinSize / 2))) {
+                  const win = esObs.slice(start, start + esWinSize);
+                  // count effective: for each obs, check if it's too close to any earlier obs in window
+                  let esEffective = 0;
+                  for (let i = 0; i < win.length; i++) {
+                    let isRedundant = false;
+                    for (let j = 0; j < i; j++) {
+                      let dist = 0;
+                      esSpecs.forEach((s: { name: string; lower?: number; upper?: number }) => {
+                        const range = (s.upper || 1) - (s.lower || 0);
+                        dist += ((win[i].parameters[s.name] - win[j].parameters[s.name]) / (range || 1)) ** 2;
+                      });
+                      if (Math.sqrt(dist / esSpecs.length) < esThreshold) { isRedundant = true; break; }
+                    }
+                    if (!isRedundant) esEffective++;
+                  }
+                  esRatios.push({ n: win.length, effective: esEffective, ratio: esEffective / win.length });
+                }
+                if (esRatios.length < 3) return null;
+                const esAvgRatio = esRatios.reduce((s, r) => s + r.ratio, 0) / esRatios.length;
+                const esBadge = esAvgRatio > 0.8 ? "High Efficiency" : esAvgRatio > 0.55 ? "Moderate" : "Redundant";
+                const esBadgeColor = esBadge === "High Efficiency" ? "var(--color-green, #22c55e)" : esBadge === "Moderate" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                // bar chart
+                const esW = 260, esBarW = Math.floor(esW / esRatios.length) - 2;
+                const esH = 65;
+                const esPad = { l: 5, r: 5, t: 6, b: 14 };
+                const esPlotH = esH - esPad.t - esPad.b;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+                      <Users size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Effective Sample Size</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px", background: esBadgeColor, color: "#fff" }}>{esBadge}</span>
+                    </div>
+                    <svg width={esW} height={esH} viewBox={`0 0 ${esW} ${esH}`} style={{ display: "block", width: "100%" }}>
+                      {esRatios.map((r, i) => {
+                        const x = esPad.l + i * (esBarW + 2);
+                        const barH = r.ratio * esPlotH;
+                        const color = r.ratio > 0.8 ? "var(--color-green, #22c55e)" : r.ratio > 0.55 ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                        return (
+                          <g key={i}>
+                            <rect x={x} y={esPad.t + esPlotH - barH} width={Math.max(esBarW, 2)} height={barH} rx="2" fill={color} opacity="0.7" />
+                          </g>
+                        );
+                      })}
+                      {/* avg line */}
+                      <line x1={esPad.l} y1={esPad.t + esPlotH * (1 - esAvgRatio)} x2={esW - esPad.r} y2={esPad.t + esPlotH * (1 - esAvgRatio)} stroke="var(--color-text, #1e293b)" strokeWidth="0.8" strokeDasharray="4,3" />
+                      <text x={esW - esPad.r} y={esPad.t + esPlotH * (1 - esAvgRatio) - 2} textAnchor="end" fontSize="8" fontFamily="var(--font-mono)" fill="var(--color-text-muted, #64748b)">avg {(esAvgRatio * 100).toFixed(0)}%</text>
+                      <text x={esPad.l} y={esH - 1} fontSize="8" fill="var(--color-text-muted, #64748b)">early</text>
+                      <text x={esW - esPad.r} y={esH - 1} textAnchor="end" fontSize="8" fill="var(--color-text-muted, #64748b)">recent</text>
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {esBadge === "High Efficiency" ? "Most trials explore unique regions — efficient sampling." : esBadge === "Moderate" ? "Some redundancy — consider increasing exploration." : "Many trials overlap — optimizer may be over-exploiting."}
                     </div>
                   </div>
                 );
