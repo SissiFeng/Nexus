@@ -21,6 +21,29 @@ interface DiagnosticCardsProps {
     improvement_velocity: number;
   };
   tooltips?: Record<string, string>;
+  trendData?: Record<string, number[]>;
+}
+
+function DiagSparkline({ values }: { values: number[] }) {
+  if (values.length < 3) return null;
+  const w = 56, h = 18, pad = 1;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = values.map((v, i) => ({
+    x: pad + (i / (values.length - 1)) * (w - 2 * pad),
+    y: pad + (1 - (v - min) / range) * (h - 2 * pad),
+  }));
+  const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const last = points[points.length - 1];
+  const prev = points[points.length - 2];
+  const trending = last.y < prev.y ? "var(--color-green, #22c55e)" : last.y > prev.y ? "var(--color-red, #ef4444)" : "var(--color-text-muted)";
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ verticalAlign: "middle", marginLeft: "auto", flexShrink: 0, opacity: 0.7 }}>
+      <path d={d} fill="none" stroke={trending} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={last.x} cy={last.y} r="2" fill={trending} />
+    </svg>
+  );
 }
 
 interface MetricConfig {
@@ -90,7 +113,7 @@ const METRICS: Record<string, MetricConfig> = {
   },
 };
 
-export default function DiagnosticCards({ diagnostics, tooltips }: DiagnosticCardsProps) {
+export default function DiagnosticCards({ diagnostics, tooltips, trendData }: DiagnosticCardsProps) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'green':
@@ -137,11 +160,14 @@ export default function DiagnosticCards({ diagnostics, tooltips }: DiagnosticCar
                 }}
               />
             </div>
-            <div
-              className="stat-value"
-              style={{ marginBottom: '4px', fontSize: '1.3rem' }}
-            >
-              {config.format(value)}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div
+                className="stat-value"
+                style={{ marginBottom: '4px', fontSize: '1.3rem' }}
+              >
+                {config.format(value)}
+              </div>
+              {trendData?.[key] && <DiagSparkline values={trendData[key]} />}
             </div>
             <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
               {config.description}

@@ -604,6 +604,27 @@ a:hover {
   background: #dc2626;
 }
 
+.btn-accent {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: white;
+  border-color: #d97706;
+  font-weight: 600;
+}
+
+.btn-accent:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.25);
+}
+
+[data-theme="dark"] .btn-accent {
+  background: linear-gradient(135deg, #b45309, #92400e);
+  border-color: #92400e;
+}
+
+[data-theme="dark"] .btn-accent:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d97706, #b45309);
+}
+
 /* ── Forms ── */
 .input,
 .search-input {

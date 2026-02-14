@@ -726,19 +726,67 @@ export default function Workspace() {
                 {loadingDiag ? (
                   <div className="loading">Loading diagnostics...</div>
                 ) : diagnostics ? (
-                  <RealDiagnosticCards
-                    diagnostics={{
-                      convergence_trend: diagnostics.convergence_trend,
-                      exploration_coverage: diagnostics.exploration_coverage,
-                      failure_rate: diagnostics.failure_rate,
-                      noise_estimate: diagnostics.noise_estimate,
-                      plateau_length: diagnostics.plateau_length,
-                      signal_to_noise: diagnostics.signal_to_noise_ratio,
-                      best_kpi_value: diagnostics.best_kpi_value,
-                      improvement_velocity: diagnostics.improvement_velocity,
-                    }}
-                    tooltips={DIAGNOSTIC_TOOLTIPS}
-                  />
+                  (() => {
+                    const trendData: Record<string, number[]> = {};
+                    if (trials.length >= 5) {
+                      const chrono = [...trials].sort((a, b) => a.iteration - b.iteration);
+                      const windowSize = Math.max(5, Math.floor(chrono.length / 10));
+                      const nPoints = Math.min(12, Math.ceil(chrono.length / windowSize));
+                      // Rolling best KPI
+                      const bestKpiTrend: number[] = [];
+                      let runningBest = Infinity;
+                      for (let i = 0; i < nPoints; i++) {
+                        const end = Math.min(chrono.length, (i + 1) * windowSize);
+                        for (let j = i * windowSize; j < end; j++) {
+                          const val = Number(Object.values(chrono[j].kpis)[0]) || 0;
+                          if (val < runningBest) runningBest = val;
+                        }
+                        bestKpiTrend.push(runningBest);
+                      }
+                      trendData.best_kpi_value = bestKpiTrend;
+                      // Rolling failure rate (proportion of "bad" trials per window — use high KPI as proxy)
+                      const kpiVals = chrono.map((t) => Number(Object.values(t.kpis)[0]) || 0);
+                      const median = [...kpiVals].sort((a, b) => a - b)[Math.floor(kpiVals.length / 2)];
+                      const failTrend: number[] = [];
+                      for (let i = 0; i < nPoints; i++) {
+                        const start = i * windowSize;
+                        const end = Math.min(chrono.length, (i + 1) * windowSize);
+                        const slice = kpiVals.slice(start, end);
+                        const failRate = slice.filter((v) => v > median * 1.5).length / slice.length;
+                        failTrend.push(failRate);
+                      }
+                      trendData.failure_rate = failTrend;
+                      // Rolling improvement velocity
+                      const velTrend: number[] = [];
+                      for (let i = 0; i < nPoints; i++) {
+                        const start = i * windowSize;
+                        const end = Math.min(chrono.length, (i + 1) * windowSize);
+                        const slice = kpiVals.slice(start, end);
+                        if (slice.length >= 2) {
+                          velTrend.push((slice[slice.length - 1] - slice[0]) / slice.length);
+                        } else {
+                          velTrend.push(0);
+                        }
+                      }
+                      trendData.improvement_velocity = velTrend;
+                    }
+                    return (
+                      <RealDiagnosticCards
+                        diagnostics={{
+                          convergence_trend: diagnostics.convergence_trend,
+                          exploration_coverage: diagnostics.exploration_coverage,
+                          failure_rate: diagnostics.failure_rate,
+                          noise_estimate: diagnostics.noise_estimate,
+                          plateau_length: diagnostics.plateau_length,
+                          signal_to_noise: diagnostics.signal_to_noise_ratio,
+                          best_kpi_value: diagnostics.best_kpi_value,
+                          improvement_velocity: diagnostics.improvement_velocity,
+                        }}
+                        tooltips={DIAGNOSTIC_TOOLTIPS}
+                        trendData={trendData}
+                      />
+                    );
+                  })()
                 ) : (
                   <p className="empty-state">
                     Diagnostics unavailable. Start a campaign to see health metrics.
@@ -921,6 +969,123 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Parameter-to-Parameter Correlation Heatmap */}
+              {trials.length >= 5 && (() => {
+                const paramNames = Object.keys(trials[0].parameters);
+                if (paramNames.length < 2) return null;
+                // Compute full correlation matrix
+                const n = trials.length;
+                const means: Record<string, number> = {};
+                const stds: Record<string, number> = {};
+                for (const p of paramNames) {
+                  const vals = trials.map((t) => Number(t.parameters[p]) || 0);
+                  means[p] = vals.reduce((a, b) => a + b, 0) / n;
+                  stds[p] = Math.sqrt(vals.reduce((a, v) => a + (v - means[p]) ** 2, 0) / n);
+                }
+                const corrMatrix: number[][] = paramNames.map((pi) =>
+                  paramNames.map((pj) => {
+                    if (pi === pj) return 1;
+                    if (stds[pi] === 0 || stds[pj] === 0) return 0;
+                    const cov = trials.reduce((a, t) =>
+                      a + (Number(t.parameters[pi]) - means[pi]) * (Number(t.parameters[pj]) - means[pj]), 0) / n;
+                    return cov / (stds[pi] * stds[pj]);
+                  })
+                );
+                const cellSize = Math.min(44, Math.max(28, 300 / paramNames.length));
+                const labelW = 70;
+                const svgW = labelW + paramNames.length * cellSize;
+                const svgH = labelW + paramNames.length * cellSize;
+                const corrColor = (v: number) => {
+                  const abs = Math.abs(v);
+                  if (v > 0) return `rgba(37, 99, 235, ${abs * 0.8})`;
+                  if (v < 0) return `rgba(220, 38, 38, ${abs * 0.8})`;
+                  return "transparent";
+                };
+                return (
+                  <div className="card">
+                    <h2>Parameter Correlation Heatmap</h2>
+                    <p style={{ fontSize: "0.82rem", color: "var(--color-text-muted)", marginBottom: "16px" }}>
+                      Pearson correlation between parameter pairs. Blue = positive, Red = negative. Strong inter-parameter correlations may indicate redundancy.
+                    </p>
+                    <div style={{ overflowX: "auto" }}>
+                      <svg width={svgW} height={svgH} style={{ display: "block" }}>
+                        {/* Column labels (top) */}
+                        {paramNames.map((p, j) => (
+                          <text
+                            key={`cl-${j}`}
+                            x={labelW + j * cellSize + cellSize / 2}
+                            y={labelW - 6}
+                            textAnchor="end"
+                            fontSize="10"
+                            fontFamily="var(--font-mono)"
+                            fill="var(--color-text-muted)"
+                            transform={`rotate(-45 ${labelW + j * cellSize + cellSize / 2} ${labelW - 6})`}
+                          >
+                            {p.length > 8 ? p.slice(0, 7) + "…" : p}
+                          </text>
+                        ))}
+                        {/* Row labels + cells */}
+                        {paramNames.map((pi, i) => (
+                          <g key={`row-${i}`}>
+                            <text
+                              x={labelW - 6}
+                              y={labelW + i * cellSize + cellSize / 2 + 3}
+                              textAnchor="end"
+                              fontSize="10"
+                              fontFamily="var(--font-mono)"
+                              fill="var(--color-text-muted)"
+                            >
+                              {pi.length > 8 ? pi.slice(0, 7) + "…" : pi}
+                            </text>
+                            {paramNames.map((_pj, j) => {
+                              const v = corrMatrix[i][j];
+                              return (
+                                <g key={`cell-${i}-${j}`}>
+                                  <rect
+                                    x={labelW + j * cellSize}
+                                    y={labelW + i * cellSize}
+                                    width={cellSize - 1}
+                                    height={cellSize - 1}
+                                    rx="3"
+                                    fill={corrColor(v)}
+                                    stroke="var(--color-border)"
+                                    strokeWidth="0.5"
+                                  >
+                                    <title>{`${paramNames[i]} vs ${paramNames[j]}: ${v.toFixed(3)}`}</title>
+                                  </rect>
+                                  {cellSize >= 32 && (
+                                    <text
+                                      x={labelW + j * cellSize + (cellSize - 1) / 2}
+                                      y={labelW + i * cellSize + (cellSize - 1) / 2 + 3}
+                                      textAnchor="middle"
+                                      fontSize="9"
+                                      fontFamily="var(--font-mono)"
+                                      fontWeight="600"
+                                      fill={Math.abs(v) > 0.4 ? "white" : "var(--color-text-muted)"}
+                                    >
+                                      {i === j ? "1" : v.toFixed(2)}
+                                    </text>
+                                  )}
+                                </g>
+                              );
+                            })}
+                          </g>
+                        ))}
+                      </svg>
+                    </div>
+                    {/* Legend */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                      <span style={{ display: "inline-block", width: "14px", height: "14px", borderRadius: "3px", background: "rgba(220, 38, 38, 0.7)" }} />
+                      <span>Negative</span>
+                      <span style={{ display: "inline-block", width: "14px", height: "14px", borderRadius: "3px", background: "var(--color-border)" }} />
+                      <span>Zero</span>
+                      <span style={{ display: "inline-block", width: "14px", height: "14px", borderRadius: "3px", background: "rgba(37, 99, 235, 0.7)" }} />
+                      <span>Positive</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Pareto Front — shown when 2+ objectives are configured */}
               {(() => {
                 const objNames = campaign.objective_names ?? [];
@@ -1096,6 +1261,49 @@ export default function Workspace() {
                         <button className="history-search-clear" onClick={() => setHistoryFilter("")}>&times;</button>
                       )}
                     </div>
+                    {bestResult && (
+                      <button
+                        className="btn btn-sm btn-accent"
+                        onClick={() => {
+                          // Find best trial's position in sorted list
+                          const filterLower2 = historyFilter.toLowerCase();
+                          let filtered2 = trials;
+                          if (filterLower2) {
+                            filtered2 = trials.filter((t) => {
+                              const iterStr = String(t.iteration);
+                              const paramStr = Object.entries(t.parameters).map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`).join(" ");
+                              const kpiStr = Object.entries(t.kpis).map(([k, v]) => `${k}=${typeof v === "number" ? v.toFixed(4) : v}`).join(" ");
+                              return `${iterStr} ${paramStr} ${kpiStr}`.toLowerCase().includes(filterLower2);
+                            });
+                          }
+                          let sorted2 = [...filtered2];
+                          if (historySortCol) {
+                            sorted2.sort((a, b) => {
+                              let va: number, vb: number;
+                              if (historySortCol === "__iter__") { va = a.iteration; vb = b.iteration; }
+                              else if (historySortCol.startsWith("p:")) { const key = historySortCol.slice(2); va = Number(a.parameters[key]) || 0; vb = Number(b.parameters[key]) || 0; }
+                              else { const key = historySortCol.slice(2); va = Number(a.kpis[key]) || 0; vb = Number(b.kpis[key]) || 0; }
+                              return historySortDir === "asc" ? va - vb : vb - va;
+                            });
+                          } else {
+                            sorted2.reverse();
+                          }
+                          const bestIdx = sorted2.findIndex((t) => t.iteration === bestResult.iteration);
+                          if (bestIdx >= 0) {
+                            const targetPage = Math.floor(bestIdx / HISTORY_PAGE_SIZE);
+                            setHistoryPage(targetPage);
+                            // Expand the best trial and scroll to it
+                            setExpandedTrialId(bestResult.id);
+                            setTimeout(() => {
+                              document.querySelector(".history-row-best")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                            }, 100);
+                          }
+                        }}
+                        title="Jump to best trial"
+                      >
+                        <Trophy size={13} /> Jump to Best
+                      </button>
+                    )}
                     <button
                       className="btn btn-sm btn-secondary"
                       onClick={handleExportHistoryCSV}

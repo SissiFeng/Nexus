@@ -319,8 +319,12 @@ export default function SuggestionCard({
                   if (bestVal === undefined) return null;
                   const delta = sugVal - bestVal;
                   const spec = specsMap.get(key);
-                  const range = spec ? (spec.upper ?? 1) - (spec.lower ?? 0) : 1;
+                  const lower = spec?.lower ?? 0;
+                  const upper = spec?.upper ?? 1;
+                  const range = upper - lower;
                   const pctChange = range > 0 ? (delta / range) * 100 : 0;
+                  const sugPct = range > 0 ? Math.max(0, Math.min(100, ((sugVal - lower) / range) * 100)) : 50;
+                  const bestPct = range > 0 ? Math.max(0, Math.min(100, ((bestVal - lower) / range) * 100)) : 50;
                   return (
                     <div key={key} className="sug-comparison-row">
                       <span className="sug-comparison-name">{key}</span>
@@ -330,6 +334,24 @@ export default function SuggestionCard({
                         {delta > 0 ? '+' : ''}{delta.toFixed(3)}
                         <span className="sug-comparison-pct">({pctChange > 0 ? '+' : ''}{pctChange.toFixed(0)}%)</span>
                       </span>
+                      {range > 0 && (
+                        <div className="sug-comparison-bars">
+                          <div className="sug-compare-track">
+                            <div className="sug-compare-marker sug-compare-best" style={{ left: `${bestPct}%` }} title={`Best: ${bestVal.toFixed(3)}`} />
+                            <div className="sug-compare-marker sug-compare-sug" style={{ left: `${sugPct}%` }} title={`Suggested: ${sugVal.toFixed(3)}`} />
+                            {Math.abs(sugPct - bestPct) > 1 && (
+                              <div
+                                className="sug-compare-delta-bar"
+                                style={{
+                                  left: `${Math.min(sugPct, bestPct)}%`,
+                                  width: `${Math.abs(sugPct - bestPct)}%`,
+                                  background: delta > 0 ? 'rgba(59, 130, 246, 0.25)' : 'rgba(249, 115, 22, 0.25)',
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -624,7 +646,7 @@ export default function SuggestionCard({
         }
         .sug-comparison-header {
           display: grid;
-          grid-template-columns: 1.5fr 1fr 1fr 1.2fr;
+          grid-template-columns: 1.3fr 0.8fr 0.8fr 1fr;
           gap: 6px;
           padding: 6px 8px;
           font-weight: 600;
@@ -636,10 +658,43 @@ export default function SuggestionCard({
         }
         .sug-comparison-row {
           display: grid;
-          grid-template-columns: 1.5fr 1fr 1fr 1.2fr;
+          grid-template-columns: 1.3fr 0.8fr 0.8fr 1fr;
           gap: 6px;
           padding: 5px 8px;
           border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+        }
+        .sug-comparison-bars {
+          grid-column: 1 / -1;
+          padding: 2px 0 4px;
+        }
+        .sug-compare-track {
+          position: relative;
+          height: 6px;
+          background: var(--color-border);
+          border-radius: 3px;
+          overflow: visible;
+        }
+        .sug-compare-marker {
+          position: absolute;
+          top: -2px;
+          width: 3px;
+          height: 10px;
+          border-radius: 1.5px;
+          transform: translateX(-1.5px);
+          z-index: 1;
+        }
+        .sug-compare-best {
+          background: var(--color-text-muted);
+          opacity: 0.5;
+        }
+        .sug-compare-sug {
+          background: var(--color-primary);
+        }
+        .sug-compare-delta-bar {
+          position: absolute;
+          top: 0;
+          height: 100%;
+          border-radius: 3px;
         }
         .sug-comparison-row:last-child {
           border-bottom: none;
