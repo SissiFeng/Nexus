@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import {
   LayoutDashboard,
   Search,
@@ -35,6 +35,7 @@ import {
   Filter,
   TrendingDown,
   Hash,
+  Home,
 } from "lucide-react";
 import { useCampaign } from "../hooks/useCampaign";
 import { ChatPanel } from "../components/ChatPanel";
@@ -338,10 +339,41 @@ export default function Workspace() {
       })
     : null;
 
+  const handleExportHistoryCSV = () => {
+    if (trials.length === 0) return;
+    const paramKeys = Object.keys(trials[0].parameters);
+    const kpiKeys = Object.keys(trials[0].kpis);
+    const headers = ["iteration", ...paramKeys, ...kpiKeys];
+    const csvContent = [
+      headers.join(","),
+      ...trials.map((t) => [
+        t.iteration,
+        ...paramKeys.map((p) => t.parameters[p] ?? ""),
+        ...kpiKeys.map((k) => t.kpis[k] ?? ""),
+      ].join(",")),
+    ].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `history-${id.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <ErrorBoundary>
     <div className="workspace-container">
       <div className={`workspace-main ${chatOpen ? "chat-open" : ""}`}>
+        {/* Breadcrumb */}
+        <div className="workspace-breadcrumb">
+          <Link to="/" className="breadcrumb-link"><Home size={13} /> Dashboard</Link>
+          <ChevronRight size={12} className="breadcrumb-sep" />
+          <span className="breadcrumb-current">{campaign.name}</span>
+        </div>
+
         {/* Header */}
         <div className="workspace-header">
           <div>
@@ -884,6 +916,13 @@ export default function Workspace() {
                         <button className="history-search-clear" onClick={() => setHistoryFilter("")}>&times;</button>
                       )}
                     </div>
+                    <button
+                      className="btn btn-sm btn-secondary"
+                      onClick={handleExportHistoryCSV}
+                      title="Download all trials as CSV"
+                    >
+                      <Download size={13} /> CSV
+                    </button>
                     <span className="history-sort-hint">Click headers to sort</span>
                   </div>
                 </div>
@@ -1210,6 +1249,39 @@ export default function Workspace() {
           display: flex;
           height: calc(100vh - 56px);
           position: relative;
+        }
+
+        .workspace-breadcrumb {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 24px;
+          background: var(--color-surface);
+          border-bottom: 1px solid var(--color-border-subtle);
+          font-size: 0.78rem;
+        }
+
+        .breadcrumb-link {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          color: var(--color-text-muted);
+          text-decoration: none;
+          transition: color var(--transition-fast);
+        }
+
+        .breadcrumb-link:hover {
+          color: var(--color-primary);
+        }
+
+        .breadcrumb-sep {
+          color: var(--color-text-muted);
+          opacity: 0.5;
+        }
+
+        .breadcrumb-current {
+          color: var(--color-text);
+          font-weight: 500;
         }
 
         .workspace-main {
