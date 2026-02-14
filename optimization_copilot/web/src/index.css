@@ -2717,6 +2717,11 @@ a:hover {
   position: relative;
 }
 
+.history-kpi-cell {
+  display: inline-flex;
+  align-items: center;
+}
+
 .history-best-val {
   font-weight: 700;
   color: var(--color-green);

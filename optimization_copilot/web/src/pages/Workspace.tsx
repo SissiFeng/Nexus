@@ -74,6 +74,27 @@ const DIAGNOSTIC_TOOLTIPS: Record<string, string> = {
   improvement_velocity: "Recent rate of improvement. Near 0 = diminishing returns.",
 };
 
+function MiniSparkline({ values, highlightIdx }: { values: number[]; highlightIdx: number }) {
+  if (values.length < 2) return null;
+  const w = 48, h = 16, pad = 1;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const points = values.map((v, i) => {
+    const x = pad + (i / (values.length - 1)) * (w - 2 * pad);
+    const y = pad + (1 - (v - min) / range) * (h - 2 * pad);
+    return { x, y };
+  });
+  const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const hl = points[highlightIdx];
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ verticalAlign: "middle", marginLeft: "6px", flexShrink: 0 }}>
+      <path d={pathD} fill="none" stroke="var(--color-primary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
+      {hl && <circle cx={hl.x} cy={hl.y} r="2" fill="var(--color-primary)" />}
+    </svg>
+  );
+}
+
 export default function Workspace() {
   const { id } = useParams<{ id: string }>();
   const { campaign, loading, error, refresh, lastUpdated } = useCampaign(id);
@@ -1070,6 +1091,20 @@ export default function Workspace() {
                   const paramKeys = Object.keys(trials[0].parameters);
                   const kpiKeys = Object.keys(trials[0].kpis);
 
+                  // Build chronological KPI arrays for sparklines
+                  const chronoTrials = [...trials].sort((a, b) => a.iteration - b.iteration);
+                  const SPARK_WINDOW = 10;
+                  const getSparkData = (iteration: number, kpiKey: string) => {
+                    const idx = chronoTrials.findIndex((t) => t.iteration === iteration);
+                    if (idx < 0) return null;
+                    const start = Math.max(0, idx - SPARK_WINDOW);
+                    const end = Math.min(chronoTrials.length, idx + SPARK_WINDOW + 1);
+                    const window = chronoTrials.slice(start, end);
+                    const vals = window.map((t) => Number(t.kpis[kpiKey]) || 0);
+                    const hlIdx = idx - start;
+                    return { values: vals, highlightIdx: hlIdx };
+                  };
+
                   return (
                     <>
                       {filterLower && (
@@ -1115,12 +1150,18 @@ export default function Workspace() {
                                     {paramKeys.map((p) => (
                                       <td key={p} className="mono">{typeof trial.parameters[p] === "number" ? (trial.parameters[p] as number).toFixed(3) : String(trial.parameters[p])}</td>
                                     ))}
-                                    {kpiKeys.map((k) => (
-                                      <td key={k} className={`mono history-kpi-val ${isBest ? "history-best-val" : ""}`}>
-                                        {typeof trial.kpis[k] === "number" ? (trial.kpis[k] as number).toFixed(4) : String(trial.kpis[k])}
-                                        {isBest && <span className="history-best-badge">Best</span>}
-                                      </td>
-                                    ))}
+                                    {kpiKeys.map((k) => {
+                                      const spark = getSparkData(trial.iteration, k);
+                                      return (
+                                        <td key={k} className={`mono history-kpi-val ${isBest ? "history-best-val" : ""}`}>
+                                          <span className="history-kpi-cell">
+                                            <span>{typeof trial.kpis[k] === "number" ? (trial.kpis[k] as number).toFixed(4) : String(trial.kpis[k])}</span>
+                                            {spark && <MiniSparkline values={spark.values} highlightIdx={spark.highlightIdx} />}
+                                          </span>
+                                          {isBest && <span className="history-best-badge">Best</span>}
+                                        </td>
+                                      );
+                                    })}
                                   </tr>
                                   {isExpanded && (
                                     <tr className="history-detail-row">
