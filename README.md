@@ -353,10 +353,6 @@ The platform works without an API key — AI chat features will return basic ana
 
 ---
 
-## Built With
-
-This project was built entirely using [Claude Code](https://claude.com/claude-code) powered by Claude Opus 4.6. The development spanned 37+ feature batches (148 inline visualizations), 99+ commits, and 18,000+ lines in the main Workspace component — all generated through collaborative AI-assisted development.
-
 Key stats:
 - **364 Python source files** across 80+ subpackages
 - **155 test files** with 6,300+ tests
