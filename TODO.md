@@ -1,4 +1,4 @@
-# Optimization Copilot — Remaining TODO
+# Nexus — Remaining TODO
 
 ## Frontend Enhancements (Not Yet Implemented)
 

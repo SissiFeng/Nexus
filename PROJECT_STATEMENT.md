@@ -1,6 +1,6 @@
 # Project Statement
 
-## Optimization Copilot
+## Nexus
 
 **An intelligent optimization platform that transforms how scientists interact with Bayesian optimization — from black-box tool to transparent research partner.**
 
@@ -12,7 +12,7 @@ Academic literature consistently identifies two barriers: **opacity** (scientist
 
 ### Solution
 
-Optimization Copilot is a web-based platform that wraps Bayesian optimization with an intelligent diagnostic and visualization layer. It provides:
+Nexus is a web-based platform that wraps Bayesian optimization with an intelligent diagnostic and visualization layer. It provides:
 
 1. **Zero-code campaign setup** — Upload CSV data, map columns visually, set bounds, and start optimizing
 2. **Real-time diagnostic intelligence** — 148+ inline micro-visualizations that surface problems before they waste trials
@@ -30,7 +30,7 @@ The platform acts as a research partner, not a black box. It answers the questio
 
 ### Impact
 
-By making optimization transparent and accessible, Optimization Copilot enables scientists to:
+By making optimization transparent and accessible, Nexus enables scientists to:
 - **Run 2-3x more efficient campaigns** by catching problems early (acquisition collapse, redundant suggestions, boundary hugging)
 - **Build intuition** about their search spaces through interactive exploration
 - **Trust the process** because every recommendation is explained
@@ -40,9 +40,9 @@ By making optimization transparent and accessible, Optimization Copilot enables 
 
 # Project Description
 
-## What is Optimization Copilot?
+## What is Nexus?
 
-Optimization Copilot is a full-stack web application for scientific experimental optimization. It combines a Python backend (FastAPI) with a React frontend to provide an end-to-end platform for running, monitoring, and understanding Bayesian optimization campaigns.
+Nexus is a full-stack web application for scientific experimental optimization. It combines a Python backend (FastAPI) with a React frontend to provide an end-to-end platform for running, monitoring, and understanding Bayesian optimization campaigns.
 
 ### Core Features
 
@@ -110,7 +110,7 @@ Client-side algorithms include:
 
 ## The Experience
 
-Building Optimization Copilot with Claude Opus 4.6 via Claude Code was a sustained, multi-session collaboration spanning 37+ feature batches (148 features), 99 commits, and thousands of lines of production React/TypeScript code. Here are honest reflections on working with the model.
+Building Nexus with Claude Opus 4.6 via Claude Code was a sustained, multi-session collaboration spanning 37+ feature batches (148 features), 99 commits, and thousands of lines of production React/TypeScript code. Here are honest reflections on working with the model.
 
 ## What Worked Exceptionally Well
 

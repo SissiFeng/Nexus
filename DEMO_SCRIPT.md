@@ -1,4 +1,4 @@
-# Optimization Copilot — 3-Minute Demo Script
+# Nexus — 3-Minute Demo Script
 
 ## Setup
 - Open browser to `http://localhost:5173`
@@ -10,7 +10,7 @@
 
 **Dashboard** — Show the clean landing page with campaign cards, search, and tag filters.
 
-> "This is Optimization Copilot — an intelligent platform that helps scientists run Bayesian optimization campaigns without writing code."
+> "This is Nexus — an intelligent platform that helps scientists run Bayesian optimization campaigns without writing code."
 
 Click **"New Campaign"** in the nav bar.
 
@@ -92,7 +92,7 @@ Show:
 
 Navigate back to **Dashboard**.
 
-> "Optimization Copilot: 148+ inline visualizations, real-time diagnostics, zero-code setup. Built for scientists who want to understand their optimization, not just run it."
+> "Nexus: 148+ inline visualizations, real-time diagnostics, zero-code setup. Built for scientists who want to understand their optimization, not just run it."
 
 ---
 

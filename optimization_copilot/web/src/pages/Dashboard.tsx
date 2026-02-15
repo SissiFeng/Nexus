@@ -433,7 +433,7 @@ export default function Dashboard() {
             {/* Getting Started */}
             <div className="getting-started">
               <div className="gs-hero">
-                <h2 className="gs-hero-title">Welcome to Optimization Copilot</h2>
+                <h2 className="gs-hero-title">Welcome to Nexus</h2>
                 <p className="gs-hero-subtitle">
                   An intelligent platform that helps scientists discover optimal experimental
                   conditions using Bayesian optimization. Upload your data, and let the AI

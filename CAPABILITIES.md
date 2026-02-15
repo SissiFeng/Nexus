@@ -1,4 +1,4 @@
-# Optimization Copilot — Capability Overview
+# Nexus — Capability Overview
 
 > **One-line positioning:** An intelligent optimization decision layer that automatically selects, switches, and adjusts optimization strategies based on experimental history, with fully traceable decision explanations. Supports cross-domain generalization, compliance auditing, deterministic replay, automated data import, cross-project meta-learning, and rich visualization.
 
