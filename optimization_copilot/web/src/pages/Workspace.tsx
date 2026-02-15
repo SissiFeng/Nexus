@@ -4636,6 +4636,86 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Importance Dynamics */}
+              {trials.length >= 20 && (() => {
+                const idSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (idSpecs.length < 2) return null;
+                const idKey = Object.keys(trials[0].kpis)[0];
+                if (!idKey) return null;
+                const idNumWin = 5;
+                const idWinSize = Math.floor(trials.length / idNumWin);
+                const idParamNames = idSpecs.slice(0, 8).map((s: { name: string }) => s.name);
+                const idRanks: number[][] = [];
+                for (let w = 0; w < idNumWin; w++) {
+                  const winTrials = trials.slice(w * idWinSize, (w + 1) * idWinSize);
+                  if (winTrials.length < 3) continue;
+                  const kpis = winTrials.map((t: { kpis: Record<string, number> }) => t.kpis[idKey] ?? 0);
+                  const kpiMean = kpis.reduce((s: number, v: number) => s + v, 0) / kpis.length;
+                  const kpiStd = Math.sqrt(kpis.reduce((s: number, v: number) => s + (v - kpiMean) ** 2, 0) / kpis.length) || 0.001;
+                  const importances = idParamNames.map((pn: string) => {
+                    const pVals = winTrials.map((t: { parameters: Record<string, number> }) => t.parameters[pn] ?? 0);
+                    const pMean = pVals.reduce((s: number, v: number) => s + v, 0) / pVals.length;
+                    const pStd = Math.sqrt(pVals.reduce((s: number, v: number) => s + (v - pMean) ** 2, 0) / pVals.length) || 0.001;
+                    const cov = winTrials.reduce((s: number, t: { parameters: Record<string, number>; kpis: Record<string, number> }, i: number) => s + ((t.parameters[pn] ?? 0) - pMean) * (kpis[i] - kpiMean), 0) / winTrials.length;
+                    return Math.abs(cov / (pStd * kpiStd));
+                  });
+                  const sorted = importances.map((v: number, i: number) => ({ v, i })).sort((a: { v: number }, b: { v: number }) => b.v - a.v);
+                  const ranks = new Array(idParamNames.length).fill(0);
+                  sorted.forEach((item: { i: number }, rank: number) => { ranks[item.i] = rank + 1; });
+                  idRanks.push(ranks);
+                }
+                if (idRanks.length < 3) return null;
+                const idVolatility = idParamNames.map((_: string, pi: number) => {
+                  let changes = 0;
+                  for (let w = 1; w < idRanks.length; w++) changes += Math.abs(idRanks[w][pi] - idRanks[w - 1][pi]);
+                  return changes / (idRanks.length - 1);
+                });
+                const idAvgVol = idVolatility.reduce((s: number, v: number) => s + v, 0) / idVolatility.length;
+                const idBadge = idAvgVol < 0.8 ? "Stable Rankings" : idAvgVol < 1.5 ? "Shifting" : "Volatile";
+                const idBadgeColor = idBadge === "Stable Rankings" ? "var(--color-green, #22c55e)" : idBadge === "Shifting" ? "var(--color-yellow, #eab308)" : "var(--color-red, #ef4444)";
+                const idW = 260, idH = 90, idPadL = 50, idPadR = 8, idPadT = 8, idPadB = 16;
+                const idPlotW = idW - idPadL - idPadR;
+                const idPlotH = idH - idPadT - idPadB;
+                const idColors = ["#3b82f6", "#ef4444", "#22c55e", "#eab308", "#8b5cf6", "#f97316", "#06b6d4", "#ec4899"];
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <BarChart3 size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Importance Dynamics</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: idBadgeColor, background: `color-mix(in srgb, ${idBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{idBadge}</span>
+                    </div>
+                    <svg width={idW} height={idH} viewBox={`0 0 ${idW} ${idH}`} style={{ width: "100%", height: "auto" }}>
+                      {idParamNames.map((pn: string, pi: number) => {
+                        const color = idColors[pi % idColors.length];
+                        const points = idRanks.map((ranks: number[], wi: number) => ({
+                          x: idPadL + (wi / (idRanks.length - 1)) * idPlotW,
+                          y: idPadT + ((ranks[pi] - 1) / Math.max(idParamNames.length - 1, 1)) * idPlotH,
+                        }));
+                        const path = points.map((p: { x: number; y: number }, i: number) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                        return (
+                          <g key={pn}>
+                            <path d={path} fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" opacity={0.8} />
+                            {points.map((p: { x: number; y: number }, i: number) => <circle key={i} cx={p.x} cy={p.y} r={2.5} fill={color} />)}
+                            <text x={idPadL - 4} y={points[0].y + 3} fontSize={7} fill={color} textAnchor="end" style={{ fontFamily: "var(--font-mono)" }}>{pn.length > 6 ? pn.substring(0, 5) + "…" : pn}</text>
+                          </g>
+                        );
+                      })}
+                      {idRanks.map((_: number[], wi: number) => (
+                        <text key={wi} x={idPadL + (wi / (idRanks.length - 1)) * idPlotW} y={idH - 2} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle">W{wi + 1}</text>
+                      ))}
+                      <text x={idPadL - 4} y={idPadT + 3} fontSize={6} fill="var(--color-text-muted)" textAnchor="end">#1</text>
+                      <text x={idPadL - 4} y={idPadT + idPlotH + 3} fontSize={6} fill="var(--color-text-muted)" textAnchor="end">#{idParamNames.length}</text>
+                    </svg>
+                    <div style={{ fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      avg rank change: {idAvgVol.toFixed(1)} per window · {idRanks.length} windows
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {idBadge === "Stable Rankings" ? "Parameter importance is consistent — reliable feature rankings throughout." : idBadge === "Shifting" ? "Some parameters change importance over time — monitor for phase transitions." : "Importance rankings shift frequently — the optimization landscape may be complex."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -7557,6 +7637,90 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {szBadge === "Mostly Stable" ? "Most parameter regions yield consistent results — predictable optimization landscape." : szBadge === "Mixed" ? "Some parameter regions are volatile — be cautious when exploring those zones." : "KPI varies widely across parameter ranges — noisy landscape or complex interactions."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Local Optima Map */}
+              {trials.length >= 15 && (() => {
+                const loSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (loSpecs.length === 0) return null;
+                const loKey = Object.keys(trials[0].kpis)[0];
+                if (!loKey) return null;
+                const loSorted = [...trials].sort((a: { kpis: Record<string, number> }, b: { kpis: Record<string, number> }) => (a.kpis[loKey] ?? 0) - (b.kpis[loKey] ?? 0));
+                const loTopN = Math.max(5, Math.floor(trials.length * 0.2));
+                const loTop = loSorted.slice(0, loTopN);
+                // Normalize parameters
+                const loNorm = loTop.map((t: { parameters: Record<string, number>; kpis: Record<string, number> }) =>
+                  loSpecs.map((s: { name: string; lower?: number; upper?: number }) => ((t.parameters[s.name] ?? 0) - s.lower!) / ((s.upper! - s.lower!) || 1))
+                );
+                // Simple threshold-based clustering
+                const loThreshold = 0.35;
+                const loClusters: number[][] = [];
+                const loAssigned = new Set<number>();
+                loNorm.forEach((_: number[], i: number) => {
+                  if (loAssigned.has(i)) return;
+                  const cluster = [i];
+                  loAssigned.add(i);
+                  for (let j = i + 1; j < loNorm.length; j++) {
+                    if (loAssigned.has(j)) continue;
+                    const dist = Math.sqrt(loNorm[i].reduce((s: number, v: number, k: number) => s + (v - loNorm[j][k]) ** 2, 0) / loSpecs.length);
+                    if (dist < loThreshold) { cluster.push(j); loAssigned.add(j); }
+                  }
+                  loClusters.push(cluster);
+                });
+                const loNumClusters = loClusters.length;
+                const loBadge = loNumClusters === 1 ? "Single Basin" : loNumClusters <= 3 ? "Multiple Basins" : "Fragmented";
+                const loBadgeColor = loBadge === "Single Basin" ? "var(--color-green, #22c55e)" : loBadge === "Multiple Basins" ? "var(--color-blue, #3b82f6)" : "var(--color-red, #ef4444)";
+                const loClusterColors = ["#3b82f6", "#ef4444", "#22c55e", "#eab308", "#8b5cf6", "#f97316"];
+                // 2D projection using first 2 params
+                const loW = 200, loH = 130, loPad = 20;
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Crosshair size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Local Optima Map</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: loBadgeColor, background: `color-mix(in srgb, ${loBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{loBadge}</span>
+                    </div>
+                    <svg width={loW} height={loH} viewBox={`0 0 ${loW} ${loH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Axes */}
+                      <line x1={loPad} y1={loH - loPad} x2={loW - 4} y2={loH - loPad} stroke="var(--color-border)" strokeWidth={1} />
+                      <line x1={loPad} y1={4} x2={loPad} y2={loH - loPad} stroke="var(--color-border)" strokeWidth={1} />
+                      <text x={loW / 2 + 8} y={loH - 4} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle">{loSpecs[0]?.name ?? "p1"}</text>
+                      <text x={6} y={(loH - loPad) / 2} fontSize={7} fill="var(--color-text-muted)" textAnchor="middle" transform={`rotate(-90,6,${(loH - loPad) / 2})`}>{loSpecs[1]?.name ?? "p2"}</text>
+                      {/* Plot top trials colored by cluster */}
+                      {loClusters.map((cluster: number[], ci: number) => {
+                        const color = loClusterColors[ci % loClusterColors.length];
+                        // Cluster centroid circle
+                        const cx = cluster.reduce((s: number, idx: number) => s + loNorm[idx][0], 0) / cluster.length;
+                        const cy = cluster.reduce((s: number, idx: number) => s + (loNorm[idx][1] ?? loNorm[idx][0]), 0) / cluster.length;
+                        const plotCx = loPad + cx * (loW - loPad - 8);
+                        const plotCy = loH - loPad - cy * (loH - loPad - 8);
+                        // Spread radius
+                        const spread = Math.max(8, Math.sqrt(cluster.reduce((s: number, idx: number) => {
+                          const dx = loNorm[idx][0] - cx;
+                          const dy = (loNorm[idx][1] ?? loNorm[idx][0]) - cy;
+                          return s + dx * dx + dy * dy;
+                        }, 0) / cluster.length) * (loW - loPad - 8));
+                        return (
+                          <g key={ci}>
+                            <circle cx={plotCx} cy={plotCy} r={spread} fill={color} opacity={0.1} stroke={color} strokeWidth={1} strokeDasharray="3,2" />
+                            {cluster.map((idx: number) => {
+                              const px = loPad + loNorm[idx][0] * (loW - loPad - 8);
+                              const py = loH - loPad - (loNorm[idx][1] ?? loNorm[idx][0]) * (loH - loPad - 8);
+                              return <circle key={idx} cx={px} cy={py} r={3} fill={color} opacity={0.7} />;
+                            })}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>{loNumClusters} cluster{loNumClusters !== 1 ? "s" : ""} detected</span>
+                      <span>top {loTopN} trials</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {loBadge === "Single Basin" ? "All best trials cluster together — likely a single global optimum." : loBadge === "Multiple Basins" ? "Best trials form distinct groups — multiple promising regions exist." : "Best trials are scattered — complex landscape with many local optima."}
                     </div>
                   </div>
                 );
@@ -11627,6 +11791,84 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Suggestion Locality */}
+              {suggestions && trials.length >= 5 && (() => {
+                const slSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (slSpecs.length === 0) return null;
+                const slSuggs = suggestions.suggestions || [];
+                if (slSuggs.length < 2) return null;
+                const slKey = Object.keys(trials[0].kpis)[0];
+                if (!slKey) return null;
+                // Find best trial and centroid
+                const slBestTrial = trials.reduce((best: { parameters: Record<string, number>; kpis: Record<string, number> }, t: { parameters: Record<string, number>; kpis: Record<string, number> }) => (t.kpis[slKey] ?? 0) < (best.kpis[slKey] ?? 0) ? t : best, trials[0]);
+                const slCentroid: Record<string, number> = {};
+                slSpecs.forEach((sp: { name: string }) => {
+                  slCentroid[sp.name] = trials.reduce((s: number, t: { parameters: Record<string, number> }) => s + (t.parameters[sp.name] ?? 0), 0) / trials.length;
+                });
+                // Compute distances for each suggestion
+                const slProfiles = slSuggs.map((sug: Record<string, number>, si: number) => {
+                  const normDist = (a: Record<string, number>, b: Record<string, number>) => {
+                    let d2 = 0;
+                    slSpecs.forEach((sp: { name: string; lower?: number; upper?: number }) => {
+                      const range = (sp.upper! - sp.lower!) || 1;
+                      d2 += ((a[sp.name] ?? 0) - (b[sp.name] ?? 0)) / range * (((a[sp.name] ?? 0) - (b[sp.name] ?? 0)) / range);
+                    });
+                    return Math.sqrt(d2 / slSpecs.length);
+                  };
+                  const dBest = normDist(sug, slBestTrial.parameters);
+                  const dCentroid = normDist(sug, slCentroid);
+                  let dNearest = Infinity;
+                  trials.forEach((t: { parameters: Record<string, number> }) => {
+                    const d = normDist(sug, t.parameters);
+                    if (d < dNearest) dNearest = d;
+                  });
+                  return { dBest, dCentroid, dNearest, idx: si };
+                });
+                const slMaxDist = Math.max(...slProfiles.flatMap((p: { dBest: number; dCentroid: number; dNearest: number }) => [p.dBest, p.dCentroid, p.dNearest])) || 1;
+                const slAvgNearest = slProfiles.reduce((s: number, p: { dNearest: number }) => s + p.dNearest, 0) / slProfiles.length;
+                const slBadge = slAvgNearest / slMaxDist < 0.25 ? "Local Search" : slAvgNearest / slMaxDist > 0.5 ? "Global Search" : "Mixed";
+                const slBadgeColor = slBadge === "Local Search" ? "var(--color-blue, #3b82f6)" : slBadge === "Mixed" ? "var(--color-green, #22c55e)" : "var(--color-yellow, #eab308)";
+                const slW = 260, slBarH = 12, slGap = 4;
+                const slChartH = slProfiles.length * (slBarH * 3 + slGap * 2 + 8);
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Radio size={16} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Suggestion Locality</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: slBadgeColor, background: `color-mix(in srgb, ${slBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{slBadge}</span>
+                    </div>
+                    <svg width={slW} height={Math.min(slChartH + 20, 160)} viewBox={`0 0 ${slW} ${Math.min(slChartH + 20, 160)}`} style={{ width: "100%", height: "auto" }}>
+                      {slProfiles.slice(0, 5).map((p: { dBest: number; dCentroid: number; dNearest: number; idx: number }, si: number) => {
+                        const baseY = si * (slBarH * 3 + slGap * 2 + 8) + 4;
+                        const barMaxW = slW - 60;
+                        return (
+                          <g key={p.idx}>
+                            <text x={4} y={baseY + 8} fontSize={7} fill="var(--color-text-muted)" fontWeight={600}>S{p.idx + 1}</text>
+                            {/* Best */}
+                            <rect x={30} y={baseY} width={(p.dBest / slMaxDist) * barMaxW} height={slBarH} rx={2} fill="#3b82f6" opacity={0.7} />
+                            <text x={32 + (p.dBest / slMaxDist) * barMaxW} y={baseY + 9} fontSize={6.5} fill="var(--color-text-muted)">{(p.dBest * 100).toFixed(0)}%</text>
+                            {/* Centroid */}
+                            <rect x={30} y={baseY + slBarH + slGap} width={(p.dCentroid / slMaxDist) * barMaxW} height={slBarH} rx={2} fill="#eab308" opacity={0.7} />
+                            <text x={32 + (p.dCentroid / slMaxDist) * barMaxW} y={baseY + slBarH + slGap + 9} fontSize={6.5} fill="var(--color-text-muted)">{(p.dCentroid * 100).toFixed(0)}%</text>
+                            {/* Nearest */}
+                            <rect x={30} y={baseY + (slBarH + slGap) * 2} width={(p.dNearest / slMaxDist) * barMaxW} height={slBarH} rx={2} fill="#22c55e" opacity={0.7} />
+                            <text x={32 + (p.dNearest / slMaxDist) * barMaxW} y={baseY + (slBarH + slGap) * 2 + 9} fontSize={6.5} fill="var(--color-text-muted)">{(p.dNearest * 100).toFixed(0)}%</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", gap: "12px", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#3b82f6", opacity: 0.7, display: "inline-block" }} />to best</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#eab308", opacity: 0.7, display: "inline-block" }} />to centroid</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "3px" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "#22c55e", opacity: 0.7, display: "inline-block" }} />to nearest</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {slBadge === "Local Search" ? "Suggestions are close to existing data — fine-tuning the current best region." : slBadge === "Mixed" ? "Mix of local and global suggestions — balanced search strategy." : "Suggestions target distant regions — broad exploration of the design space."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -14855,6 +15097,86 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {tcBadge === "Clean" ? "No temporal clusters of low-quality data — experiments are consistent over time." : tcBadge === "Some Clusters" ? "A few time windows show clustered quality issues — check for equipment drift." : "Multiple time windows with quality problems — possible systematic experimental issue."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Plateau Escape Attempts */}
+              {trials.length >= 15 && (() => {
+                const peKey = Object.keys(trials[0].kpis)[0];
+                if (!peKey) return null;
+                const peSpecs = campaign.spec?.parameters?.filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null) || [];
+                if (peSpecs.length === 0) return null;
+                // Track best-so-far and detect plateaus
+                let peBest = trials[0].kpis[peKey] ?? 0;
+                const peImproved: boolean[] = [];
+                trials.forEach((t: { kpis: Record<string, number> }) => {
+                  const v = t.kpis[peKey] ?? 0;
+                  if (v < peBest) { peBest = v; peImproved.push(true); } else { peImproved.push(false); }
+                });
+                // Compute escape effort per trial: distance to current best at that point
+                const peEfforts: { effort: number; inPlateau: boolean; improved: boolean }[] = [];
+                let peCurrentBest = trials[0].kpis[peKey] ?? 0;
+                let peCurrentBestParams = trials[0].parameters;
+                let pePlateauLen = 0;
+                const pePlateauThresh = 5;
+                trials.forEach((t: { parameters: Record<string, number>; kpis: Record<string, number> }, i: number) => {
+                  const v = t.kpis[peKey] ?? 0;
+                  if (v < peCurrentBest) {
+                    peCurrentBest = v;
+                    peCurrentBestParams = t.parameters;
+                    pePlateauLen = 0;
+                  } else {
+                    pePlateauLen++;
+                  }
+                  const inPlateau = pePlateauLen >= pePlateauThresh;
+                  // Effort: normalized distance to current best params
+                  let d2 = 0;
+                  peSpecs.forEach((sp: { name: string; lower?: number; upper?: number }) => {
+                    const range = (sp.upper! - sp.lower!) || 1;
+                    const diff = ((t.parameters[sp.name] ?? 0) - (peCurrentBestParams[sp.name] ?? 0)) / range;
+                    d2 += diff * diff;
+                  });
+                  peEfforts.push({ effort: Math.sqrt(d2 / peSpecs.length), inPlateau, improved: peImproved[i] });
+                });
+                const pePlateauTrials = peEfforts.filter((e: { inPlateau: boolean }) => e.inPlateau);
+                const peActiveEscapes = pePlateauTrials.filter((e: { effort: number }) => e.effort > 0.3).length;
+                const peBadge = pePlateauTrials.length === 0 ? "No Plateaus" : peActiveEscapes / Math.max(pePlateauTrials.length, 1) > 0.4 ? "Active Escape" : "Passive Plateau";
+                const peBadgeColor = peBadge === "No Plateaus" ? "var(--color-green, #22c55e)" : peBadge === "Active Escape" ? "var(--color-blue, #3b82f6)" : "var(--color-yellow, #eab308)";
+                const peW = 260, peH = 60;
+                const peMaxEffort = Math.max(...peEfforts.map((e: { effort: number }) => e.effort)) || 1;
+                return (
+                  <div className="stat-card" style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <RotateCcw size={16} style={{ color: "var(--color-text-muted)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Plateau Escape Attempts</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.73rem", fontWeight: 600, color: peBadgeColor, background: `color-mix(in srgb, ${peBadgeColor} 12%, transparent)`, padding: "2px 8px", borderRadius: "8px" }}>{peBadge}</span>
+                    </div>
+                    <svg width={peW} height={peH} viewBox={`0 0 ${peW} ${peH}`} style={{ width: "100%", height: "auto" }}>
+                      {/* Plateau zones as background */}
+                      {peEfforts.map((e: { inPlateau: boolean }, i: number) => {
+                        if (!e.inPlateau) return null;
+                        const x = 8 + (i / (peEfforts.length - 1)) * (peW - 16);
+                        const barW = Math.max((peW - 16) / peEfforts.length, 1);
+                        return <rect key={`bg${i}`} x={x - barW / 2} y={4} width={barW} height={peH - 12} fill="rgba(239,68,68,0.08)" />;
+                      })}
+                      {/* Effort dots */}
+                      {peEfforts.map((e: { effort: number; inPlateau: boolean; improved: boolean }, i: number) => {
+                        const x = 8 + (i / (peEfforts.length - 1)) * (peW - 16);
+                        const y = peH - 8 - (e.effort / peMaxEffort) * (peH - 16);
+                        const color = e.improved ? "#22c55e" : e.inPlateau ? (e.effort > 0.3 ? "#3b82f6" : "#ef4444") : "var(--color-text-muted)";
+                        return <circle key={i} cx={x} cy={y} r={e.inPlateau ? 2.5 : 1.5} fill={color} opacity={e.inPlateau ? 0.8 : 0.4} />;
+                      })}
+                      {/* Escape threshold line */}
+                      <line x1={8} y1={peH - 8 - 0.3 / peMaxEffort * (peH - 16)} x2={peW - 8} y2={peH - 8 - 0.3 / peMaxEffort * (peH - 16)} stroke="var(--color-blue, #3b82f6)" strokeWidth={1} strokeDasharray="3,2" opacity={0.4} />
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.73rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>{pePlateauTrials.length} plateau trials</span>
+                      <span>{peActiveEscapes} active escapes</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {peBadge === "No Plateaus" ? "No significant plateaus detected — steady improvement throughout." : peBadge === "Active Escape" ? "Optimizer is actively exploring diverse regions during plateaus." : "Optimizer stays near the current best during plateaus — consider increasing exploration."}
                     </div>
                   </div>
                 );
