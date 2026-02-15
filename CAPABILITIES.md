@@ -834,22 +834,95 @@ Enterprise-scale optimization orchestration:
 
 #### 53. Web Frontend (`web/`)
 
-React TypeScript SPA for campaign visualization:
+React 18 + TypeScript + Vite SPA — a full-featured scientific optimization workspace with **148+ inline micro-visualizations**, real-time diagnostics, AI chat, and zero external charting dependencies (all SVG is hand-crafted inline).
+
+**Typography:** JetBrains Mono (primary), with CSS custom properties for light/dark theming.
+
+##### Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| `Dashboard` | `/` | Campaign overview grid with summary stats, search, tag filters, sort, campaign cards with progress bars |
+| `NewCampaign` | `/new-campaign` | 3-step wizard: Quick Start Templates (Chemical Synthesis, Materials Discovery, Bioprocess, Formulation) → CSV upload → Column mapper (drag columns to parameter/objective roles, set bounds) → Review & Create |
+| `Workspace` | `/workspace/:id` | **Primary workspace** — 5-tab interface with 148+ micro-visualizations, AI chat panel, auto-refresh (5s) |
+| `DemoGallery` | `/demos` | Pre-built example datasets for quick exploration |
+| `CampaignDetail` | `/campaigns/:id` | Single campaign inspection (KPIs, trials, timeline) |
+| `LoopView` | `/loop` | Interactive CampaignLoop management (create, iterate, ingest, view deliverables) |
+| `AnalysisView` | `/analysis` | Tab-based data analysis (Top-K, Correlation, fANOVA) with traced results |
+| `Compare` | `/compare` | Side-by-side campaign comparison |
+| `Reports` | `/reports/:id` | Audit logs, compliance reports |
+
+##### Workspace — 5-Tab Interface (148+ Micro-Visualizations)
+
+The Workspace page (`~16,000+ lines`) is the command center. Each tab contains 37+ inline SVG micro-visualizations computed client-side from raw trial data, with traffic-light status badges and sparklines.
+
+| Tab | Purpose | Feature Count | Key Visualizations |
+|-----|---------|---------------|-------------------|
+| **Overview** | Campaign health & diagnostics | 37+ | Diagnostic cards (8 metrics with sparklines), convergence radar, budget efficiency curve, optimization momentum, acquisition collapse gauge, phase ROI breakdown, stopping readiness, uncertainty decomposition |
+| **Explore** | Search space understanding | 37+ | Parameter importance chart, parameter space scatter, parallel coordinates, local optima map, concept drift detector, parameter boundary utilization, sensitivity map, noise floor map, embedding fidelity |
+| **Suggestions** | Next experiment recommendations | 37+ | Suggestion cards with predicted values, suggestion redundancy matrix, suggestion novelty score, risk-return profile, batch diversity badges, suggestion locality, replication value indicator, coverage gap analysis |
+| **Insights** | AI-generated analysis | — | Summary cards (discovery/warning/recommendation/trend), parameter importance bars, top conditions table, correlations, optimal regions, parameter interactions, failure patterns, trends |
+| **History** | Campaign timeline & patterns | 37+ | Outcome distribution histogram, explore/exploit timeline, trial clusters, decision journal, improvement source decomposition, learning curve projection, hypothesis rejection timeline, model validity timeline |
+
+##### Visualization Techniques (All Pure Inline SVG)
+
+| Category | Techniques |
+|----------|-----------|
+| **Charts** | Area charts, line charts, bar charts (horizontal/vertical), stacked bars, waterfall charts |
+| **Distributions** | Histograms, quintile heatmaps, outcome distributions, density estimates |
+| **Matrices** | Distance matrices, correlation matrices, similarity heatmaps, interaction networks |
+| **Spatial** | Scatter plots, parallel coordinates, radar charts, 2D projections, bump charts |
+| **Timeline** | Sparklines, phase timelines, regime change detectors, learning curves, cadence plots |
+| **Indicators** | Gauge indicators, traffic-light badges, progress bars, trend arrows, status dots |
+
+##### Client-Side Statistical Computations
+
+| Algorithm | Usage |
+|-----------|-------|
+| k-Nearest Neighbors (k-NN) | Prediction error estimation, model validity assessment |
+| K-means clustering | Local optima detection, trial grouping |
+| Cosine similarity | Concept drift detection across epochs |
+| Pearson correlation | Parameter-objective relationships |
+| Variance decomposition | Uncertainty analysis, improvement source classification |
+| Principal Component Analysis | 2D projection for spatial visualizations |
+| Rolling statistics | Trend detection, regime change detection |
+| Euclidean distance | Suggestion redundancy, novelty scoring |
+| Linear regression | Convergence trend estimation |
+
+##### AI Chat Panel
+
+| Feature | Description |
+|---------|-------------|
+| Chat interface | Real-time conversation with the optimization copilot about the campaign |
+| Quick actions | One-click buttons: Discover, Suggest, Show, Why, Focus, Export |
+| Parameter importance | Ranked importance scores with variance contribution |
+| Experiment suggestions | Next-experiment table with parameter values |
+| Contextual responses | Campaign-aware answers about results, trends, and strategy |
+
+##### Shared Components
 
 | Component | Description |
 |-----------|-------------|
-| `Dashboard` | Campaign overview grid with status cards |
-| `CampaignDetail` | Single campaign inspection (KPIs, trials, timeline) |
-| `Reports` | Audit logs, compliance reports, comparisons |
-| `Compare` | Side-by-side campaign comparison |
-| `KpiChart` | KPI evolution chart |
-| `TrialTable` | Trial listing with sorting/filtering |
-| `PhaseTimeline` | Campaign phase visualization |
-| `AuditTrail` | Decision audit log display |
-| `useCampaign` | Custom hook for campaign data fetch + polling |
-| `useWebSocket` | Custom hook for WebSocket event subscription |
-| `LoopView` | Interactive CampaignLoop management (create, iterate, ingest, view deliverables) |
-| `AnalysisView` | Tab-based data analysis (Top-K, Correlation, fANOVA) with traced results |
+| `DiagnosticCards` | 8-metric diagnostic grid with traffic-light status, sparkline trends, tooltips |
+| `InsightsPanel` | AI-generated summaries, correlations, optimal regions, failure patterns |
+| `ChatPanel` + `ChatMessage` | Conversational AI interface with quick actions |
+| `FileUpload` + `ColumnMapper` | CSV upload with column role assignment and bounds configuration |
+| `ParetoChart` | Multi-objective Pareto front visualization |
+| `ErrorBoundary` | Graceful error handling per-component |
+| `ThemeToggle` | Light/dark mode switch with CSS custom properties |
+| `Toast` | Toast notification system |
+
+##### Interactive Features
+
+| Feature | Description |
+|---------|-------------|
+| Trial bookmarking | Mark important trials for reference |
+| Keyboard shortcuts | `Ctrl+1-5` tab switching, `Ctrl+B` bookmark, `Ctrl+E` export |
+| Campaign export | JSON export of campaign data |
+| Trial annotations | Add notes to individual trials |
+| Copy summary | One-click copy of campaign summary to clipboard |
+| Auto-refresh | 5-second polling cycle with live data updates |
+| Responsive tabs | Badge counts on each tab showing feature/data counts |
 
 ---
 
@@ -1839,7 +1912,15 @@ Via problem fingerprinting + plugin architecture, the system has been validated 
 | 10+ infrastructure modules (constraints, cost, transfer, etc.) | Yes |
 | REST API (FastAPI) + WebSocket streaming | Yes |
 | CLI application (Click-based) | Yes |
-| React TypeScript SPA dashboard | Yes |
+| React TypeScript SPA with 148+ inline micro-visualizations | Yes |
+| Workspace 5-tab interface (Overview, Explore, Suggestions, Insights, History) | Yes |
+| AI chat panel with quick actions (Discover, Suggest, Show, Why, Focus, Export) | Yes |
+| Zero-code campaign creation (CSV upload + column mapping wizard) | Yes |
+| Client-side statistical computations (k-NN, k-means, PCA, cosine similarity) | Yes |
+| JetBrains Mono typography with light/dark theme | Yes |
+| 5-second auto-refresh with real-time data updates | Yes |
+| Trial bookmarking, keyboard shortcuts, annotations, JSON export | Yes |
+| Demo gallery with pre-built example datasets | Yes |
 | Pure-Python math library (28+ functions) | Yes |
 | SVG-based visualization (12+ chart types) | Yes |
 | KernelSHAP explainability (4 chart types) | Yes |
@@ -1965,7 +2046,12 @@ optimization_copilot/
 ├── cli_app/             # Click-based CLI application
 ├── visualization/       # SVG visualization (VSUP, SHAP, SDL, design space, hexbin)
 ├── _analysis/           # Analysis engine (KernelSHAP)
-├── web/                 # React TypeScript SPA
+├── web/                 # React 18 + TypeScript + Vite SPA (148+ micro-visualizations)
+│   └── src/
+│       ├── pages/       # Dashboard, NewCampaign, Workspace (16K+ lines), DemoGallery, etc.
+│       ├── components/  # DiagnosticCards, InsightsPanel, ChatPanel, FileUpload, etc.
+│       ├── hooks/       # useCampaign, useWebSocket
+│       └── api.ts       # API client + type definitions
 └── config.py            # Environment configuration
 
 tests/                   # 5,947 tests, 139 files

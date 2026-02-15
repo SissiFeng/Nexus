@@ -824,22 +824,95 @@ class AlgorithmPlugin(ABC):
 
 #### 53. Web 前端 (`web/`)
 
-React TypeScript SPA，用于 campaign 可视化：
+React 18 + TypeScript + Vite SPA — 完整的科学优化工作空间，包含 **148+ 内联微型可视化**、实时诊断、AI 对话和零外部图表依赖（所有 SVG 均为手工内联编写）。
+
+**字体：** JetBrains Mono（主字体），使用 CSS 自定义属性支持浅色/深色主题。
+
+##### 页面
+
+| 页面 | 路由 | 描述 |
+|------|------|------|
+| `Dashboard` | `/` | Campaign 概览网格，包含汇总统计、搜索、标签过滤、排序、进度条卡片 |
+| `NewCampaign` | `/new-campaign` | 三步向导：快速启动模板（化学合成、材料发现、生物过程、配方设计） → CSV 上传 → 列映射器（拖拽列到参数/目标角色，设置边界） → 审查并创建 |
+| `Workspace` | `/workspace/:id` | **主工作空间** — 5 标签页界面，148+ 微型可视化，AI 对话面板，自动刷新（5秒） |
+| `DemoGallery` | `/demos` | 预置示例数据集，快速探索 |
+| `CampaignDetail` | `/campaigns/:id` | 单个 campaign 检查（KPI、试验、时间线） |
+| `LoopView` | `/loop` | 交互式 CampaignLoop 管理（创建、迭代、摄入、查看交付物） |
+| `AnalysisView` | `/analysis` | 基于标签的数据分析（Top-K、相关性、fANOVA），带追踪结果 |
+| `Compare` | `/compare` | 并排 campaign 对比 |
+| `Reports` | `/reports/:id` | 审计日志、合规报告 |
+
+##### 工作空间 — 5 标签页界面（148+ 微型可视化）
+
+Workspace 页面（约 16,000+ 行）是平台的指挥中心。每个标签页包含 37+ 内联 SVG 微型可视化，全部在客户端从原始试验数据实时计算，配有交通灯状态徽章和迷你趋势图。
+
+| 标签页 | 用途 | 功能数量 | 关键可视化 |
+|--------|------|---------|-----------|
+| **Overview** | 优化健康诊断 | 37+ | 诊断卡片（8 指标 + 迷你趋势图）、收敛雷达、预算效率曲线、优化动量、采集函数坍缩仪表、阶段 ROI 分解、停止就绪度、不确定性分解 |
+| **Explore** | 搜索空间理解 | 37+ | 参数重要性图、参数空间散点图、平行坐标、局部最优地图、概念漂移检测器、参数边界利用率、灵敏度图、噪声底图、嵌入保真度 |
+| **Suggestions** | 下一批实验建议 | 37+ | 建议卡片（含预测值）、建议冗余矩阵、建议新颖度、风险收益图、批次多样性徽章、建议局部性、复制价值指标、覆盖缺口分析 |
+| **Insights** | AI 生成分析 | — | 摘要卡片（发现/警告/建议/趋势）、参数重要性条形图、最优条件表、相关性、最优区域、参数交互、故障模式、趋势 |
+| **History** | 优化时间线与模式 | 37+ | 结果分布直方图、探索/利用时间线、试验聚类、决策日志、改进来源分解、学习曲线预测、假设拒绝时间线、模型有效性时间线 |
+
+##### 可视化技术（全部为纯内联 SVG）
+
+| 类别 | 技术 |
+|------|------|
+| **图表** | 面积图、折线图、条形图（水平/垂直）、堆叠条形图、瀑布图 |
+| **分布** | 直方图、五分位热力图、结果分布、密度估计 |
+| **矩阵** | 距离矩阵、相关矩阵、相似度热力图、交互网络 |
+| **空间** | 散点图、平行坐标、雷达图、2D 投影、颠簸排名图 |
+| **时间线** | 迷你趋势图、阶段时间线、体制变化检测器、学习曲线、节奏图 |
+| **指标** | 仪表指标、交通灯徽章、进度条、趋势箭头、状态点 |
+
+##### 客户端统计计算
+
+| 算法 | 用途 |
+|------|------|
+| k-近邻 (k-NN) | 预测误差估计、模型有效性评估 |
+| K-means 聚类 | 局部最优检测、试验分组 |
+| 余弦相似度 | 跨时期概念漂移检测 |
+| 皮尔逊相关系数 | 参数-目标关系 |
+| 方差分解 | 不确定性分析、改进来源分类 |
+| 主成分分析 (PCA) | 空间可视化的 2D 投影 |
+| 滚动统计 | 趋势检测、体制变化检测 |
+| 欧几里德距离 | 建议冗余度、新颖度评分 |
+| 线性回归 | 收敛趋势估计 |
+
+##### AI 对话面板
+
+| 功能 | 描述 |
+|------|------|
+| 对话界面 | 与优化助手实时对话，讨论 campaign 状况 |
+| 快捷操作 | 一键按钮：发现、建议、展示、为什么、聚焦、导出 |
+| 参数重要性 | 带方差贡献的排序重要性评分 |
+| 实验建议 | 下一批实验参数值表格 |
+| 上下文响应 | 感知 campaign 上下文的结果、趋势和策略回答 |
+
+##### 共享组件
 
 | 组件 | 描述 |
 |------|------|
-| `Dashboard` | Campaign 概览网格，包含状态卡片 |
-| `CampaignDetail` | 单个 campaign 检查（KPI、试验、时间线） |
-| `Reports` | 审计日志、合规报告、对比 |
-| `Compare` | 并排 campaign 对比 |
-| `KpiChart` | KPI 演变图 |
-| `TrialTable` | 带排序/过滤的试验列表 |
-| `PhaseTimeline` | Campaign 阶段可视化 |
-| `AuditTrail` | 决策审计日志展示 |
-| `useCampaign` | 自定义 Hook，用于 campaign 数据获取 + 轮询 |
-| `useWebSocket` | 自定义 Hook，用于 WebSocket 事件订阅 |
-| `LoopView` | 交互式 CampaignLoop 管理（创建、迭代、摄入、查看交付物） |
-| `AnalysisView` | 基于标签的数据分析（Top-K、相关性、fANOVA），带追踪结果 |
+| `DiagnosticCards` | 8 指标诊断网格，交通灯状态、迷你趋势图、工具提示 |
+| `InsightsPanel` | AI 生成的摘要、相关性、最优区域、故障模式 |
+| `ChatPanel` + `ChatMessage` | 带快捷操作的对话式 AI 界面 |
+| `FileUpload` + `ColumnMapper` | CSV 上传，列角色分配和边界配置 |
+| `ParetoChart` | 多目标 Pareto 前沿可视化 |
+| `ErrorBoundary` | 组件级优雅错误处理 |
+| `ThemeToggle` | 浅色/深色模式切换（CSS 自定义属性） |
+| `Toast` | 通知弹窗系统 |
+
+##### 交互功能
+
+| 功能 | 描述 |
+|------|------|
+| 试验书签 | 标记重要试验以便参考 |
+| 键盘快捷键 | `Ctrl+1-5` 标签切换，`Ctrl+B` 书签，`Ctrl+E` 导出 |
+| Campaign 导出 | JSON 格式导出 campaign 数据 |
+| 试验备注 | 为单个试验添加笔记 |
+| 复制摘要 | 一键复制 campaign 摘要到剪贴板 |
+| 自动刷新 | 5 秒轮询周期，实时数据更新 |
+| 响应式标签 | 每个标签页显示功能/数据计数徽章 |
 
 ---
 
@@ -1772,7 +1845,15 @@ print(report.format_text())
 | 10+ 基础设施模块（约束、成本、迁移等） | 是 |
 | REST API (FastAPI) + WebSocket 流 | 是 |
 | CLI 应用（基于 Click） | 是 |
-| React TypeScript SPA 仪表板 | 是 |
+| React TypeScript SPA，包含 148+ 内联微型可视化 | 是 |
+| 工作空间 5 标签页界面（概览、探索、建议、洞察、历史） | 是 |
+| AI 对话面板，带快捷操作（发现、建议、展示、为什么、聚焦、导出） | 是 |
+| 零代码 Campaign 创建（CSV 上传 + 列映射向导） | 是 |
+| 客户端统计计算（k-NN、k-means、PCA、余弦相似度） | 是 |
+| JetBrains Mono 字体，浅色/深色主题 | 是 |
+| 5 秒自动刷新，实时数据更新 | 是 |
+| 试验书签、键盘快捷键、备注、JSON 导出 | 是 |
+| 演示画廊，包含预置示例数据集 | 是 |
 | 纯 Python 数学库（28+ 函数） | 是 |
 | 基于 SVG 的可视化（12+ 图表类型） | 是 |
 | KernelSHAP 可解释性（4 种图表类型） | 是 |
@@ -1895,7 +1976,12 @@ optimization_copilot/
 ├── uncertainty/        # 测量不确定性类型和传播
 ├── validation/          # 黄金场景 + 回归验证
 ├── visualization/       # SVG 可视化（VSUP, SHAP, SDL, 设计空间, hexbin）
-├── web/                 # React TypeScript SPA
+├── web/                 # React 18 + TypeScript + Vite SPA（148+ 微型可视化）
+│   └── src/
+│       ├── pages/       # Dashboard, NewCampaign, Workspace (16K+ 行), DemoGallery 等
+│       ├── components/  # DiagnosticCards, InsightsPanel, ChatPanel, FileUpload 等
+│       ├── hooks/       # useCampaign, useWebSocket
+│       └── api.ts       # API 客户端 + 类型定义
 ├── workflow/           # 多阶段实验 DAG
 └── config.py            # 环境配置
 
