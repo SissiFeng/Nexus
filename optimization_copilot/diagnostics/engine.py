@@ -1,4 +1,4 @@
-"""Diagnostic Signal Engine: computes 14 health signals from campaign history."""
+"""Diagnostic Signal Engine: computes 17 health signals from campaign history."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from optimization_copilot.core.models import CampaignSnapshot, Observation
 
 @dataclass
 class DiagnosticsVector:
-    """14-signal diagnostic summary of an optimization campaign."""
+    """17-signal diagnostic summary of an optimization campaign."""
 
     convergence_trend: float = 0.0
     improvement_velocity: float = 0.0
@@ -31,6 +31,11 @@ class DiagnosticsVector:
     best_kpi_value: float = 0.0
     data_efficiency: float = 0.0
     constraint_violation_rate: float = 0.0
+    # UQ calibration signals (Pain Point 1)
+    miscalibration_score: float = 0.0
+    overconfidence_rate: float = 0.0
+    # Signal-to-noise ratio (Pain Point 4)
+    signal_to_noise_ratio: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -117,7 +122,7 @@ def _window_size(n: int, fraction: float = 0.25, minimum: int = 1) -> int:
 # ---------------------------------------------------------------------------
 
 class DiagnosticEngine:
-    """Computes 14 diagnostic signals from a CampaignSnapshot.
+    """Computes 17 diagnostic signals from a CampaignSnapshot.
 
     All computations use only the Python standard library and basic math.
     Edge cases (empty history, single point, all failures) are handled
@@ -148,7 +153,7 @@ class DiagnosticEngine:
     # -- public API ---------------------------------------------------------
 
     def compute(self, snapshot: CampaignSnapshot) -> DiagnosticsVector:
-        """Compute all 14 diagnostic signals from *snapshot*."""
+        """Compute all 17 diagnostic signals from *snapshot*."""
         successful = snapshot.successful_observations
         all_obs = snapshot.observations
         maximize = _is_maximizing(snapshot)
@@ -167,6 +172,8 @@ class DiagnosticEngine:
         n_all = len(all_obs)
         kpi_window = _window_size(n_kpi, self.window_fraction)
         obs_window = _window_size(n_all, self.window_fraction)
+
+        miscal, overconf = self._uq_calibration(kpi_values)
 
         return DiagnosticsVector(
             convergence_trend=self._convergence_trend(
@@ -189,6 +196,9 @@ class DiagnosticEngine:
             best_kpi_value=self._best_kpi_value(kpi_values, maximize),
             data_efficiency=self._data_efficiency(kpi_values, n_all, maximize),
             constraint_violation_rate=self._constraint_violation_rate(snapshot),
+            miscalibration_score=miscal,
+            overconfidence_rate=overconf,
+            signal_to_noise_ratio=self._signal_to_noise_ratio(kpi_values, kpi_window),
         )
 
     # -- individual signals -------------------------------------------------
@@ -476,6 +486,82 @@ class DiagnosticEngine:
         else:
             total_improvement = kpi_values[0] - min(kpi_values)
         return total_improvement / n_observations
+
+    @staticmethod
+    def _uq_calibration(kpi_values: list[float]) -> tuple[float, float]:
+        """Compute UQ calibration signals from the KPI series.
+
+        Uses a rolling prediction interval: for each observation *i* (starting
+        from i=3), compute mean and std of observations [0..i-1], form a
+        ±2σ prediction band, and check whether observation *i* falls inside.
+
+        Returns
+        -------
+        (miscalibration_score, overconfidence_rate) : tuple[float, float]
+            miscalibration_score: |actual_coverage - expected_coverage|,
+                clamped to [0, 1].  0 = perfectly calibrated.
+            overconfidence_rate: fraction of observations that fall outside
+                the prediction band beyond what is statistically expected,
+                normalized to [0, 1].  0 = not overconfident.
+        """
+        n = len(kpi_values)
+        # Need at least 4 observations: 3 for initial stats + 1 to evaluate
+        if n < 4:
+            return 0.0, 0.0
+
+        expected_coverage = 0.9545  # ±2σ for normal distribution
+        n_inside = 0
+        n_evaluated = 0
+
+        for i in range(3, n):
+            prior = kpi_values[:i]
+            m = sum(prior) / len(prior)
+            var = sum((v - m) ** 2 for v in prior) / len(prior)
+            s = var ** 0.5
+            if s == 0.0:
+                # Zero variance → all identical → next value either matches or not
+                n_evaluated += 1
+                if kpi_values[i] == m:
+                    n_inside += 1
+                continue
+
+            lo = m - 2.0 * s
+            hi = m + 2.0 * s
+            n_evaluated += 1
+            if lo <= kpi_values[i] <= hi:
+                n_inside += 1
+
+        if n_evaluated == 0:
+            return 0.0, 0.0
+
+        actual_coverage = n_inside / n_evaluated
+        miscal = abs(actual_coverage - expected_coverage)
+        miscal = min(1.0, miscal)
+
+        # Overconfidence: excess fraction outside band beyond expected
+        actual_outside = 1.0 - actual_coverage
+        expected_outside = 1.0 - expected_coverage  # ~0.0455
+        overconf = max(0.0, actual_outside - expected_outside) / (1.0 - expected_outside)
+        overconf = min(1.0, overconf)
+
+        return miscal, overconf
+
+    @staticmethod
+    def _signal_to_noise_ratio(kpi_values: list[float], window: int) -> float:
+        """Signal-to-noise ratio in the recent window: |mean| / std.
+
+        Higher values indicate cleaner signal.  Returns 0.0 when there
+        are fewer than 2 observations or std is zero.  Capped at 100.0
+        to avoid infinity.
+        """
+        if len(kpi_values) < 2:
+            return 0.0
+        recent = kpi_values[-window:]
+        m = _mean(recent)
+        s = _std(recent)
+        if s == 0.0:
+            return 0.0 if m == 0.0 else 100.0
+        return min(100.0, abs(m) / s)
 
     @staticmethod
     def _constraint_violation_rate(snapshot: CampaignSnapshot) -> float:

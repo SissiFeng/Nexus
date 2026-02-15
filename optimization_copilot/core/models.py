@@ -172,6 +172,36 @@ class StrategyDecision:
         return d
 
 
+# Domain-aware ordinal encoding for enum dimensions.
+# Values in [0, 1] reflect semantic distance between categories.
+_ENUM_ORDINAL_MAP: dict[str, dict[str, float]] = {
+    "variable_types": {
+        "continuous": 0.0, "discrete": 0.33, "mixed": 0.67, "categorical": 1.0,
+    },
+    "objective_form": {
+        "single": 0.0, "multi_objective": 0.5, "constrained": 1.0,
+    },
+    "noise_regime": {
+        "low": 0.0, "medium": 0.5, "high": 1.0,
+    },
+    "cost_profile": {
+        "uniform": 0.0, "heterogeneous": 1.0,
+    },
+    "failure_informativeness": {
+        "weak": 0.0, "strong": 1.0,
+    },
+    "data_scale": {
+        "tiny": 0.0, "small": 0.5, "moderate": 1.0,
+    },
+    "dynamics": {
+        "static": 0.0, "time_series": 1.0,
+    },
+    "feasible_region": {
+        "wide": 0.0, "narrow": 0.5, "fragmented": 1.0,
+    },
+}
+
+
 @dataclass
 class ProblemFingerprint:
     """Classification of the optimization problem context."""
@@ -183,9 +213,19 @@ class ProblemFingerprint:
     data_scale: DataScale = DataScale.TINY
     dynamics: Dynamics = Dynamics.STATIC
     feasible_region: FeasibleRegion = FeasibleRegion.WIDE
+    fixed_dimensions: list[str] = field(default_factory=list)
+    effective_dimensionality: int = -1
+    simplification_hint: str = "full_bo"
+    encoding_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {k: v.value for k, v in asdict(self).items()}
+        d = {}
+        for k, v in asdict(self).items():
+            if hasattr(v, 'value'):
+                d[k] = v.value
+            else:
+                d[k] = v
+        return d
 
     def to_tuple(self) -> tuple:
         return (
@@ -197,4 +237,31 @@ class ProblemFingerprint:
             self.data_scale.value,
             self.dynamics.value,
             self.feasible_region.value,
+            tuple(self.fixed_dimensions),
+            self.effective_dimensionality,
+            self.simplification_hint,
         )
+
+    def to_continuous_vector(self) -> list[float]:
+        """Convert fingerprint to a continuous vector for kernel-based similarity.
+
+        Returns a list of 9 floats in [0, 1]:
+        - 8 enum dimensions with domain-aware ordinal encoding
+        - effective_dimensionality normalized via sigmoid-like transform
+        """
+        vec = [
+            _ENUM_ORDINAL_MAP["variable_types"].get(self.variable_types.value, 0.5),
+            _ENUM_ORDINAL_MAP["objective_form"].get(self.objective_form.value, 0.5),
+            _ENUM_ORDINAL_MAP["noise_regime"].get(self.noise_regime.value, 0.5),
+            _ENUM_ORDINAL_MAP["cost_profile"].get(self.cost_profile.value, 0.5),
+            _ENUM_ORDINAL_MAP["failure_informativeness"].get(
+                self.failure_informativeness.value, 0.5
+            ),
+            _ENUM_ORDINAL_MAP["data_scale"].get(self.data_scale.value, 0.5),
+            _ENUM_ORDINAL_MAP["dynamics"].get(self.dynamics.value, 0.5),
+            _ENUM_ORDINAL_MAP["feasible_region"].get(self.feasible_region.value, 0.5),
+        ]
+        # Normalize effective_dimensionality to [0, 1] with dim=20 as midpoint
+        dim = max(self.effective_dimensionality, 0)
+        vec.append(dim / (dim + 20.0) if dim > 0 else 0.0)
+        return vec

@@ -1,9 +1,9 @@
 from anthropic import Anthropic
 
-from .config import ANTHROPIC_API_KEY, MAX_TOKENS, MODEL
+from .config import MAX_TOKENS, MODEL, MODEL_API_KEY
 from . import usage
 
-client = Anthropic(api_key=ANTHROPIC_API_KEY)
+client = Anthropic(api_key=MODEL_API_KEY)
 
 SYSTEM_PROMPT = """\
 You are Optimization Copilot, a general-purpose AI agent. \

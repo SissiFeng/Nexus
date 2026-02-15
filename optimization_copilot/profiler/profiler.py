@@ -23,6 +23,7 @@ from optimization_copilot.core.models import (
     ProblemFingerprint,
     VariableType,
 )
+from optimization_copilot.profiler.dimension_analyzer import DimensionAnalyzer
 
 
 class ProblemProfiler:
@@ -30,7 +31,7 @@ class ProblemProfiler:
 
     def profile(self, snapshot: CampaignSnapshot) -> ProblemFingerprint:
         """Analyse *snapshot* and return a fully-populated ProblemFingerprint."""
-        return ProblemFingerprint(
+        fp = ProblemFingerprint(
             variable_types=self._classify_variable_types(snapshot.parameter_specs),
             objective_form=self._classify_objective_form(snapshot),
             noise_regime=self._classify_noise_regime(snapshot),
@@ -40,6 +41,14 @@ class ProblemProfiler:
             dynamics=self._classify_dynamics(snapshot),
             feasible_region=self._classify_feasible_region(snapshot.failure_rate),
         )
+
+        # Enrich with dimension analysis
+        dim_analysis = DimensionAnalyzer().analyze(snapshot)
+        fp.fixed_dimensions = dim_analysis.fixed_dimensions
+        fp.effective_dimensionality = dim_analysis.n_effective
+        fp.simplification_hint = dim_analysis.simplification_hint
+
+        return fp
 
     # ── Individual dimension classifiers ──────────────────
 

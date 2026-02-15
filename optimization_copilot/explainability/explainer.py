@@ -97,6 +97,9 @@ class DecisionExplainer:
             )
         summary = " ".join(summary_parts)
 
+        # UQ health
+        uq_health_text = self._assess_uq_health(diagnostics)
+
         return DecisionReport(
             summary=summary,
             selected_strategy=strategy_text,
@@ -112,6 +115,7 @@ class DecisionExplainer:
                 "batch_size": decision.batch_size,
                 "reason_codes": decision.reason_codes,
                 "fallback_events": decision.fallback_events,
+                "uq_health": uq_health_text,
             },
         )
 
@@ -131,6 +135,13 @@ class DecisionExplainer:
             key.append("low exploration coverage")
         if diagnostics.get("variance_contraction", 1.0) < 0.5:
             key.append("variance contracting (converging)")
+        if diagnostics.get("miscalibration_score", 0) > 0.3:
+            key.append(f"UQ miscalibrated ({diagnostics['miscalibration_score']:.2f})")
+        if diagnostics.get("overconfidence_rate", 0) > 0.3:
+            key.append(f"UQ overconfident ({diagnostics['overconfidence_rate']:.2f})")
+        snr = diagnostics.get("signal_to_noise_ratio", 0)
+        if 0 < snr < 3.0:
+            key.append(f"low SNR ({snr:.1f}) — consider repeat measurements")
         return key
 
     @staticmethod
@@ -144,6 +155,43 @@ class DecisionExplainer:
             return f"Moderate coverage ({cov:.0%}). More exploration may help."
         else:
             return f"Low coverage ({cov:.0%}). Significant unexplored regions remain."
+
+    @staticmethod
+    def _assess_uq_health(diagnostics: dict[str, float] | None) -> str:
+        """Assess uncertainty quantification calibration health."""
+        if not diagnostics:
+            return "UQ health data unavailable."
+        miscal = diagnostics.get("miscalibration_score", 0)
+        overconf = diagnostics.get("overconfidence_rate", 0)
+        if miscal <= 0.1 and overconf <= 0.1:
+            return (
+                f"UQ well-calibrated (miscalibration={miscal:.2f}, "
+                f"overconfidence={overconf:.2f})."
+            )
+        parts = []
+        if miscal > 0.3:
+            parts.append(
+                f"prediction intervals are poorly calibrated ({miscal:.2f})"
+            )
+        elif miscal > 0.1:
+            parts.append(
+                f"mild calibration drift ({miscal:.2f})"
+            )
+        if overconf > 0.3:
+            parts.append(
+                f"model is overconfident ({overconf:.2f}) — "
+                "more observations fall outside predicted bands than expected"
+            )
+        elif overconf > 0.1:
+            parts.append(
+                f"slight overconfidence ({overconf:.2f})"
+            )
+        if not parts:
+            return (
+                f"UQ acceptable (miscalibration={miscal:.2f}, "
+                f"overconfidence={overconf:.2f})."
+            )
+        return "UQ concern: " + "; ".join(parts) + "."
 
     @staticmethod
     def _assess_uncertainty(

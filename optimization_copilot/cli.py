@@ -4,19 +4,20 @@ from pathlib import Path
 
 
 def setup() -> None:
-    """Interactively set the Anthropic API key and save to .env."""
+    """Interactively set the model API key and save to .env."""
     env_path = Path(__file__).resolve().parent.parent / ".env"
 
     # Show current status
     if env_path.exists():
-        current = env_path.read_text().strip()
-        if "ANTHROPIC_API_KEY=" in current:
-            masked = current.split("=", 1)[1]
-            if masked and masked != "your-api-key-here":
-                masked = masked[:8] + "..." + masked[-4:]
-                print(f"Current API key: {masked}")
+        for line in env_path.read_text().splitlines():
+            if line.startswith("MODEL_API_KEY=") or line.startswith("ANTHROPIC_API_KEY="):
+                masked = line.split("=", 1)[1]
+                if masked and masked != "your-api-key-here":
+                    masked = masked[:8] + "..." + masked[-4:]
+                    print(f"Current API key: {masked}")
+                break
 
-    key = input("Enter your Anthropic API key: ").strip()
+    key = input("Enter your model API key: ").strip()
     if not key:
         print("No key provided, aborted.")
         sys.exit(1)
@@ -27,7 +28,7 @@ def setup() -> None:
             print("Aborted.")
             sys.exit(1)
 
-    env_path.write_text(f"ANTHROPIC_API_KEY={key}\n")
+    env_path.write_text(f"MODEL_API_KEY={key}\n")
     print(f"API key saved to {env_path}")
 
 

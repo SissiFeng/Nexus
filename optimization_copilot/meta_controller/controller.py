@@ -1,4 +1,11 @@
-"""Meta-Controller: core intelligence for strategy selection and phase orchestration."""
+"""Meta-Controller: core intelligence for strategy selection and phase orchestration.
+
+Optionally integrates with:
+- ``BackendScorer`` for portfolio-based backend ranking
+- ``DriftStrategyAdapter`` for drift-triggered strategy adaptation
+- ``FailureSurfaceLearner`` for failure-aware risk modulation
+- ``CostSignals`` for budget-aware exploration tuning
+"""
 
 from __future__ import annotations
 
@@ -45,6 +52,12 @@ FINGERPRINT_BACKEND_OVERRIDES: dict[str, list[str]] = {
     "mixed_variables": ["tpe", "random"],
     "multi_objective": ["random", "latin_hypercube"],  # Safe defaults
     "tiny_data": ["random", "latin_hypercube"],
+    "degenerate": ["random"],  # All dims fixed — nothing to optimise
+    "ranking": ["random"],  # Single categorical dim — enumerate
+    "bandit": ["random"],  # Few-arm categorical — bandit-style
+    "line_search": ["tpe", "random"],  # 1-D continuous search
+    "reduced_bo": ["tpe", "random_forest_surrogate"],  # Low-dim BO
+    "has_encoding": ["tpe", "random"],  # Molecular/string inputs
 }
 
 
@@ -71,16 +84,32 @@ class MetaController:
         fingerprint: ProblemFingerprint,
         seed: int = 42,
         previous_phase: Phase | None = None,
+        *,
+        portfolio: Any | None = None,
+        drift_report: Any | None = None,
+        cost_signals: Any | None = None,
+        failure_taxonomy: Any | None = None,
+        backend_policy: Any | None = None,
     ) -> StrategyDecision:
         """Make a deterministic strategy decision.
 
         Parameters
         ----------
         snapshot : CampaignSnapshot
-        diagnostics : dict with the 14 diagnostic signal values
+        diagnostics : dict with the 17 diagnostic signal values
         fingerprint : ProblemFingerprint
         seed : int for deterministic tie-breaking
         previous_phase : Phase or None
+        portfolio : AlgorithmPortfolio or None
+            Historical backend performance data for informed selection.
+        drift_report : DriftReport or None
+            Drift detection results for strategy adaptation.
+        cost_signals : CostSignals or None
+            Budget/cost context for exploration modulation.
+        failure_taxonomy : FailureTaxonomy or None
+            Failure classification for risk-aware scoring.
+        backend_policy : BackendPolicy or None
+            Hard constraints on which backends are allowed.
 
         Returns
         -------
@@ -94,15 +123,26 @@ class MetaController:
             snapshot, diagnostics, fingerprint, previous_phase, reason_codes
         )
 
-        # 2. Select backend
-        backend = self._select_backend(
-            phase, fingerprint, reason_codes, fallback_events, seed
+        # 2. Select backend — use portfolio scorer if available
+        backend = self._select_backend_with_context(
+            phase, fingerprint, reason_codes, fallback_events, seed,
+            portfolio=portfolio,
+            drift_report=drift_report,
+            cost_signals=cost_signals,
+            failure_taxonomy=failure_taxonomy,
+            backend_policy=backend_policy,
         )
 
         # 3. Compute exploration strength
         exploration = self._compute_exploration_strength(
             phase, diagnostics, fingerprint
         )
+
+        # 3b. Adjust exploration for cost pressure
+        if cost_signals is not None:
+            exploration = self._adjust_exploration_for_cost(
+                exploration, cost_signals, reason_codes
+            )
 
         # 4. Determine risk posture
         risk = self._determine_risk_posture(phase, diagnostics, snapshot)
@@ -113,7 +153,7 @@ class MetaController:
         # 6. Batch size hints
         batch_size = self._compute_batch_size(phase, snapshot, fingerprint)
 
-        return StrategyDecision(
+        decision = StrategyDecision(
             backend_name=backend,
             stabilize_spec=stabilize,
             exploration_strength=exploration,
@@ -126,8 +166,20 @@ class MetaController:
                 "seed": seed,
                 "previous_phase": previous_phase.value if previous_phase else None,
                 "n_observations": snapshot.n_observations,
+                "portfolio_used": portfolio is not None,
+                "drift_report_used": drift_report is not None,
+                "cost_signals_used": cost_signals is not None,
+                "failure_taxonomy_used": failure_taxonomy is not None,
             },
         )
+
+        # 7. Apply drift adaptation (post-decision adjustment)
+        if drift_report is not None:
+            decision = self._apply_drift_adaptation(
+                decision, drift_report, reason_codes
+            )
+
+        return decision
 
     def _determine_phase(
         self,
@@ -211,6 +263,20 @@ class MetaController:
             preferred = self._prioritize(preferred, overrides)
             reason_codes.append("backend_override:tiny_data")
 
+        # Simplification hint overrides (from DimensionAnalyzer)
+        hint = getattr(fingerprint, "simplification_hint", "full_bo")
+        if hint in FINGERPRINT_BACKEND_OVERRIDES:
+            overrides = FINGERPRINT_BACKEND_OVERRIDES[hint]
+            preferred = self._prioritize(preferred, overrides)
+            reason_codes.append(f"backend_override:simplification_{hint}")
+
+        # Encoding metadata override (molecular/string inputs)
+        encoding_meta = getattr(fingerprint, "encoding_metadata", {})
+        if encoding_meta and "has_encoding" in FINGERPRINT_BACKEND_OVERRIDES:
+            overrides = FINGERPRINT_BACKEND_OVERRIDES["has_encoding"]
+            preferred = self._prioritize(preferred, overrides)
+            reason_codes.append("backend_override:has_encoding")
+
         # Select first available backend
         for backend in preferred:
             if backend in self.available_backends:
@@ -249,6 +315,13 @@ class MetaController:
         # Tiny data → more exploration
         if fingerprint.data_scale == DataScale.TINY:
             base = min(1.0, base + 0.1)
+
+        # UQ calibration: increase exploration when uncertainty is miscalibrated
+        miscal = diagnostics.get("miscalibration_score", 0)
+        overconf = diagnostics.get("overconfidence_rate", 0)
+        if miscal > 0.3 or overconf > 0.3:
+            uq_boost = max(miscal, overconf) * 0.2
+            base = min(1.0, base + uq_boost)
 
         return round(base, 2)
 
@@ -336,3 +409,96 @@ class MetaController:
         result = [b for b in overrides if b in preferred]
         result.extend(b for b in preferred if b not in result)
         return result
+
+    # -- Context-aware backend selection ----------------------------------
+
+    def _select_backend_with_context(
+        self,
+        phase: Phase,
+        fingerprint: ProblemFingerprint,
+        reason_codes: list[str],
+        fallback_events: list[str],
+        seed: int,
+        *,
+        portfolio: Any | None = None,
+        drift_report: Any | None = None,
+        cost_signals: Any | None = None,
+        failure_taxonomy: Any | None = None,
+        backend_policy: Any | None = None,
+    ) -> str:
+        """Select backend using portfolio scorer when available, else rules."""
+        if portfolio is not None:
+            try:
+                from optimization_copilot.portfolio.scorer import BackendScorer
+                scorer = BackendScorer()
+                scores = scorer.score_backends(
+                    fingerprint=fingerprint,
+                    portfolio=portfolio,
+                    available_backends=self.available_backends,
+                    drift_report=drift_report,
+                    cost_signals=cost_signals,
+                    failure_taxonomy=failure_taxonomy,
+                    backend_policy=backend_policy,
+                )
+                if scores:
+                    best = scores[0]
+                    reason_codes.append(
+                        f"portfolio_scored:{best.backend_name}"
+                        f"(score={best.total_score:.3f},conf={best.confidence:.2f})"
+                    )
+                    return best.backend_name
+            except Exception as exc:
+                fallback_events.append(f"portfolio_scorer_failed:{exc}")
+
+        # Use AutoSampler hint if backend_policy is a backend name string.
+        if isinstance(backend_policy, str) and backend_policy in self.available_backends:
+            reason_codes.append(f"auto_sampler_hint:{backend_policy}")
+            return backend_policy
+
+        # Fallback to rule-based selection.
+        return self._select_backend(
+            phase, fingerprint, reason_codes, fallback_events, seed
+        )
+
+    @staticmethod
+    def _adjust_exploration_for_cost(
+        exploration: float,
+        cost_signals: Any,
+        reason_codes: list[str],
+    ) -> float:
+        """Modulate exploration based on budget pressure."""
+        pressure = getattr(cost_signals, "time_budget_pressure", 0.0)
+        trend = getattr(cost_signals, "cost_efficiency_trend", 0.0)
+
+        adjustment = -pressure * 0.3 + trend * 0.1
+        new_exploration = max(0.0, min(1.0, exploration + adjustment))
+
+        if abs(adjustment) > 0.01:
+            reason_codes.append(
+                f"cost_adjustment:{adjustment:+.3f}"
+                f"(pressure={pressure:.2f},trend={trend:.2f})"
+            )
+
+        return round(new_exploration, 4)
+
+    def _apply_drift_adaptation(
+        self,
+        decision: StrategyDecision,
+        drift_report: Any,
+        reason_codes: list[str],
+    ) -> StrategyDecision:
+        """Apply drift-based strategy adaptation to the decision."""
+        try:
+            from optimization_copilot.drift.strategy import DriftStrategyAdapter
+            adapter = DriftStrategyAdapter()
+            adaptation = adapter.adapt(
+                drift_report=drift_report,
+                current_phase=decision.phase,
+                current_exploration=decision.exploration_strength,
+            )
+            if adaptation.actions:
+                decision = adapter.apply(decision, adaptation)
+        except Exception as exc:
+            decision.fallback_events.append(f"drift_adaptation_failed:{exc}")
+
+        return decision

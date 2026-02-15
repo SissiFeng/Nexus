@@ -1,21 +1,36 @@
 [project]
-name = "optimization-copilot"
-version = "0.1.0"
-description = "A general-purpose AI agent powered by Claude Opus 4.6"
+name = "nexus-opt"
+version = "1.0.0"
+description = "Nexus — Intelligent Optimization Platform for Scientific Experiments"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.42.0",
     "python-dotenv>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0.0",
+    "click>=8.1.0",
 ]
 
 [project.optional-dependencies]
+mcp = [
+    "mcp[cli]>=1.0.0",
+]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
     "ruff>=0.8.0",
 ]
 
 [project.scripts]
-copilot = "optimization_copilot.cli:main"
+nexus = "optimization_copilot.cli_app.main:cli"
+copilot = "optimization_copilot.cli_app.main:cli"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (run with pytest -m slow)",
+]
 
 [tool.ruff]
 line-length = 100

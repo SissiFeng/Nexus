@@ -1,9 +1,52 @@
+# Environment
 .env
-.usage.json
+.env.local
+.env.*.local
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
 .ruff_cache/
 .pytest_cache/
-dist/
-*.egg-info/
+.mypy_cache/
 .venv/
+venv/
+htmlcov/
+.coverage
+*.cover
+
+# Node / Frontend
+node_modules/
+.vite/
+optimization_copilot/web/dist/
+package-lock.json
+optimization_copilot/web/package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Project runtime
+workspace/
+.usage.json
+demo_video/
+*.webm
+
+# Local dev tools (Playwright recording, etc.)
+/package.json
+/record_demo.mjs
+/data/

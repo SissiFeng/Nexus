@@ -107,7 +107,7 @@ class TestProblemFingerprint:
     def test_to_tuple(self):
         fp = ProblemFingerprint()
         t = fp.to_tuple()
-        assert len(t) == 8
+        assert len(t) == 11
 
 
 class TestHashing:
