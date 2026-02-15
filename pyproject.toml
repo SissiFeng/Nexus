@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "nexus-opt"
 version = "1.0.0"
@@ -26,6 +30,9 @@ dev = [
 [project.scripts]
 nexus = "optimization_copilot.cli_app.main:cli"
 copilot = "optimization_copilot.cli_app.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["optimization_copilot*"]
 
 [tool.pytest.ini_options]
 markers = [

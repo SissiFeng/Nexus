@@ -26,11 +26,11 @@ import os
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 NEXUS_URL = os.getenv("NEXUS_URL", "http://localhost:8000")
 
-mcp = MCPServer("Nexus")
+mcp = FastMCP("Nexus")
 
 
 # ── helpers ──────────────────────────────────────────────────────
