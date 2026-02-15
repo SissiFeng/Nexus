@@ -241,6 +241,68 @@ Full API docs available at `http://localhost:8000/docs` (Swagger UI) when the se
 
 ---
 
+## MCP Server (Model Context Protocol)
+
+Nexus ships as an MCP server so any LLM client (Claude Desktop, Claude Code, etc.) can drive optimization campaigns through tool calls.
+
+### Setup
+
+```bash
+# Install MCP dependency
+pip install -e ".[mcp]"
+
+# Make sure the Nexus backend is running
+nexus server start
+```
+
+### Add to Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "command": "python",
+      "args": ["/absolute/path/to/nexus_mcp_server.py"],
+      "env": {
+        "NEXUS_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `nexus_create_campaign` | Create a campaign from CSV data with parameter/objective mapping |
+| `nexus_get_diagnostics` | Get 8+ real-time health signals (convergence, noise, coverage, etc.) |
+| `nexus_suggest_next` | Generate next batch of experiments with predicted outcomes |
+| `nexus_ingest_results` | Feed back experimental results to update the model |
+| `nexus_explain_decision` | Ask natural language questions about optimization decisions |
+| `nexus_causal_discovery` | Run PC algorithm to find causal relationships in data |
+| `nexus_hypothesis_status` | Track scientific hypotheses through their lifecycle |
+
+### Example Conversation
+
+With the MCP server connected, you can ask Claude:
+
+> "Create a campaign from my synthesis data, then suggest the next 5 experiments"
+
+Claude will call `nexus_create_campaign` with your CSV data, then `nexus_suggest_next` to get optimized experiment parameters.
+
+> "Why did Nexus switch to exploitation mode?"
+
+Claude calls `nexus_explain_decision` and gets back diagnostic-backed reasoning.
+
+> "Are temperature and pressure causally linked to yield, or just correlated?"
+
+Claude calls `nexus_causal_discovery` to run the PC algorithm and reports back the causal graph.
+
+---
+
 ## Development
 
 ### Running Tests
