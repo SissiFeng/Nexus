@@ -4792,6 +4792,69 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Phase ROI Breakdown */}
+              {(() => {
+                if (trials.length < 10) return null;
+                const kpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!kpiKey) return null;
+                const prSorted = [...trials].sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                const prWinSize = 20;
+                const prWindows: { start: number; end: number; improvement: number }[] = [];
+                let prRunningBest = prSorted[0].kpis[kpiKey] ?? 0;
+                for (let i = 0; i < prSorted.length; i += prWinSize) {
+                  const winEnd = Math.min(i + prWinSize, prSorted.length);
+                  const startBest = prRunningBest;
+                  for (let j = i; j < winEnd; j++) {
+                    const v = prSorted[j].kpis[kpiKey] ?? 0;
+                    if (v < prRunningBest) prRunningBest = v;
+                  }
+                  prWindows.push({ start: i, end: winEnd - 1, improvement: Math.abs(startBest - prRunningBest) });
+                }
+                const prTotal = prWindows.reduce((s: number, w: { improvement: number }) => s + w.improvement, 0);
+                if (prTotal <= 0) return null;
+                const prFractions = prWindows.map((w: { improvement: number }) => w.improvement / prTotal);
+                // first 50% of trials contribution
+                const prHalfIdx = Math.ceil(prWindows.length / 2);
+                const prFirstHalf = prFractions.slice(0, prHalfIdx).reduce((s: number, v: number) => s + v, 0);
+                const prBadge = prFirstHalf > 0.7 ? "Efficient" : prFirstHalf > 0.4 ? "Balanced" : "Late Bloom";
+                const prColor = prBadge === "Efficient" ? "#22c55e" : prBadge === "Balanced" ? "#3b82f6" : "#eab308";
+                const prW = 280, prBarH = 16, prGap = 4, prLabelW = 30;
+                const prH = prWindows.length * (prBarH + prGap) + 4;
+                const prMaxFrac = Math.max(...prFractions, 0.01);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <BarChart2 size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Phase ROI Breakdown</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${prColor}18`, color: prColor }}>{prBadge}</span>
+                    </div>
+                    <svg width={prW} height={prH} viewBox={`0 0 ${prW} ${prH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {prWindows.map((_: { start: number; end: number; improvement: number }, i: number) => {
+                        const y = i * (prBarH + prGap) + 2;
+                        const frac = prFractions[i];
+                        const barW = Math.max(2, (frac / prMaxFrac) * (prW - prLabelW - 50));
+                        const c = frac > 0.3 ? "#22c55e" : frac > 0.1 ? "#3b82f6" : "#94a3b8";
+                        return (
+                          <g key={i}>
+                            <text x={prLabelW - 4} y={y + prBarH / 2 + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)" fontWeight={600}>W{i + 1}</text>
+                            <rect x={prLabelW} y={y} width={prW - prLabelW - 50} height={prBarH} rx="3" fill="var(--color-border)" opacity="0.3" />
+                            <rect x={prLabelW} y={y} width={barW} height={prBarH} rx="3" fill={c} opacity="0.7" />
+                            <text x={prW - 46} y={y + prBarH / 2 + 3} fontSize="9" fontFamily="var(--font-mono)" fill={c} fontWeight={600}>{(frac * 100).toFixed(0)}%</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>first half: {(prFirstHalf * 100).toFixed(0)}% of gains</span>
+                      <span>{prWindows.length} windows · {prWinSize} trials each</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {prBadge === "Efficient" ? "Most improvement came early — the campaign discovered key regions quickly." : prBadge === "Balanced" ? "Improvement is spread across the campaign — steady optimization progress." : "Most gains came late — consider whether early exploration budget was well-spent."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -7890,6 +7953,74 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {cdBadge === "Stationary" ? "Optimal regions are consistent across time — objective function appears stable." : cdBadge === "Some Drift" ? "Best-performing regions are shifting — consider weighting recent data more heavily." : "Strong concept drift detected — the objective landscape is changing. Recent data may be more reliable."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Parameter Boundary Utilization */}
+              {(() => {
+                const cParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (cParams.length === 0 || trials.length < 10) return null;
+                const buBins = 5;
+                const buData: { name: string; counts: number[] }[] = [];
+                let buAllCovered = true;
+                let buEdgeSparse = 0;
+                let buEdgeDense = 0;
+                for (const p of cParams) {
+                  const range = (p.upper! - p.lower!) || 1;
+                  const counts = new Array(buBins).fill(0);
+                  for (const t of trials) {
+                    const norm = ((t.parameters[p.name] ?? p.lower!) - p.lower!) / range;
+                    const bin = Math.min(buBins - 1, Math.floor(norm * buBins));
+                    counts[bin]++;
+                  }
+                  buData.push({ name: p.name, counts });
+                  if (counts[0] === 0 || counts[buBins - 1] === 0) buAllCovered = false;
+                  const edgeSum = counts[0] + counts[buBins - 1];
+                  const midSum = counts.slice(1, buBins - 1).reduce((s: number, c: number) => s + c, 0);
+                  if (edgeSum < midSum * 0.2) buEdgeSparse++;
+                  if (edgeSum > midSum * 1.5) buEdgeDense++;
+                }
+                const buBadge = buAllCovered && buEdgeSparse === 0 ? "Full Range" : buEdgeDense > cParams.length / 2 ? "Boundary Hugging" : "Interior Focus";
+                const buColor = buBadge === "Full Range" ? "#22c55e" : buBadge === "Interior Focus" ? "#eab308" : "#ef4444";
+                const buCellW = 32, buCellH = 16, buGap = 2, buLabelW = 60;
+                const buW = buLabelW + buBins * (buCellW + buGap) + 10;
+                const buH = buData.length * (buCellH + buGap) + 20;
+                const buMaxCount = Math.max(...buData.flatMap((d: { counts: number[] }) => d.counts), 1);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Ruler size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Parameter Boundary Utilization</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${buColor}18`, color: buColor }}>{buBadge}</span>
+                    </div>
+                    <svg width={buW} height={buH} viewBox={`0 0 ${buW} ${buH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* column headers */}
+                      {Array.from({ length: buBins }).map((_: unknown, j: number) => (
+                        <text key={`h${j}`} x={buLabelW + j * (buCellW + buGap) + buCellW / 2} y={10} textAnchor="middle" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">{(j * 20)}-{((j + 1) * 20)}%</text>
+                      ))}
+                      {buData.map((d: { name: string; counts: number[] }, i: number) => {
+                        const y = 14 + i * (buCellH + buGap);
+                        return (
+                          <g key={d.name}>
+                            <text x={buLabelW - 4} y={y + buCellH / 2 + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)" fontWeight={500}>{d.name.length > 7 ? d.name.slice(0, 7) : d.name}</text>
+                            {d.counts.map((c: number, j: number) => {
+                              const intensity = c / buMaxCount;
+                              const fill = c === 0 ? "var(--color-border)" : `rgba(59,130,246,${0.15 + intensity * 0.75})`;
+                              return (
+                                <g key={j}>
+                                  <rect x={buLabelW + j * (buCellW + buGap)} y={y} width={buCellW} height={buCellH} rx="2" fill={fill} />
+                                  <text x={buLabelW + j * (buCellW + buGap) + buCellW / 2} y={y + buCellH / 2 + 3} textAnchor="middle" fontSize="8" fontFamily="var(--font-mono)" fill={c === 0 ? "var(--color-text-muted)" : intensity > 0.5 ? "#fff" : "#1e40af"} fontWeight={600}>{c}</text>
+                                </g>
+                              );
+                            })}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      {buBadge === "Full Range" ? "All parameters are explored across their full range — good boundary coverage." : buBadge === "Interior Focus" ? "Most trials avoid parameter boundaries — consider exploring edge regions." : "Trials cluster near parameter bounds — the search space may be too narrow."}
                     </div>
                   </div>
                 );
@@ -12096,6 +12227,73 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Suggestion Redundancy Check */}
+              {suggestions && suggestions.suggestions && suggestions.suggestions.length >= 2 && (() => {
+                const cParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (cParams.length === 0) return null;
+                const srSugs = suggestions.suggestions;
+                const srN = srSugs.length;
+                // pairwise normalized distance matrix
+                const srDist: number[][] = [];
+                for (let i = 0; i < srN; i++) {
+                  srDist.push([]);
+                  for (let j = 0; j < srN; j++) {
+                    if (i === j) { srDist[i].push(0); continue; }
+                    let d = 0;
+                    for (const p of cParams) {
+                      const range = (p.upper! - p.lower!) || 1;
+                      d += ((srSugs[i][p.name] ?? 0) - (srSugs[j][p.name] ?? 0)) ** 2 / (range * range);
+                    }
+                    srDist[i].push(Math.sqrt(d / cParams.length));
+                  }
+                }
+                let srSum = 0, srCount = 0;
+                for (let i = 0; i < srN; i++) for (let j = i + 1; j < srN; j++) { srSum += srDist[i][j]; srCount++; }
+                const srAvg = srCount > 0 ? srSum / srCount : 0;
+                const srBadge = srAvg > 0.3 ? "Well-Spread" : srAvg > 0.15 ? "Some Redundancy" : "Highly Redundant";
+                const srColor = srBadge === "Well-Spread" ? "#22c55e" : srBadge === "Some Redundancy" ? "#eab308" : "#ef4444";
+                const srCellSize = 30, srGap = 2, srLabelW = 26;
+                const srW = srLabelW + srN * (srCellSize + srGap);
+                const srH = srLabelW + srN * (srCellSize + srGap);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Grid3x3 size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Suggestion Redundancy</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${srColor}18`, color: srColor }}>{srBadge}</span>
+                    </div>
+                    <svg width={srW} height={srH} viewBox={`0 0 ${srW} ${srH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {Array.from({ length: srN }).map((_: unknown, j: number) => (
+                        <text key={`sc${j}`} x={srLabelW + j * (srCellSize + srGap) + srCellSize / 2} y={12} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">S{j + 1}</text>
+                      ))}
+                      {Array.from({ length: srN }).map((_: unknown, i: number) => (
+                        <g key={`sr${i}`}>
+                          <text x={srLabelW - 4} y={srLabelW + i * (srCellSize + srGap) + srCellSize / 2 + 3} textAnchor="end" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">S{i + 1}</text>
+                          {Array.from({ length: srN }).map((_: unknown, j: number) => {
+                            const dist = srDist[i][j];
+                            const c = i === j ? "#3b82f620" : dist > 0.3 ? "#22c55e" : dist > 0.15 ? "#eab308" : "#ef4444";
+                            const opacity = i === j ? 1 : 0.6;
+                            return (
+                              <g key={`${i}-${j}`}>
+                                <rect x={srLabelW + j * (srCellSize + srGap)} y={srLabelW + i * (srCellSize + srGap)} width={srCellSize} height={srCellSize} rx="3" fill={c} opacity={opacity} />
+                                {i !== j && <text x={srLabelW + j * (srCellSize + srGap) + srCellSize / 2} y={srLabelW + i * (srCellSize + srGap) + srCellSize / 2 + 3} textAnchor="middle" fontSize="8" fontFamily="var(--font-mono)" fill={dist > 0.3 ? "#166534" : dist > 0.15 ? "#854d0e" : "#991b1b"} fontWeight={600}>{dist.toFixed(2)}</text>}
+                              </g>
+                            );
+                          })}
+                        </g>
+                      ))}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      <span>avg distance: {(srAvg * 100).toFixed(0)}%</span>
+                      <span>{srN} suggestions · {cParams.length} params</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {srBadge === "Well-Spread" ? "Suggestions are well-distributed — good batch diversity for parallel evaluation." : srBadge === "Some Redundancy" ? "Some suggestions are close together — consider requesting more diverse candidates." : "Suggestions are tightly clustered — the acquisition function may have collapsed to a narrow region."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -15489,6 +15687,76 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {mvBadge === "Stable Model" ? "Prediction accuracy is consistent — model remains valid across campaign history." : mvBadge === "Some Degradation" ? "Prediction errors are growing slightly — consider re-evaluating model assumptions." : "Model prediction quality is degrading — recent data may conflict with earlier patterns."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Improvement Source Decomposition */}
+              {(() => {
+                if (trials.length < 10) return null;
+                const cParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (cParams.length === 0) return null;
+                const kpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!kpiKey) return null;
+                const isSorted = [...trials].sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                // find improvement events
+                const isEvents: { iteration: number; type: "discovery" | "refinement" | "noise"; distance: number }[] = [];
+                let isBest = isSorted[0].kpis[kpiKey] ?? Infinity;
+                let isBestParams = isSorted[0].parameters;
+                for (let i = 1; i < isSorted.length; i++) {
+                  const v = isSorted[i].kpis[kpiKey] ?? Infinity;
+                  if (v < isBest) {
+                    // compute distance from previous best
+                    let d = 0;
+                    for (const p of cParams) {
+                      const range = (p.upper! - p.lower!) || 1;
+                      d += ((isSorted[i].parameters[p.name] ?? 0) - (isBestParams[p.name] ?? 0)) ** 2 / (range * range);
+                    }
+                    d = Math.sqrt(d / cParams.length);
+                    const type = d > 0.3 ? "discovery" : d > 0.1 ? "refinement" : "noise";
+                    isEvents.push({ iteration: isSorted[i].iteration, type, distance: d });
+                    isBest = v;
+                    isBestParams = isSorted[i].parameters;
+                  }
+                }
+                if (isEvents.length < 2) return null;
+                const isDiscoveries = isEvents.filter((e: { type: string }) => e.type === "discovery").length;
+                const isRefinements = isEvents.filter((e: { type: string }) => e.type === "refinement").length;
+                const isNoise = isEvents.filter((e: { type: string }) => e.type === "noise").length;
+                const isDiscPct = isDiscoveries / isEvents.length;
+                const isBadge = isDiscPct > 0.5 ? "Real Progress" : isDiscPct > 0.3 ? "Mixed" : "Noise-Chasing";
+                const isBadgeColor = isBadge === "Real Progress" ? "#22c55e" : isBadge === "Mixed" ? "#eab308" : "#ef4444";
+                const isW = 280, isH = 50, isPad = 4;
+                const isMaxIter = Math.max(...isSorted.map((t: { iteration: number }) => t.iteration), 1);
+                const typeColors: Record<string, string> = { discovery: "#22c55e", refinement: "#3b82f6", noise: "#ef4444" };
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Layers size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Improvement Source Decomposition</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${isBadgeColor}18`, color: isBadgeColor }}>{isBadge}</span>
+                    </div>
+                    <svg width={isW} height={isH} viewBox={`0 0 ${isW} ${isH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* baseline */}
+                      <line x1={isPad} y1={isH / 2} x2={isW - isPad} y2={isH / 2} stroke="var(--color-border)" strokeWidth="1" />
+                      {isEvents.map((e: { iteration: number; type: string; distance: number }, i: number) => {
+                        const x = isPad + (e.iteration / isMaxIter) * (isW - 2 * isPad);
+                        const r = 3 + e.distance * 8;
+                        const color = typeColors[e.type] || "#94a3b8";
+                        return <circle key={i} cx={x} cy={isH / 2} r={Math.min(r, 8)} fill={color} opacity={0.75} />;
+                      })}
+                      {/* axis labels */}
+                      <text x={isPad} y={isH - 2} fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">trial 1</text>
+                      <text x={isW - isPad} y={isH - 2} textAnchor="end" fontSize="8" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">trial {isMaxIter}</text>
+                    </svg>
+                    <div style={{ display: "flex", gap: "12px", fontSize: "0.78rem", marginTop: "6px" }}>
+                      <span style={{ color: "#22c55e" }}>{isDiscoveries} discoveries</span>
+                      <span style={{ color: "#3b82f6" }}>{isRefinements} refinements</span>
+                      <span style={{ color: "#ef4444" }}>{isNoise} noise</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {isBadge === "Real Progress" ? "Most improvements came from exploring new regions — genuine optimization progress." : isBadge === "Mixed" ? "Mix of real discoveries and local refinements — healthy optimization pattern." : "Most improvements are from nearby retries — likely exploiting measurement noise rather than finding better regions."}
                     </div>
                   </div>
                 );
