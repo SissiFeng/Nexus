@@ -1,44 +1,46 @@
-# CLAUDE.md - Optimization Copilot Development Guide
+# CLAUDE.md — Nexus Development Guide
 
 ## Project Overview
-OptimizationAgent: An intelligent optimization decision layer that automatically selects,
-adapts, and justifies optimization strategies based on experimental history.
+Nexus: An intelligent optimization platform that automatically selects, adapts, and explains optimization strategies for scientific experiments.
+
+## Quick Commands
+```bash
+# Backend
+pip install -e ".[dev]"
+nexus server start                        # API at :8000
+
+# Frontend
+cd optimization_copilot/web && npm install && npm run dev   # UI at :5173
+
+# Tests
+pytest                                    # All 6,300+ tests
+pytest tests/test_api.py -v              # Specific file
+ruff check optimization_copilot/         # Lint
+```
 
 ## Architecture
-See `plan.md` for the full specification. Key modules to implement:
-- `optimization_copilot/core/` — CampaignSnapshot, StrategyDecision, ProblemFingerprint
+- `optimization_copilot/core/` — CampaignSnapshot, Observation, ParameterSpec
 - `optimization_copilot/diagnostics/` — 14-signal diagnostic engine
-- `optimization_copilot/profiler/` — Problem profiler and fingerprinting
-- `optimization_copilot/backends/` — Plugin-based optimization backend pool
-- `optimization_copilot/meta_controller/` — Phase orchestration and switching logic
-- `optimization_copilot/stabilization/` — Data conditioning and noise handling
-- `optimization_copilot/screening/` — High-dimensional variable screening
-- `optimization_copilot/feasibility/` — Failure learning and safe-region mapping
-- `optimization_copilot/multi_objective/` — Pareto front tracking and dominance
-- `optimization_copilot/explainability/` — Decision explanation layer
-- `optimization_copilot/plugins/` — Plugin architecture and contracts
-- `optimization_copilot/validation/` — Golden scenarios and regression tests
+- `optimization_copilot/backends/` — 10+ optimization algorithm backends
+- `optimization_copilot/meta_controller/` — Phase orchestration and strategy switching
+- `optimization_copilot/api/` — FastAPI routes (campaigns, chat, analysis, loop)
+- `optimization_copilot/web/` — React 18 + TypeScript frontend
+- `tests/` — 155 test files
 
 ## Tech Stack
-- Python 3.10+
-- Claude Opus 4.6 via Anthropic API for agent intelligence
-- No heavy ML frameworks unless strictly needed — prefer lightweight implementations
-- Plugin architecture for extensibility
+- Python 3.10+, FastAPI, Pydantic v2, Click
+- React 18, TypeScript strict, Vite 5
+- Claude API (optional, for AI chat features)
+- Zero external ML dependencies
 
 ## Development Rules
 - All code must be deterministic and reproducible (given same seed)
-- Every decision must produce full audit trail
-- Use type hints throughout
-- Write tests alongside implementation
-- Follow existing project structure and patterns
+- Every optimization decision must produce a full audit trail
+- Use type hints throughout Python code
+- TypeScript strict mode for all frontend code
 - Keep implementations minimal — YAGNI principle
 - Each module should be independently testable
 
 ## Model
 - Default: claude-opus-4-6
-- API key in environment variable MODEL_API_KEY (fallback: ANTHROPIC_API_KEY)
-
-## Auto-Development Mode
-- All PRs from Claude are auto-approved for merge
-- Claude has full write access to implement features
-- Follow plan.md section ordering for implementation priority
+- API key via environment variable `MODEL_API_KEY` (fallback: `ANTHROPIC_API_KEY`)

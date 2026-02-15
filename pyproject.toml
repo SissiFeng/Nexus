@@ -1,7 +1,7 @@
 [project]
-name = "optimization-copilot"
-version = "0.3.0"
-description = "Optimization Copilot — Intelligent Experiment Decision Platform"
+name = "nexus-opt"
+version = "1.0.0"
+description = "Nexus — Intelligent Optimization Platform for Scientific Experiments"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.42.0",
@@ -21,6 +21,7 @@ dev = [
 ]
 
 [project.scripts]
+nexus = "optimization_copilot.cli_app.main:cli"
 copilot = "optimization_copilot.cli_app.main:cli"
 
 [tool.pytest.ini_options]

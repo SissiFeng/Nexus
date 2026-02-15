@@ -20,7 +20,7 @@ from optimization_copilot.platform.workspace import Workspace
 )
 @click.pass_context
 def cli(ctx: click.Context, workspace: str) -> None:
-    """Optimization Copilot — Intelligent Experiment Decision Platform."""
+    """Nexus — Intelligent Optimization Platform for Scientific Experiments."""
     ctx.ensure_object(dict)
     ctx.obj["workspace_dir"] = workspace
 
