@@ -4716,6 +4716,82 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Acquisition Collapse Gauge */}
+              {(() => {
+                if (trials.length < 15) return null;
+                const cParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (cParams.length === 0) return null;
+                const kpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!kpiKey) return null;
+                // find best trial
+                let acBestIdx = 0;
+                for (let i = 1; i < trials.length; i++) {
+                  if ((trials[i].kpis[kpiKey] ?? Infinity) < (trials[acBestIdx].kpis[kpiKey] ?? Infinity)) acBestIdx = i;
+                }
+                const acBest = trials[acBestIdx];
+                // compute rolling search radius in windows
+                const acWinSize = Math.max(5, Math.floor(trials.length / 12));
+                const acWindows: number[] = [];
+                for (let start = 0; start + acWinSize <= trials.length; start += Math.max(1, Math.floor(acWinSize / 2))) {
+                  const win = trials.slice(start, start + acWinSize);
+                  let sumDist = 0;
+                  for (const t of win) {
+                    let d = 0;
+                    for (const p of cParams) {
+                      const range = (p.upper! - p.lower!);
+                      if (range > 0) d += Math.abs(((t.parameters[p.name] ?? 0) - (acBest.parameters[p.name] ?? 0)) / range);
+                    }
+                    sumDist += d / cParams.length;
+                  }
+                  acWindows.push(sumDist / win.length);
+                }
+                if (acWindows.length < 3) return null;
+                const acW = 280, acH = 60, acPad = 2;
+                const acMax = Math.max(...acWindows, 0.01);
+                const acPts = acWindows.map((v: number, i: number) => ({
+                  x: acPad + (i / (acWindows.length - 1)) * (acW - 2 * acPad),
+                  y: acPad + (1 - v / acMax) * (acH - 2 * acPad),
+                }));
+                const acArea = acPts.map((p: { x: number; y: number }, i: number) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") + ` L${acPts[acPts.length - 1].x.toFixed(1)},${(acH - acPad).toFixed(1)} L${acPts[0].x.toFixed(1)},${(acH - acPad).toFixed(1)} Z`;
+                const acLine = acPts.map((p: { x: number; y: number }, i: number) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const acLast = acWindows[acWindows.length - 1];
+                const acPrev = acWindows[Math.max(0, acWindows.length - 4)];
+                const acTrend = acLast - acPrev;
+                const acBadge = acLast > 0.3 ? "Healthy" : acLast > 0.12 ? "Narrowing" : "Collapsed";
+                const acColor = acBadge === "Healthy" ? "#22c55e" : acBadge === "Narrowing" ? "#eab308" : "#ef4444";
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Gauge size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Acquisition Collapse Gauge</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${acColor}18`, color: acColor }}>{acBadge}</span>
+                    </div>
+                    <svg width={acW} height={acH} viewBox={`0 0 ${acW} ${acH}`} style={{ display: "block", margin: "0 auto" }}>
+                      <defs>
+                        <linearGradient id="acGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={acColor} stopOpacity="0.3" />
+                          <stop offset="100%" stopColor={acColor} stopOpacity="0.05" />
+                        </linearGradient>
+                      </defs>
+                      {/* danger zone */}
+                      <rect x={acPad} y={acPad + (1 - 0.12 / acMax) * (acH - 2 * acPad)} width={acW - 2 * acPad} height={Math.max(0, (0.12 / acMax) * (acH - 2 * acPad))} fill="#ef444412" rx="2" />
+                      <path d={acArea} fill="url(#acGrad)" />
+                      <path d={acLine} fill="none" stroke={acColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx={acPts[acPts.length - 1].x} cy={acPts[acPts.length - 1].y} r="3" fill={acColor} />
+                      {/* threshold line */}
+                      <line x1={acPad} y1={acPad + (1 - 0.12 / acMax) * (acH - 2 * acPad)} x2={acW - acPad} y2={acPad + (1 - 0.12 / acMax) * (acH - 2 * acPad)} stroke="#ef4444" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5" />
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>radius: {(acLast * 100).toFixed(0)}%</span>
+                      <span>trend: {acTrend > 0.02 ? "expanding" : acTrend < -0.02 ? "shrinking" : "stable"}</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {acBadge === "Healthy" ? "Search radius is wide — acquisition function is actively exploring." : acBadge === "Narrowing" ? "Search radius is shrinking — optimizer is focusing. Monitor for premature collapse." : "Search radius has collapsed — suggestions may be near-identical. Consider restarting or injecting diversity."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Decision Journal */}
               <div className="card decision-journal-card">
                 <div className="decision-journal-header" onClick={() => setShowJournal(p => !p)} style={{ cursor: "pointer" }}>
@@ -7721,6 +7797,99 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {loBadge === "Single Basin" ? "All best trials cluster together — likely a single global optimum." : loBadge === "Multiple Basins" ? "Best trials form distinct groups — multiple promising regions exist." : "Best trials are scattered — complex landscape with many local optima."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Concept Drift Detector */}
+              {(() => {
+                if (trials.length < 20) return null;
+                const cParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (cParams.length === 0) return null;
+                const kpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!kpiKey) return null;
+                const cdEpochs = 5;
+                const cdEpochSize = Math.floor(trials.length / cdEpochs);
+                // compute centroid of top 20% trials per epoch
+                const cdCentroids: number[][] = [];
+                for (let e = 0; e < cdEpochs; e++) {
+                  const epochTrials = trials.slice(e * cdEpochSize, (e + 1) * cdEpochSize);
+                  const sorted = [...epochTrials].sort((a: { kpis: Record<string, number> }, b: { kpis: Record<string, number> }) => (a.kpis[kpiKey] ?? Infinity) - (b.kpis[kpiKey] ?? Infinity));
+                  const topN = Math.max(1, Math.floor(sorted.length * 0.2));
+                  const top = sorted.slice(0, topN);
+                  const centroid = cParams.map((p: { name: string; lower?: number; upper?: number }) => {
+                    const range = (p.upper! - p.lower!) || 1;
+                    return top.reduce((s: number, t: { parameters: Record<string, number> }) => s + ((t.parameters[p.name] ?? 0) - p.lower!) / range, 0) / top.length;
+                  });
+                  cdCentroids.push(centroid);
+                }
+                // pairwise cosine similarity
+                const cdSim: number[][] = [];
+                for (let i = 0; i < cdEpochs; i++) {
+                  cdSim.push([]);
+                  for (let j = 0; j < cdEpochs; j++) {
+                    let dot = 0, magA = 0, magB = 0;
+                    for (let k = 0; k < cParams.length; k++) {
+                      dot += cdCentroids[i][k] * cdCentroids[j][k];
+                      magA += cdCentroids[i][k] ** 2;
+                      magB += cdCentroids[j][k] ** 2;
+                    }
+                    const denom = Math.sqrt(magA) * Math.sqrt(magB);
+                    cdSim[i].push(denom > 0 ? dot / denom : 1);
+                  }
+                }
+                // average off-diagonal similarity
+                let cdOffDiagSum = 0, cdOffDiagN = 0;
+                for (let i = 0; i < cdEpochs; i++) {
+                  for (let j = 0; j < cdEpochs; j++) {
+                    if (i !== j) { cdOffDiagSum += cdSim[i][j]; cdOffDiagN++; }
+                  }
+                }
+                const cdAvgSim = cdOffDiagN > 0 ? cdOffDiagSum / cdOffDiagN : 1;
+                const cdBadge = cdAvgSim > 0.7 ? "Stationary" : cdAvgSim > 0.4 ? "Some Drift" : "Active Drift";
+                const cdColor = cdBadge === "Stationary" ? "#22c55e" : cdBadge === "Some Drift" ? "#eab308" : "#ef4444";
+                const cdCellSize = 28, cdGap = 2, cdLabelW = 24;
+                const cdGridW = cdLabelW + cdEpochs * (cdCellSize + cdGap);
+                const cdGridH = cdLabelW + cdEpochs * (cdCellSize + cdGap);
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Wind size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Concept Drift Detector</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${cdColor}18`, color: cdColor }}>{cdBadge}</span>
+                    </div>
+                    <svg width={cdGridW} height={cdGridH} viewBox={`0 0 ${cdGridW} ${cdGridH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {/* column labels */}
+                      {Array.from({ length: cdEpochs }).map((_: unknown, j: number) => (
+                        <text key={`cl${j}`} x={cdLabelW + j * (cdCellSize + cdGap) + cdCellSize / 2} y={12} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">E{j + 1}</text>
+                      ))}
+                      {/* rows */}
+                      {Array.from({ length: cdEpochs }).map((_: unknown, i: number) => (
+                        <g key={`r${i}`}>
+                          <text x={cdLabelW - 4} y={cdLabelW + i * (cdCellSize + cdGap) + cdCellSize / 2 + 3} textAnchor="end" fontSize="9" fill="var(--color-text-muted)" fontFamily="var(--font-mono)">E{i + 1}</text>
+                          {Array.from({ length: cdEpochs }).map((_: unknown, j: number) => {
+                            const sim = cdSim[i][j];
+                            const r = Math.round(59 + (1 - sim) * 180);
+                            const g = Math.round(130 + sim * 67);
+                            const b = Math.round(80 + sim * 78);
+                            const cellColor = i === j ? "#3b82f6" : `rgb(${r},${g},${b})`;
+                            return (
+                              <g key={`c${i}${j}`}>
+                                <rect x={cdLabelW + j * (cdCellSize + cdGap)} y={cdLabelW + i * (cdCellSize + cdGap)} width={cdCellSize} height={cdCellSize} rx="3" fill={cellColor} opacity={i === j ? 0.3 : 0.7} />
+                                <text x={cdLabelW + j * (cdCellSize + cdGap) + cdCellSize / 2} y={cdLabelW + i * (cdCellSize + cdGap) + cdCellSize / 2 + 3} textAnchor="middle" fontSize="8" fill={i === j ? "#3b82f6" : sim > 0.6 ? "#1a4d1a" : "#7f1d1d"} fontFamily="var(--font-mono)" fontWeight={600}>{sim.toFixed(2)}</text>
+                              </g>
+                            );
+                          })}
+                        </g>
+                      ))}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                      <span>avg similarity: {(cdAvgSim * 100).toFixed(0)}%</span>
+                      <span>{cdEpochs} epochs · {cdEpochSize} trials each</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {cdBadge === "Stationary" ? "Optimal regions are consistent across time — objective function appears stable." : cdBadge === "Some Drift" ? "Best-performing regions are shifting — consider weighting recent data more heavily." : "Strong concept drift detected — the objective landscape is changing. Recent data may be more reliable."}
                     </div>
                   </div>
                 );
@@ -11869,6 +12038,64 @@ export default function Workspace() {
                 );
               })()}
 
+              {/* Replication Value Indicator */}
+              {suggestions && suggestions.suggestions && suggestions.suggestions.length > 0 && trials.length >= 5 && (() => {
+                const cParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (cParams.length === 0) return null;
+                const rvThreshold = 0.15;
+                const rvMinNeighbors = 5;
+                const rvScores: number[] = [];
+                for (const sug of suggestions.suggestions) {
+                  let nearby = 0;
+                  for (const t of trials) {
+                    let dist = 0;
+                    for (const p of cParams) {
+                      const range = (p.upper! - p.lower!) || 1;
+                      dist += ((sug[p.name] ?? 0) - (t.parameters[p.name] ?? 0)) ** 2 / (range * range);
+                    }
+                    dist = Math.sqrt(dist / cParams.length);
+                    if (dist < rvThreshold) nearby++;
+                  }
+                  rvScores.push(1 - Math.min(1, nearby / rvMinNeighbors));
+                }
+                const rvAvg = rvScores.reduce((s: number, v: number) => s + v, 0) / rvScores.length;
+                const rvBadge = rvAvg < 0.3 ? "Well-Characterized" : rvAvg < 0.6 ? "Moderate" : "Needs Replication";
+                const rvColor = rvBadge === "Well-Characterized" ? "#22c55e" : rvBadge === "Moderate" ? "#eab308" : "#ef4444";
+                const rvW = 260, rvBarH = 14, rvGap = 4, rvLabelW = 28;
+                const rvH = rvScores.length * (rvBarH + rvGap) + 4;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Repeat2 size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Replication Value</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${rvColor}18`, color: rvColor }}>{rvBadge}</span>
+                    </div>
+                    <svg width={rvW} height={rvH} viewBox={`0 0 ${rvW} ${rvH}`} style={{ display: "block", margin: "0 auto" }}>
+                      {rvScores.map((score: number, i: number) => {
+                        const y = i * (rvBarH + rvGap) + 2;
+                        const barW = Math.max(2, score * (rvW - rvLabelW - 36));
+                        const c = score < 0.3 ? "#22c55e" : score < 0.6 ? "#eab308" : "#ef4444";
+                        return (
+                          <g key={i}>
+                            <text x={rvLabelW - 4} y={y + rvBarH / 2 + 3} textAnchor="end" fontSize="9" fontFamily="var(--font-mono)" fill="var(--color-text-muted)" fontWeight={600}>S{i + 1}</text>
+                            <rect x={rvLabelW} y={y} width={rvW - rvLabelW - 36} height={rvBarH} rx="3" fill="var(--color-border)" opacity="0.4" />
+                            <rect x={rvLabelW} y={y} width={barW} height={rvBarH} rx="3" fill={c} opacity="0.7" />
+                            <text x={rvW - 32} y={y + rvBarH / 2 + 3} fontSize="9" fontFamily="var(--font-mono)" fill={c} fontWeight={600}>{(score * 100).toFixed(0)}%</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>avg need: {(rvAvg * 100).toFixed(0)}%</span>
+                      <span>threshold: {(rvThreshold * 100).toFixed(0)}% radius</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {rvBadge === "Well-Characterized" ? "Suggestions are in well-observed regions — single evaluations should be reliable." : rvBadge === "Moderate" ? "Some suggestions lack nearby data — consider replicates for uncertain regions." : "Most suggestions are in uncharted territory — replication is recommended to reduce noise."}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Empty State */}
               {!suggestions && !loadingSuggestions && (
                 <div className="suggestions-empty">
@@ -15177,6 +15404,91 @@ export default function Workspace() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
                       {peBadge === "No Plateaus" ? "No significant plateaus detected — steady improvement throughout." : peBadge === "Active Escape" ? "Optimizer is actively exploring diverse regions during plateaus." : "Optimizer stays near the current best during plateaus — consider increasing exploration."}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Model Validity Timeline */}
+              {(() => {
+                if (trials.length < 20) return null;
+                const cParams = (campaign.spec?.parameters || []).filter((s: { name: string; type: string; lower?: number; upper?: number }) => s.type === "continuous" && s.lower != null && s.upper != null);
+                if (cParams.length === 0) return null;
+                const kpiKey = Object.keys(trials[0]?.kpis || {})[0];
+                if (!kpiKey) return null;
+                const mvSorted = [...trials].sort((a: { iteration: number }, b: { iteration: number }) => a.iteration - b.iteration);
+                const mvK = 3;
+                const mvWinCount = 8;
+                const mvWinSize = Math.floor(mvSorted.length / mvWinCount);
+                if (mvWinSize < 2) return null;
+                // compute normalized k-NN prediction errors per window
+                const kpiVals = mvSorted.map((t: { kpis: Record<string, number> }) => t.kpis[kpiKey] ?? 0);
+                const kpiRange = Math.max(0.001, Math.max(...kpiVals) - Math.min(...kpiVals));
+                const mvErrors: number[] = [];
+                for (let w = 1; w < mvWinCount; w++) {
+                  const winStart = w * mvWinSize;
+                  const winEnd = Math.min(winStart + mvWinSize, mvSorted.length);
+                  const priorTrials = mvSorted.slice(0, winStart);
+                  let errSum = 0, errN = 0;
+                  for (let ti = winStart; ti < winEnd; ti++) {
+                    // k-NN from prior trials
+                    const dists: { dist: number; val: number }[] = [];
+                    for (let pi = 0; pi < priorTrials.length; pi++) {
+                      let d = 0;
+                      for (const p of cParams) {
+                        const range = (p.upper! - p.lower!) || 1;
+                        d += ((mvSorted[ti].parameters[p.name] ?? 0) - (priorTrials[pi].parameters[p.name] ?? 0)) ** 2 / (range * range);
+                      }
+                      dists.push({ dist: Math.sqrt(d), val: priorTrials[pi].kpis[kpiKey] ?? 0 });
+                    }
+                    dists.sort((a: { dist: number }, b: { dist: number }) => a.dist - b.dist);
+                    const knn = dists.slice(0, mvK);
+                    const pred = knn.reduce((s: number, d: { val: number }) => s + d.val, 0) / knn.length;
+                    const actual = mvSorted[ti].kpis[kpiKey] ?? 0;
+                    errSum += Math.abs(pred - actual) / kpiRange;
+                    errN++;
+                  }
+                  mvErrors.push(errN > 0 ? errSum / errN : 0);
+                }
+                if (mvErrors.length < 3) return null;
+                const mvTrend = (mvErrors[mvErrors.length - 1] - mvErrors[0]) / mvErrors.length;
+                const mvBadge = mvTrend <= 0 ? "Stable Model" : mvTrend < 0.02 ? "Some Degradation" : "Degrading";
+                const mvBadgeColor = mvBadge === "Stable Model" ? "#22c55e" : mvBadge === "Some Degradation" ? "#eab308" : "#ef4444";
+                const mvW = 280, mvH = 60, mvPad = 2;
+                const mvMax = Math.max(...mvErrors, 0.01);
+                const mvPts = mvErrors.map((v: number, i: number) => ({
+                  x: mvPad + (i / (mvErrors.length - 1)) * (mvW - 2 * mvPad),
+                  y: mvPad + (1 - v / mvMax) * (mvH - 2 * mvPad),
+                }));
+                const mvLine = mvPts.map((p: { x: number; y: number }, i: number) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+                const mvArea = mvLine + ` L${mvPts[mvPts.length - 1].x.toFixed(1)},${(mvH - mvPad).toFixed(1)} L${mvPts[0].x.toFixed(1)},${(mvH - mvPad).toFixed(1)} Z`;
+                return (
+                  <div className="card" style={{ padding: "14px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <Timer size={15} style={{ color: "var(--color-primary)" }} />
+                      <span style={{ fontWeight: 600, fontSize: "0.92rem" }}>Model Validity Timeline</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "6px", background: `${mvBadgeColor}18`, color: mvBadgeColor }}>{mvBadge}</span>
+                    </div>
+                    <svg width={mvW} height={mvH} viewBox={`0 0 ${mvW} ${mvH}`} style={{ display: "block", margin: "0 auto" }}>
+                      <defs>
+                        <linearGradient id="mvGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={mvBadgeColor} stopOpacity="0.25" />
+                          <stop offset="100%" stopColor={mvBadgeColor} stopOpacity="0.03" />
+                        </linearGradient>
+                      </defs>
+                      <path d={mvArea} fill="url(#mvGrad)" />
+                      <path d={mvLine} fill="none" stroke={mvBadgeColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      {mvPts.map((p: { x: number; y: number }, i: number) => {
+                        const c = mvErrors[i] < 0.15 ? "#22c55e" : mvErrors[i] < 0.3 ? "#eab308" : "#ef4444";
+                        return <circle key={i} cx={p.x} cy={p.y} r="3" fill={c} />;
+                      })}
+                    </svg>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      <span>error: {(mvErrors[mvErrors.length - 1] * 100).toFixed(1)}%</span>
+                      <span>trend: {mvTrend > 0.005 ? "increasing" : mvTrend < -0.005 ? "decreasing" : "flat"} · {mvErrors.length} windows</span>
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginTop: "4px" }}>
+                      {mvBadge === "Stable Model" ? "Prediction accuracy is consistent — model remains valid across campaign history." : mvBadge === "Some Degradation" ? "Prediction errors are growing slightly — consider re-evaluating model assumptions." : "Model prediction quality is degrading — recent data may conflict with earlier patterns."}
                     </div>
                   </div>
                 );
