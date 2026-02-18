@@ -2,6 +2,12 @@
 
 **Intelligent Optimization Platform for Scientific Experiments**
 
+🌐 **[View Landing Page](https://sissifeng.github.io/Nexus)** — Interactive product showcase
+
+---
+
+**Intelligent Optimization Platform for Scientific Experiments**
+
 Nexus transforms how scientists run Bayesian optimization campaigns — from black-box tool to transparent research partner. Upload your data, get intelligent suggestions, and understand every decision the optimizer makes.
 
 ---
