@@ -12,6 +12,7 @@ from optimization_copilot.api.routes.loop import router as loop_router
 from optimization_copilot.api.routes.analysis import router as analysis_router
 from optimization_copilot.api.routes.frontend_v2 import router as frontend_v2_router
 from optimization_copilot.api.routes.insights import router as insights_router
+from optimization_copilot.api.routes.intelligent_optimization import router as intelligent_router
 
 
 def create_api_router() -> APIRouter:
@@ -27,4 +28,5 @@ def create_api_router() -> APIRouter:
     api.include_router(analysis_router)
     api.include_router(frontend_v2_router)
     api.include_router(insights_router)
+    api.include_router(intelligent_router)
     return api

@@ -18,6 +18,11 @@ from optimization_copilot.causal.metrics import (
     structural_hamming_distance,
 )
 from optimization_copilot.causal.models import CausalEdge, CausalGraph, CausalNode
+from optimization_copilot.causal.optimizer_integration import (
+    CausalOptimizationAnalyzer,
+    CausalOptimizationInsight,
+    VariableCausalImpact,
+)
 from optimization_copilot.causal.structure import CausalStructureLearner
 
 __all__ = [
@@ -33,4 +38,7 @@ __all__ = [
     "edge_precision_recall",
     "orientation_accuracy",
     "evaluate_structure_recovery",
+    "CausalOptimizationAnalyzer",
+    "CausalOptimizationInsight",
+    "VariableCausalImpact",
 ]
