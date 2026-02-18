@@ -1,0 +1,25 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Ensure shell scripts use LF
+*.sh text eol=lf
+.devcontainer/*.sh text eol=lf
+
+# Python files
+*.py text eol=lf
+
+# JavaScript/TypeScript files
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+
+# Documentation
+*.md text eol=lf
+*.txt text eol=lf
+
+# Web files
+*.html text eol=lf
+*.css text eol=lf
+*.svg text eol=lf

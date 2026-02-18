@@ -41,7 +41,29 @@ Choose the deployment method that fits your needs:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/SissiFeng/Nexus?quickstart=1)
 
-Zero installation. Click → Wait 2 minutes → Start optimizing.
+**Zero installation.** Click the badge above → Wait 2-3 minutes → Nexus automatically opens in your browser.
+
+**What happens automatically:**
+1. 🐍 Python 3.11 + Node.js 20 environment setup
+2. 📦 All dependencies installed (pip + npm)
+3. 🚀 Backend server starts on port 8000
+4. 🎨 Frontend dev server starts on port 5173
+5. 🌐 Browser automatically opens to http://localhost:5173
+
+**Ports:**
+- Frontend: http://localhost:5173 (auto-opened)
+- Backend API: http://localhost:8000
+- API Docs: http://localhost:8000/docs
+
+**If services don't start automatically:**
+```bash
+# Run the start script manually
+bash .devcontainer/post-start.sh
+
+# Or start individually:
+nexus server start --host 0.0.0.0 --port 8000                    # Backend
+cd optimization_copilot/web && npm run dev -- --host 0.0.0.0     # Frontend
+```
 
 ### Option 2: One-Click Deploy Script (Recommended for Local)
 
