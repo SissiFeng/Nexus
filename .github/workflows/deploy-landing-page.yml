@@ -29,7 +29,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: cd nexus-landing-page && npm ci
+        run: cd nexus-landing-page && npm install
 
       - name: Build
         run: cd nexus-landing-page && npm run build
