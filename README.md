@@ -249,15 +249,19 @@ docker push YOUR_REGISTRY/nexus:latest
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MODEL_API_KEY` | No | — | Anthropic API key for AI chat |
-| `ANTHROPIC_API_KEY` | No | — | Alternative API key |
+| `MODEL_API_KEY` | **Optional** | — | Anthropic API key for enhanced AI chat |
+| `ANTHROPIC_API_KEY` | **Optional** | — | Alternative API key variable |
 | `NEXUS_WORKSPACE` | No | `./workspace` | Data storage path |
 | `BACKEND_PORT` | No | `8000` | Backend server port |
 | `FRONTEND_PORT` | No | `5173` | Frontend dev server port |
 
+**Note:** All platform features work without `MODEL_API_KEY`. The key only enables enhanced natural language processing in the chat interface.
+
 #### API Key Setup (Optional)
 
-AI chat features work without an API key (basic analytical responses). For enhanced LLM-powered insights:
+**Nexus works without an API key.** The AI chat uses rule-based analysis to answer questions about your campaign.
+
+**To enable LLM-enhanced features** (more natural conversation, hypothesis generation):
 
 1. Get an API key from [Anthropic](https://console.anthropic.com/)
 2. Add to `.env` file:
@@ -265,6 +269,8 @@ AI chat features work without an API key (basic analytical responses). For enhan
    MODEL_API_KEY=sk-ant-api03-...
    ```
 3. Restart the server
+
+**Cost estimate:** ~$0.01-0.05 per conversation (Claude API usage).
 
 ### Troubleshooting
 
@@ -555,7 +561,17 @@ npm run preview  # Preview production build
 | `ANTHROPIC_API_KEY` | Optional | Alternative API key variable |
 | `OCP_WORKSPACE` | Optional | Workspace directory path (default: `./workspace`) |
 
-The platform works without an API key — AI chat features will return basic analytical responses instead of LLM-powered ones.
+The platform works **without an API key**. All core features function normally:
+
+| Feature | Without API Key | With API Key |
+|---------|----------------|--------------|
+| **AI Chat** | ✅ Rule-based analysis (diagnostics, suggestions, insights) | ✅ Enhanced natural language understanding |
+| **Optimization** | ✅ Full Bayesian optimization | ✅ Same |
+| **Visualizations** | ✅ 148+ real-time charts | ✅ Same |
+| **Diagnostics** | ✅ 14-signal health monitoring | ✅ Same |
+| **Experiment Planning** | ✅ Pragmatic rule-based planning | ✅ LLM-enhanced hypothesis generation |
+
+**Recommendation:** Start without an API key. Add one later if you want more natural language flexibility in the chat interface.
 
 ---
 
