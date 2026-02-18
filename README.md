@@ -33,48 +33,248 @@ Nexus wraps Bayesian optimization with a diagnostic intelligence layer:
 
 ---
 
-## Quick Start
+## 🚀 Quick Start (3 Options)
 
-### Prerequisites
+Choose the deployment method that fits your needs:
 
-- Python 3.10+
-- Node.js 18+ (for the web frontend)
+### Option 1: One-Click Deploy Script (Recommended)
 
-### Installation
+The fastest way to get started:
 
 ```bash
-# Clone the repository
-git clone https://github.com/sissifeng/optimization-copilot.git
-cd optimization-copilot
+# Download and run the deployment script
+curl -fsSL https://raw.githubusercontent.com/SissiFeng/Nexus/main/deploy.sh | bash
 
-# Install Python package
+# Or clone first and run locally
+git clone https://github.com/SissiFeng/Nexus.git
+cd Nexus
+./deploy.sh
+```
+
+The script will guide you through:
+- **Docker mode** — Production-ready, isolated environment
+- **Local mode** — Development setup with hot-reload
+
+### Option 2: Docker Deploy (Production)
+
+```bash
+# Clone repository
+git clone https://github.com/SissiFeng/Nexus.git
+cd Nexus
+
+# Start with Docker Compose
+docker-compose up -d
+
+# Access the platform
+# Frontend: http://localhost:8000
+# API Docs: http://localhost:8000/docs
+```
+
+### Option 3: Manual Install (Development)
+
+```bash
+# Clone repository
+git clone https://github.com/SissiFeng/Nexus.git
+cd Nexus
+
+# Install Python backend (requires Python 3.10+)
 pip install -e ".[dev]"
 
-# (Optional) Set up API key for AI chat features
-cp .env.example .env
-# Edit .env and add your Anthropic API key
-
-# Install frontend dependencies
+# Install Node.js frontend (requires Node 18+)
 cd optimization_copilot/web
 npm install
 cd ../..
-```
 
-### Start the Platform
-
-```bash
-# Terminal 1: Start the backend API server
+# Start backend (Terminal 1)
 nexus server start
-# or: python -m optimization_copilot.cli_app.main server start
-# API runs at http://localhost:8000
 
-# Terminal 2: Start the frontend dev server
+# Start frontend (Terminal 2)
 cd optimization_copilot/web
 npm run dev
-# UI runs at http://localhost:5173
+
+# Access: http://localhost:5173
 ```
 
-Open **http://localhost:5173** in your browser.
+---
+
+## 🎯 Why Nexus?
+
+Most optimization tools treat the scientist as a passive user — you feed data, get suggestions, but never understand *why* decisions were made. When experiments stall or produce unexpected results, you're left guessing.
+
+**Nexus is different.**
+
+### Built for Scientists, Not ML Engineers
+
+| Feature | What It Means For You |
+|---------|----------------------|
+| **Zero-Code Campaign Setup** | Upload a CSV, map columns visually, start optimizing. No Python scripts, no hyperparameter tuning, no configuration files. |
+| **148+ Real-Time Diagnostics** | Every iteration shows 17 health signals with traffic-light indicators. Know immediately if your optimization is converging, exploring, or stuck. |
+| **Transparent Decision Making** | Every suggestion includes novelty scores, uncertainty estimates, risk profiles, and strategy explanations. Never trust a black box again. |
+| **AI-Powered Insights** | Ask natural language questions: *"Why did the optimizer switch strategies?"* *"Which parameters actually matter?"* Get answers backed by computed signals, not generic advice. |
+| **Campaign Memory** | Full audit trail of every decision, learning curves, and hypothesis tracking. Pick up where you left off, share with collaborators, publish with confidence. |
+| **Wet Lab Safety** | Built-in hazard classification, constraint checking, and emergency protocols. Designed for real experimental workflows, not just simulations. |
+
+### Technical Differentiators
+
+**Multi-Backend Intelligence**
+- 10+ optimization algorithms implemented from scratch (GP-BO, TPE, CMA-ES, NSGA-II, MOBO, etc.)
+- Auto-selection based on campaign characteristics
+- No external ML framework dependencies (pure Python)
+
+**Diagnostic-First Design**
+- 14-signal diagnostic engine monitors campaign health in real-time
+- Early warning system for convergence stall, noise, boundary saturation
+- Proactive suggestions before experiments waste budget
+
+**Client-Side Computation**
+- k-NN, k-means, PCA, correlation analysis — all run in your browser
+- 148+ hand-crafted SVG visualizations (zero charting library dependencies)
+- Interactive exploration of parameter spaces with millisecond response
+
+**Closed-Loop Integration**
+- WebSocket real-time updates as experiments complete
+- One-click ingestion of new results
+- Automatic model retraining and strategy adaptation
+
+---
+
+## System Requirements
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| **CPU** | 2 cores | 4+ cores |
+| **RAM** | 4 GB | 8 GB |
+| **Disk** | 2 GB | 10 GB |
+| **Python** | 3.10 | 3.11 |
+| **Node.js** | 18 | 20 |
+
+### Supported Platforms
+- ✅ macOS (Intel & Apple Silicon)
+- ✅ Linux (Ubuntu 20.04+, CentOS 8+, Debian 11+)
+- ✅ Windows (via WSL2)
+
+---
+
+## 📦 Deployment Guide
+
+### Production Deployment (Docker)
+
+**Best for:** Teams, shared deployments, production use
+
+```bash
+# 1. Clone repository
+git clone https://github.com/SissiFeng/Nexus.git
+cd Nexus
+
+# 2. (Optional) Configure environment
+cp .env.example .env
+# Edit .env to add API keys for AI chat features
+
+# 3. Start services
+docker-compose up -d
+
+# 4. Verify deployment
+curl http://localhost:8000/api/health
+
+# Access: http://localhost:8000
+```
+
+**Docker Compose Features:**
+- Automatic container restart on failure
+- Persistent workspace volume
+- Health checks and monitoring
+- Environment variable configuration
+
+### Development Deployment (Local)
+
+**Best for:** Contributors, custom modifications, debugging
+
+```bash
+# 1. Install Python dependencies
+pip install -e ".[dev]"
+
+# 2. Install Node.js dependencies
+cd optimization_copilot/web
+npm install
+
+# 3. Start development servers
+# Terminal 1: Backend with auto-reload
+nexus server start --reload
+
+# Terminal 2: Frontend with hot-reload
+npm run dev
+
+# Access: http://localhost:5173
+```
+
+### Cloud Deployment
+
+#### Render.com
+
+```yaml
+# render.yaml
+services:
+  - type: web
+    name: nexus-backend
+    runtime: docker
+    repo: https://github.com/SissiFeng/Nexus
+    plan: standard
+    envVars:
+      - key: NEXUS_WORKSPACE
+        value: /app/workspace
+```
+
+#### Railway
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/YOUR_TEMPLATE_ID)
+
+#### AWS/GCP/Azure
+
+Use the provided Dockerfile:
+
+```bash
+# Build image
+docker build -t nexus:latest .
+
+# Push to container registry
+docker tag nexus:latest YOUR_REGISTRY/nexus:latest
+docker push YOUR_REGISTRY/nexus:latest
+
+# Deploy to your cloud provider
+```
+
+### Configuration
+
+#### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MODEL_API_KEY` | No | — | Anthropic API key for AI chat |
+| `ANTHROPIC_API_KEY` | No | — | Alternative API key |
+| `NEXUS_WORKSPACE` | No | `./workspace` | Data storage path |
+| `BACKEND_PORT` | No | `8000` | Backend server port |
+| `FRONTEND_PORT` | No | `5173` | Frontend dev server port |
+
+#### API Key Setup (Optional)
+
+AI chat features work without an API key (basic analytical responses). For enhanced LLM-powered insights:
+
+1. Get an API key from [Anthropic](https://console.anthropic.com/)
+2. Add to `.env` file:
+   ```
+   MODEL_API_KEY=sk-ant-api03-...
+   ```
+3. Restart the server
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Port already in use | Change ports: `BACKEND_PORT=8080 ./deploy.sh` |
+| Permission denied | Run with `sudo` or fix permissions: `chmod +x deploy.sh` |
+| Node modules error | Delete `node_modules` and rerun `npm install` |
+| Python version error | Use pyenv or conda to install Python 3.10+ |
+| Docker build fails | Update Docker: `docker --version` should be 20.10+ |
 
 ---
 
