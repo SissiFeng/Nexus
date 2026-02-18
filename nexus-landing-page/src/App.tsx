@@ -7,6 +7,7 @@ import Features from './sections/Features'
 import HowItWorks from './sections/HowItWorks'
 import Demo from './sections/Demo'
 import DemoVideos from './sections/DemoVideos'
+import HubSection from './sections/HubSection'
 import InteractivePlayground from './sections/InteractivePlayground'
 import UseCases from './sections/UseCases'
 import Stats from './sections/Stats'
@@ -45,6 +46,7 @@ function App() {
         <Features />
         <HowItWorks />
         <DemoVideos />
+        <HubSection />
         <InteractivePlayground />
         <Demo />
         <UseCases />
