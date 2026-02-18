@@ -1,0 +1,41 @@
+# Docker Compose for GitHub Codespaces
+# Simplified setup for development environment
+
+version: '3.8'
+
+services:
+  nexus-backend:
+    image: mcr.microsoft.com/devcontainers/python:3.11
+    working_dir: /workspace
+    command: |
+      bash -c "
+        pip install -e '.[dev]' &&
+        nexus server start --host 0.0.0.0 --port 8000
+      "
+    ports:
+      - "8000:8000"
+    environment:
+      - NEXUS_WORKSPACE=/workspace/workspace
+    volumes:
+      - .:/workspace:cached
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  nexus-frontend:
+    image: mcr.microsoft.com/devcontainers/javascript-node:20
+    working_dir: /workspace/optimization_copilot/web
+    command: |
+      bash -c "
+        npm install &&
+        npm run dev -- --host 0.0.0.0 --port 5173
+      "
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/workspace:cached
+    depends_on:
+      - nexus-backend

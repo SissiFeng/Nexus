@@ -29,8 +29,8 @@ FROM node:20-alpine as frontend-builder
 WORKDIR /app
 
 # Copy frontend package files
-COPY optimization_copilot/web/package*.json ./
-RUN npm ci --silent
+COPY optimization_copilot/web/package.json ./
+RUN npm install
 
 # Copy frontend source
 COPY optimization_copilot/web/ ./
