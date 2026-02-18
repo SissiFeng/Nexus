@@ -33,11 +33,17 @@ Nexus wraps Bayesian optimization with a diagnostic intelligence layer:
 
 ---
 
-## 🚀 Quick Start (3 Options)
+## 🚀 Quick Start (4 Options)
 
 Choose the deployment method that fits your needs:
 
-### Option 1: One-Click Deploy Script (Recommended)
+### Option 1: Try in Browser — GitHub Codespaces (Quickest)
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/SissiFeng/Nexus?quickstart=1)
+
+Zero installation. Click → Wait 2 minutes → Start optimizing.
+
+### Option 2: One-Click Deploy Script (Recommended for Local)
 
 The fastest way to get started:
 
@@ -55,7 +61,7 @@ The script will guide you through:
 - **Docker mode** — Production-ready, isolated environment
 - **Local mode** — Development setup with hot-reload
 
-### Option 2: Docker Deploy (Production)
+### Option 3: Docker Deploy (Production)
 
 ```bash
 # Clone repository
@@ -70,7 +76,7 @@ docker-compose up -d
 # API Docs: http://localhost:8000/docs
 ```
 
-### Option 3: Manual Install (Development)
+### Option 4: Manual Install (Development)
 
 ```bash
 # Clone repository
@@ -335,13 +341,63 @@ The chat panel (bottom-right) understands your campaign context. Try:
 3. Upload results (CSV or manual entry)
 4. The platform re-diagnoses automatically — diagnostics update, phase may switch, new suggestions adapt
 
-### 5. Demo Gallery
+---
 
-Click **Demos** in the nav bar to explore pre-built datasets:
-- OER Catalyst Optimization
-- Suzuki Coupling Yield
-- Battery Electrolyte Formulation
-- And more
+## 🎬 Demo Gallery
+
+Try Nexus instantly with these real-world scientific datasets — no setup required.
+
+| Dataset | Domain | Description | Download |
+|---------|--------|-------------|----------|
+| **OER Catalyst** | Electrochemistry | Ni-Fe-Co-Mn-Ce-La loading ratios for oxygen evolution reaction optimization | [`oer_data.csv`](./data/gollum/oer_data.csv) |
+| **Suzuki-Miyaura** | Organic Chemistry | Cross-coupling reaction yield optimization with 10,000+ experiments | [`suzuki_miyaura_data.csv`](./data/gollum/suzuki_miyaura_data.csv) |
+| **C2 Yield** | Catalysis | Mn-Na₂WO₄/BN catalyst for methane conversion to C2 products | [`c2_yield_data.csv`](./data/gollum/c2_yield_data.csv) |
+| **Vapor Diffusion** | Crystallography | Perovskite crystal growth optimization | [`vapdiff_data.csv`](./data/gollum/vapdiff_data.csv) |
+| **Buchwald-Hartwig** | Organic Chemistry | Amination reaction with ligand/additive/base screening | [`bh_reaction_1.csv`](./data/gollum/bh_reaction_1.csv) |
+| **HPLC Method** | Analytical Chemistry | Chromatography parameter optimization | [`hplc_data.csv`](./data/gollum/hplc_data.csv) |
+| **Additives Plate** | Medicinal Chemistry | Additive screening for drug synthesis | [`additives_plate_1.csv`](./data/gollum/additives_plate_1.csv) |
+
+### Quick Start with Sample Data
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/SissiFeng/Nexus.git
+cd Nexus
+
+# 2. Start Nexus
+./deploy.sh
+
+# 3. Upload any CSV from data/gollum/ via the web interface
+# 4. Map columns → Run optimization → Get AI-powered suggestions
+```
+
+### 📊 Dataset Statistics
+
+| Dataset | Rows | Columns | Objective Type |
+|---------|------|---------|----------------|
+| OER Catalyst | 3,500+ | 8 | Minimize overpotential |
+| Suzuki-Miyaura | 10,000+ | 10 | Maximize yield |
+| C2 Yield | 1,200+ | 17 | Maximize C2 selectivity |
+| Vapor Diffusion | 2,000+ | 12 | Maximize crystal score |
+| Buchwald-Hartwig | 4,500+ | 8 | Maximize conversion |
+| HPLC | 1,800+ | 7 | Minimize tailing factor |
+
+---
+
+## 🚀 Try in Browser (GitHub Codespaces)
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/SissiFeng/Nexus?quickstart=1)
+
+**One-click launch** — No local installation required.
+
+1. Click the badge above
+2. Wait for Codespace to initialize (~2 minutes)
+3. Run `./deploy.sh` in the terminal
+4. Click "Open in Browser" when prompted
+
+> 💡 **Free tier**: GitHub Codespaces offers 120 core-hours/month for free users — plenty to explore Nexus.
+
+---
 
 ---
 
